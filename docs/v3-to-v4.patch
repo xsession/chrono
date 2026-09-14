@@ -1,0 +1,1648 @@
+diff --git a/next/docs/UI_UX_DEEP_RESEARCH.md b/next/docs/UI_UX_DEEP_RESEARCH.md
+index 312eab6..762091a 100644
+--- a/next/docs/UI_UX_DEEP_RESEARCH.md
++++ b/next/docs/UI_UX_DEEP_RESEARCH.md
+@@ -852,3 +852,68 @@ The state files and command paths used by the Rust controller matched Git's actu
+ 27. Git documentation, **git-cherry-pick** — sequencer `--continue`, `--skip`, `--abort`. https://git-scm.com/docs/git-cherry-pick
+ 28. Git documentation, **git-revert** — sequencer `--continue`, `--skip`, `--abort`. https://git-scm.com/docs/git-revert
+ 29. Rust `git2` crate 0.21, **RepositoryState** — merge/rebase/cherry-pick/revert native state variants. https://docs.rs/git2/latest/git2/enum.RepositoryState.html
++
++---
++
++## 19. Implemented v4 three-way Conflict Center
++
++The v4 slice implements the previously recommended Git-stage-aware conflict resolver.
++
++### Git index as source of truth
++
++Git documents unmerged paths as up to three higher-order index entries: stage 1 is the common base, stage 2 is side A/current, and stage 3 is side B/incoming. `git ls-files --unmerged -z` exposes those entries without pathname quoting, making it appropriate for a GUI backend.
++
++Git's low-level conflict documentation explicitly describes extracting stage 1/2/3 blob objects and writing the verified merged result back to the working tree/index. The v4 design follows that model instead of attempting to infer three-way inputs from conflict-marker text.
++
++### Safe side selection
++
++`git checkout-index --stage=<n>` is specifically documented for copying a named unmerged stage into the working tree. GitAhead uses stage 2 or 3 for regular files, binary files and symlinks, then stages the path to clear the unmerged entries.
++
++Submodule conflicts are different: mode `160000` is a gitlink, not text. For those paths GitAhead displays commit IDs and uses `git update-index --cacheinfo` to write the selected commit directly into the resolved stage-0 index entry.
++
++### Operation-aware labels
++
++The UI does not expose raw `ours`/`theirs` wording as the primary resolver labels because the semantic roles invert during rebase. The v4 mapping is:
++
++- merge — Current branch / Incoming branch;
++- rebase — Current base / Replayed commit;
++- cherry-pick — Current branch / Cherry-picked commit;
++- revert — Current branch / Revert result.
++
++This makes the user's task role explicit even when Git's stage 2/3 mechanics remain the backend representation.
++
++### Resolver hierarchy
++
++The implemented workspace follows the research recommendation:
++
++1. persistent repository operation state at the top;
++2. unresolved file queue;
++3. Base / Current-role / Incoming-role panes;
++4. per-block resolution controls;
++5. editable merged output;
++6. Save, Stage & Next.
++
++The final result is intentionally the largest editing surface. Source panes are evidence, not the primary destination.
++
++### Marker-level acceleration
++
++Conflict markers are treated as an acceleration layer rather than as the source of truth. The editor recognizes normal and diff3-style blocks and offers four local choices: Current, Incoming, Both Current-first, Both Incoming-first. After each block replacement the document is reparsed. The final stage action remains disabled while recognized markers remain.
++
++### Special-object behavior
++
++- Binary: no text decoding; side choice or external resolution + Stage working copy.
++- Large blob: no large React payload; side choice or external resolution.
++- Symlink: target metadata is shown; side selection preserves Git's symlink handling.
++- Gitlink/submodule: commit IDs are shown; side selection resolves the index without forcing the nested working tree to another commit.
++
++### Validation result
++
++Real Git 2.47.3 smoke scenarios passed for text, manual merge result, add/add, modify/delete, binary, symlink and submodule gitlink conflicts. Frontend marker parsing passed normal, diff3 and multi-block unit scenarios.
++
++### Additional sources
++
++30. Git documentation, **git-ls-files** — unmerged stage 1/2/3 index records and `-z` pathname output. https://git-scm.com/docs/git-ls-files
++31. Git documentation, **git-checkout-index** — copying a selected unmerged stage to the working tree. https://git-scm.com/docs/git-checkout-index
++32. Git documentation, **git-update-index** — `--cacheinfo` direct index insertion. https://git-scm.com/docs/git-update-index
++33. Git documentation, **Git User Manual — conflict resolution help** — stage blob extraction, merge result and index resolution. https://git-scm.com/docs/user-manual
++34. Git documentation, **git-add** — staging the verified result into the index. https://git-scm.com/docs/git-add
+diff --git a/next/src-tauri/src/conflict_center.rs b/next/src-tauri/src/conflict_center.rs
+new file mode 100644
+index 0000000..499fd80
+--- /dev/null
++++ b/next/src-tauri/src/conflict_center.rs
+@@ -0,0 +1,394 @@
++use crate::error::{AppError, AppResult};
++use crate::models::{
++    ConflictFileDetail, ConflictFileSummary, ConflictLabels, ConflictResolutionRequest,
++    ConflictResolutionResult, ConflictStage,
++};
++
++#[cfg(not(target_os = "android"))]
++mod desktop {
++    use std::collections::BTreeMap;
++    use std::fs;
++    use std::path::{Component, Path, PathBuf};
++    use std::process::{Command, Output};
++
++    use super::*;
++
++    const MAX_TEXT_BYTES: usize = 2 * 1024 * 1024;
++
++    #[derive(Debug, Clone)]
++    struct StageEntry {
++        mode: String,
++        oid: String,
++    }
++
++    #[derive(Debug, Clone, Default)]
++    struct ConflictEntries {
++        base: Option<StageEntry>,
++        current: Option<StageEntry>,
++        incoming: Option<StageEntry>,
++    }
++
++    fn run_git(path: &str, args: &[&str]) -> AppResult<Output> {
++        let mut command = Command::new("git");
++        command.arg("-C").arg(path).args(args);
++        command.env("GIT_TERMINAL_PROMPT", "0");
++        Ok(command.output()?)
++    }
++
++    fn checked_git(path: &str, args: &[&str]) -> AppResult<Output> {
++        let output = run_git(path, args)?;
++        if output.status.success() {
++            Ok(output)
++        } else {
++            Err(AppError::Command(format!(
++                "git {}: {}",
++                args.join(" "),
++                String::from_utf8_lossy(&output.stderr).trim()
++            )))
++        }
++    }
++
++    fn repository_root(path: &str) -> AppResult<PathBuf> {
++        let output = checked_git(path, &["rev-parse", "--show-toplevel"])?;
++        Ok(PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
++    }
++
++    fn parse_conflicts(path: &str) -> AppResult<BTreeMap<String, ConflictEntries>> {
++        let output = checked_git(path, &["ls-files", "--unmerged", "-z", "--"])?;
++        let mut conflicts: BTreeMap<String, ConflictEntries> = BTreeMap::new();
++
++        for record in output.stdout.split(|byte| *byte == 0).filter(|record| !record.is_empty()) {
++            let Some(tab) = record.iter().position(|byte| *byte == b'\t') else { continue; };
++            let header = String::from_utf8_lossy(&record[..tab]);
++            let path = String::from_utf8_lossy(&record[tab + 1..]).into_owned();
++            let mut fields = header.split_whitespace();
++            let Some(mode) = fields.next() else { continue; };
++            let Some(oid) = fields.next() else { continue; };
++            let Some(stage) = fields.next().and_then(|value| value.parse::<u8>().ok()) else { continue; };
++            let entry = StageEntry { mode: mode.to_string(), oid: oid.to_string() };
++            let stages = conflicts.entry(path).or_default();
++            match stage {
++                1 => stages.base = Some(entry),
++                2 => stages.current = Some(entry),
++                3 => stages.incoming = Some(entry),
++                _ => {}
++            }
++        }
++
++        Ok(conflicts)
++    }
++
++    fn path_is_safe(path: &str) -> bool {
++        let candidate = Path::new(path);
++        !candidate.is_absolute()
++            && candidate.components().all(|component| matches!(component, Component::Normal(_)))
++    }
++
++    fn stage_kind(mode: &str) -> &'static str {
++        match mode {
++            "160000" => "gitlink",
++            "120000" => "symlink",
++            _ => "blob",
++        }
++    }
++
++    fn blob_size(path: &str, oid: &str) -> AppResult<usize> {
++        let output = checked_git(path, &["cat-file", "-s", oid])?;
++        String::from_utf8_lossy(&output.stdout)
++            .trim()
++            .parse::<usize>()
++            .map_err(|_| AppError::Invalid(format!("invalid blob size for {oid}")))
++    }
++
++    fn stage_detail(path: &str, entry: &StageEntry) -> AppResult<ConflictStage> {
++        let kind = stage_kind(&entry.mode).to_string();
++        if kind == "gitlink" {
++            return Ok(ConflictStage {
++                oid: entry.oid.clone(),
++                mode: entry.mode.clone(),
++                kind,
++                text: None,
++                binary: false,
++                truncated: false,
++                size: 0,
++            });
++        }
++
++        let size = blob_size(path, &entry.oid)?;
++        if size > MAX_TEXT_BYTES {
++            return Ok(ConflictStage {
++                oid: entry.oid.clone(),
++                mode: entry.mode.clone(),
++                kind,
++                text: None,
++                binary: false,
++                truncated: true,
++                size,
++            });
++        }
++
++        let output = checked_git(path, &["cat-file", "blob", &entry.oid])?;
++        let binary = output.stdout.iter().any(|byte| *byte == 0) || std::str::from_utf8(&output.stdout).is_err();
++        let text = if binary { None } else { Some(String::from_utf8(output.stdout).unwrap_or_default()) };
++        Ok(ConflictStage {
++            oid: entry.oid.clone(),
++            mode: entry.mode.clone(),
++            kind,
++            text,
++            binary,
++            truncated: false,
++            size,
++        })
++    }
++
++    fn conflict_kind(entries: &ConflictEntries) -> String {
++        match (entries.base.is_some(), entries.current.is_some(), entries.incoming.is_some()) {
++            (false, true, true) => "addAdd",
++            (true, false, true) => "currentDeleted",
++            (true, true, false) => "incomingDeleted",
++            (true, true, true) => "content",
++            (true, false, false) => "bothDeleted",
++            _ => "complex",
++        }.to_string()
++    }
++
++    fn labels(path: &str) -> ConflictLabels {
++        let operation = crate::operation_state::repository_operation_state(path).ok().and_then(|state| state.operation);
++        let (current, incoming) = match operation.as_deref() {
++            Some("rebase") => ("Current base", "Replayed commit"),
++            Some("cherryPick") => ("Current branch", "Cherry-picked commit"),
++            Some("revert") => ("Current branch", "Revert result"),
++            Some("merge") => ("Current branch", "Incoming branch"),
++            _ => ("Current version", "Incoming version"),
++        };
++        ConflictLabels { base: "Base".into(), current: current.into(), incoming: incoming.into() }
++    }
++
++    fn safe_working_target(root: &Path, relative: &str) -> AppResult<PathBuf> {
++        let canonical_root = fs::canonicalize(root)?;
++        let target = root.join(relative);
++        let mut ancestor = target.parent().unwrap_or(root);
++        while !ancestor.exists() {
++            ancestor = ancestor.parent().ok_or_else(|| AppError::Invalid("conflict path has no existing repository ancestor".into()))?;
++        }
++        let canonical_ancestor = fs::canonicalize(ancestor)?;
++        if !canonical_ancestor.starts_with(&canonical_root) {
++            return Err(AppError::Invalid("conflict path escapes the repository through a symbolic-link parent".into()));
++        }
++        Ok(target)
++    }
++
++    fn read_working(root: &Path, relative: &str) -> AppResult<(Option<String>, bool, bool, usize)> {
++        let file = safe_working_target(root, relative)?;
++        let metadata = match fs::symlink_metadata(&file) {
++            Ok(metadata) => metadata,
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((None, false, false, 0)),
++            Err(error) => return Err(error.into()),
++        };
++        if metadata.file_type().is_symlink() {
++            return Ok((None, false, false, 0));
++        }
++        if !metadata.is_file() {
++            return Ok((None, true, false, metadata.len() as usize));
++        }
++        let size = metadata.len() as usize;
++        if size > MAX_TEXT_BYTES {
++            return Ok((None, false, true, size));
++        }
++        let bytes = fs::read(&file)?;
++        let binary = bytes.iter().any(|byte| *byte == 0) || std::str::from_utf8(&bytes).is_err();
++        let text = if binary { None } else { String::from_utf8(bytes).ok() };
++        Ok((text, binary, false, size))
++    }
++
++    fn summarize(path: &str, relative: &str, entries: &ConflictEntries) -> AppResult<ConflictFileSummary> {
++        let mut special = false;
++        let mut too_large = false;
++        for entry in [&entries.base, &entries.current, &entries.incoming].into_iter().flatten() {
++            let kind = stage_kind(&entry.mode);
++            special |= kind != "blob";
++            if kind != "gitlink" {
++                too_large |= blob_size(path, &entry.oid)? > MAX_TEXT_BYTES;
++            }
++        }
++        Ok(ConflictFileSummary {
++            path: relative.to_string(),
++            kind: conflict_kind(entries),
++            has_base: entries.base.is_some(),
++            has_current: entries.current.is_some(),
++            has_incoming: entries.incoming.is_some(),
++            binary: false,
++            special,
++            too_large,
++        })
++    }
++
++    pub fn repository_conflicts(path: &str) -> AppResult<Vec<ConflictFileSummary>> {
++        parse_conflicts(path)?
++            .iter()
++            .map(|(relative, entries)| summarize(path, relative, entries))
++            .collect()
++    }
++
++    pub fn conflict_detail(path: &str, relative: &str) -> AppResult<ConflictFileDetail> {
++        if !path_is_safe(relative) {
++            return Err(AppError::Invalid("conflict path is not a safe repository-relative path".into()));
++        }
++        let conflicts = parse_conflicts(path)?;
++        let entries = conflicts.get(relative).ok_or_else(|| AppError::Invalid(format!("{relative} is not currently conflicted")))?;
++        let root = repository_root(path)?;
++        let (working_text, working_binary, working_truncated, working_size) = read_working(&root, relative)?;
++        Ok(ConflictFileDetail {
++            path: relative.to_string(),
++            kind: conflict_kind(entries),
++            labels: labels(path),
++            base: entries.base.as_ref().map(|entry| stage_detail(path, entry)).transpose()?,
++            current: entries.current.as_ref().map(|entry| stage_detail(path, entry)).transpose()?,
++            incoming: entries.incoming.as_ref().map(|entry| stage_detail(path, entry)).transpose()?,
++            working_text,
++            working_binary,
++            working_truncated,
++            working_size,
++        })
++    }
++
++    fn selected_stage<'a>(entries: &'a ConflictEntries, strategy: &str) -> Option<&'a StageEntry> {
++        match strategy {
++            "current" => entries.current.as_ref(),
++            "incoming" => entries.incoming.as_ref(),
++            _ => None,
++        }
++    }
++
++    fn remove_working_path(root: &Path, relative: &str) -> AppResult<()> {
++        let target = safe_working_target(root, relative)?;
++        match fs::symlink_metadata(&target) {
++            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
++                return Err(AppError::Invalid("refusing to recursively remove a directory while resolving a file conflict".into()));
++            }
++            Ok(_) => fs::remove_file(&target)?,
++            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
++            Err(error) => return Err(error.into()),
++        }
++        Ok(())
++    }
++
++    fn stage_deletion(path: &str, root: &Path, relative: &str, gitlink: bool) -> AppResult<()> {
++        if gitlink {
++            checked_git(path, &["update-index", "--force-remove", "--", relative])?;
++            return Ok(());
++        }
++        remove_working_path(root, relative)?;
++        checked_git(path, &["add", "-A", "--", relative])?;
++        Ok(())
++    }
++
++    fn resolve_side(path: &str, root: &Path, relative: &str, entries: &ConflictEntries, strategy: &str) -> AppResult<()> {
++        let Some(stage) = selected_stage(entries, strategy) else {
++            let gitlink = [entries.base.as_ref(), entries.current.as_ref(), entries.incoming.as_ref()]
++                .into_iter().flatten().any(|entry| stage_kind(&entry.mode) == "gitlink");
++            return stage_deletion(path, root, relative, gitlink);
++        };
++
++        if stage_kind(&stage.mode) == "gitlink" {
++            checked_git(path, &["update-index", "--add", "--cacheinfo", &stage.mode, &stage.oid, relative])?;
++            return Ok(());
++        }
++
++        let stage_number = if strategy == "current" { "2" } else { "3" };
++        let stage_arg = format!("--stage={stage_number}");
++        checked_git(path, &["checkout-index", &stage_arg, "--force", "--", relative])?;
++        checked_git(path, &["add", "-A", "--", relative])?;
++        Ok(())
++    }
++
++    fn apply_executable_mode(target: &Path, entries: &ConflictEntries) -> AppResult<()> {
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            let executable = [entries.current.as_ref(), entries.incoming.as_ref(), entries.base.as_ref()]
++                .into_iter().flatten().find(|entry| entry.mode == "100755").is_some();
++            if executable && target.exists() {
++                let mut permissions = fs::metadata(target)?.permissions();
++                permissions.set_mode(0o755);
++                fs::set_permissions(target, permissions)?;
++            }
++        }
++        Ok(())
++    }
++
++    fn resolve_merged(path: &str, root: &Path, relative: &str, entries: &ConflictEntries, content: &str) -> AppResult<()> {
++        let special = [entries.base.as_ref(), entries.current.as_ref(), entries.incoming.as_ref()]
++            .into_iter().flatten().any(|entry| stage_kind(&entry.mode) != "blob");
++        if special {
++            return Err(AppError::Invalid("manual text editing is disabled for symlink and submodule conflicts; choose a side instead".into()));
++        }
++        let target = safe_working_target(root, relative)?;
++        if let Some(parent) = target.parent() {
++            fs::create_dir_all(parent)?;
++        }
++        if fs::symlink_metadata(&target).map(|metadata| metadata.file_type().is_symlink()).unwrap_or(false) {
++            fs::remove_file(&target)?;
++        }
++        fs::write(&target, content.as_bytes())?;
++        apply_executable_mode(&target, entries)?;
++        checked_git(path, &["add", "-A", "--", relative])?;
++        Ok(())
++    }
++
++    pub fn resolve_conflict(path: &str, request: &ConflictResolutionRequest) -> AppResult<ConflictResolutionResult> {
++        if !path_is_safe(&request.file) {
++            return Err(AppError::Invalid("conflict path is not a safe repository-relative path".into()));
++        }
++        let conflicts = parse_conflicts(path)?;
++        let entries = conflicts.get(&request.file).ok_or_else(|| AppError::Invalid(format!("{} is not currently conflicted", request.file)))?;
++        let root = repository_root(path)?;
++
++        match request.strategy.as_str() {
++            "current" | "incoming" => resolve_side(path, &root, &request.file, entries, &request.strategy)?,
++            "merged" => {
++                let content = request.content.as_deref().ok_or_else(|| AppError::Invalid("merged resolution requires content".into()))?;
++                resolve_merged(path, &root, &request.file, entries, content)?;
++            }
++            "working" => { checked_git(path, &["add", "-A", "--", &request.file])?; }
++            "delete" => {
++                let gitlink = [entries.base.as_ref(), entries.current.as_ref(), entries.incoming.as_ref()]
++                    .into_iter().flatten().any(|entry| stage_kind(&entry.mode) == "gitlink");
++                stage_deletion(path, &root, &request.file, gitlink)?;
++            }
++            _ => return Err(AppError::Invalid(format!("unknown conflict resolution strategy: {}", request.strategy))),
++        }
++
++        let remaining = parse_conflicts(path)?;
++        let next_path = remaining.keys()
++            .find(|candidate| candidate.as_str() > request.file.as_str())
++            .cloned()
++            .or_else(|| remaining.keys().next().cloned());
++        Ok(ConflictResolutionResult {
++            remaining: remaining.len(),
++            next_path,
++        })
++    }
++}
++
++#[cfg(target_os = "android")]
++mod android {
++    use super::*;
++
++    pub fn repository_conflicts(_path: &str) -> AppResult<Vec<ConflictFileSummary>> {
++        Err(AppError::Unsupported("the three-way Conflict Center is currently desktop-only".into()))
++    }
++
++    pub fn conflict_detail(_path: &str, _relative: &str) -> AppResult<ConflictFileDetail> {
++        Err(AppError::Unsupported("the three-way Conflict Center is currently desktop-only".into()))
++    }
++
++    pub fn resolve_conflict(_path: &str, _request: &ConflictResolutionRequest) -> AppResult<ConflictResolutionResult> {
++        Err(AppError::Unsupported("conflict resolution actions are currently desktop-only".into()))
++    }
++}
++
++#[cfg(not(target_os = "android"))]
++pub use desktop::{conflict_detail, repository_conflicts, resolve_conflict};
++#[cfg(target_os = "android")]
++pub use android::{conflict_detail, repository_conflicts, resolve_conflict};
+diff --git a/next/src-tauri/src/lib.rs b/next/src-tauri/src/lib.rs
+index d7fd5d3..ee03c71 100644
+--- a/next/src-tauri/src/lib.rs
++++ b/next/src-tauri/src/lib.rs
+@@ -1,4 +1,5 @@
+ mod backend;
++mod conflict_center;
+ mod error;
+ mod models;
+ mod operation_state;
+@@ -20,6 +21,12 @@ fn repository_status(path: String) -> AppResult<Vec<FileChange>> { backend::repo
+ #[tauri::command]
+ fn repository_branches(path: String) -> AppResult<Vec<BranchRecord>> { backend::repository_branches(&path) }
+ #[tauri::command]
++fn repository_conflicts(path: String) -> AppResult<Vec<ConflictFileSummary>> { conflict_center::repository_conflicts(&path) }
++#[tauri::command]
++fn conflict_detail(path: String, file: String) -> AppResult<ConflictFileDetail> { conflict_center::conflict_detail(&path, &file) }
++#[tauri::command]
++fn resolve_conflict(path: String, request: ConflictResolutionRequest) -> AppResult<ConflictResolutionResult> { conflict_center::resolve_conflict(&path, &request) }
++#[tauri::command]
+ fn repository_operation_state(path: String) -> AppResult<RepositoryOperationState> { operation_state::repository_operation_state(&path) }
+ #[tauri::command]
+ fn control_repository_operation(path: String, action: String) -> AppResult<CommandResult> { operation_state::control_repository_operation(&path, &action) }
+@@ -82,6 +89,7 @@ pub fn run() {
+         .plugin(tauri_plugin_opener::init())
+         .invoke_handler(tauri::generate_handler![
+             repository_summary, repository_history, repository_status, repository_branches,
++            repository_conflicts, conflict_detail, resolve_conflict,
+             repository_operation_state, control_repository_operation,
+             stage_paths, unstage_paths, create_commit, fetch_repository, pull_repository,
+             push_repository, clone_repository, switch_branch, create_branch, run_workflow,
+diff --git a/next/src-tauri/src/models.rs b/next/src-tauri/src/models.rs
+index a185713..1918914 100644
+--- a/next/src-tauri/src/models.rs
++++ b/next/src-tauri/src/models.rs
+@@ -89,6 +89,69 @@ pub struct RepositoryOperationState {
+     pub message: String,
+ }
+ 
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ConflictStage {
++    pub oid: String,
++    pub mode: String,
++    pub kind: String,
++    pub text: Option<String>,
++    pub binary: bool,
++    pub truncated: bool,
++    pub size: usize,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ConflictLabels {
++    pub base: String,
++    pub current: String,
++    pub incoming: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ConflictFileSummary {
++    pub path: String,
++    pub kind: String,
++    pub has_base: bool,
++    pub has_current: bool,
++    pub has_incoming: bool,
++    pub binary: bool,
++    pub special: bool,
++    pub too_large: bool,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ConflictFileDetail {
++    pub path: String,
++    pub kind: String,
++    pub labels: ConflictLabels,
++    pub base: Option<ConflictStage>,
++    pub current: Option<ConflictStage>,
++    pub incoming: Option<ConflictStage>,
++    pub working_text: Option<String>,
++    pub working_binary: bool,
++    pub working_truncated: bool,
++    pub working_size: usize,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ConflictResolutionRequest {
++    pub file: String,
++    pub strategy: String,
++    pub content: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ConflictResolutionResult {
++    pub remaining: usize,
++    pub next_path: Option<String>,
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct WorkspaceRepository {
+diff --git a/next/src/App.tsx b/next/src/App.tsx
+index 6175812..6da4ec9 100644
+--- a/next/src/App.tsx
++++ b/next/src/App.tsx
+@@ -12,6 +12,7 @@ import { CommandPalette, type Command } from "./components/CommandPalette";
+ import { Icon } from "./components/Icon";
+ import { CloneDialog } from "./components/CloneDialog";
+ import { OperationBanner } from "./components/OperationBanner";
++import { ConflictCenter } from "./components/ConflictCenter";
+ 
+ const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
+ 
+@@ -151,6 +152,10 @@ export default function App() {
+   const dirtyCount = changes.length;
+   const operationActive = operation.operation !== null;
+ 
++  useEffect(() => {
++    if (view === "conflicts" && conflictCount === 0) setView("changes");
++  }, [conflictCount, view]);
++
+   useEffect(() => {
+     const handler = (event: KeyboardEvent) => {
+       const modifier = event.ctrlKey || event.metaKey;
+@@ -187,6 +192,7 @@ export default function App() {
+     { id: "push", title: "Push current branch", category: "Remote", disabled: !path || operationActive, run: () => void runRepositoryAction("Push", () => api.push(path)) },
+     { id: "operation-continue", title: "Continue current Git operation", category: "Operation", disabled: !operation.canContinue, run: () => void runOperationAction("continue") },
+     { id: "operation-skip", title: "Skip current commit", category: "Operation", disabled: !operation.canSkip, run: () => void runOperationAction("skip") },
++    { id: "conflicts", title: "Open Conflict Center", category: "Operation", keywords: ["merge", "resolve", "three-way"], disabled: !path || conflictCount === 0, run: () => setView("conflicts") },
+     { id: "changes", title: "Show working tree", category: "View", shortcut: "Ctrl+1", disabled: !path, run: () => setView("changes") },
+     { id: "history", title: "Show history", category: "View", shortcut: "Ctrl+2", disabled: !path, run: () => setView("history") },
+     { id: "branches", title: "Show branches", category: "View", shortcut: "Ctrl+3", disabled: !path, run: () => setView("branches") },
+@@ -196,7 +202,7 @@ export default function App() {
+     { id: "recovery", title: "Open recovery & maintenance", category: "Repository", keywords: ["reflog", "fsck", "lfs"], disabled: !path, run: () => setView("recovery") },
+     { id: "sidebar", title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar", category: "View", shortcut: "Ctrl+B", run: () => setSidebarCollapsed((value) => !value) },
+     { id: "cherry", title: "Open UI workbench", category: "Developer", run: () => setView("cherry") }
+-  ], [operation.canContinue, operation.canSkip, operationActive, path, refresh, runOperationAction, runRepositoryAction, sidebarCollapsed]);
++  ], [conflictCount, operation.canContinue, operation.canSkip, operationActive, path, refresh, runOperationAction, runRepositoryAction, sidebarCollapsed]);
+ 
+   const currentBranch = summary?.branch || "Detached HEAD";
+ 
+@@ -244,7 +250,7 @@ export default function App() {
+             <span className="ux-branch-icon"><Icon name="branch" /></span>
+             <div><small>Current branch</small><strong>{path ? currentBranch : "—"}</strong></div>
+             {summary?.dirty && <span className="ux-dirty-pill">{dirtyCount} changed</span>}
+-            {conflictCount > 0 && <button className="ux-conflict-pill" onClick={() => setView("changes")}><Icon name="warning" />{conflictCount} conflicts</button>}
++            {conflictCount > 0 && <button className="ux-conflict-pill" onClick={() => setView("conflicts")}><Icon name="warning" />{conflictCount} conflicts</button>}
+           </div>
+ 
+           <div className="ux-sync-summary" aria-label="Remote status">
+@@ -264,7 +270,7 @@ export default function App() {
+           <OperationBanner
+             state={operation}
+             busy={busy}
+-            onResolve={() => setView("changes")}
++            onResolve={() => setView("conflicts")}
+             onContinue={() => runOperationAction("continue")}
+             onSkip={() => runOperationAction("skip")}
+             onAbort={() => runOperationAction("abort")}
+@@ -282,12 +288,20 @@ export default function App() {
+             </div>
+           )}
+ 
++          {path && view === "conflicts" && conflictCount > 0 && (
++            <ConflictCenter
++              repositoryPath={path}
++              operation={operation.operation}
++              onRepositoryChanged={() => refresh(path)}
++            />
++          )}
+           {path && view === "changes" && (
+             <StatusPanel
+               changes={changes}
+               onStage={async (files) => { await api.stage(path, files); await refresh(); }}
+               onUnstage={async (files) => { await api.unstage(path, files); await refresh(); }}
+               operationActive={operationActive}
++              onResolveConflicts={() => setView("conflicts")}
+               onCommit={async (commitMessage) => { await api.commit(path, commitMessage); await refresh(); }}
+             />
+           )}
+diff --git a/next/src/api.ts b/next/src/api.ts
+index f7e65b9..6d51cbc 100644
+--- a/next/src/api.ts
++++ b/next/src/api.ts
+@@ -4,6 +4,10 @@ import type {
+   BranchRecord,
+   CloneRequest,
+   CommandResult,
++  ConflictFileDetail,
++  ConflictFileSummary,
++  ConflictResolutionRequest,
++  ConflictResolutionResult,
+   CommitRecord,
+   FileChange,
+   PullRequestRecord,
+@@ -19,6 +23,9 @@ export const api = {
+   history: (path: string, limit = 300) => invoke<CommitRecord[]>("repository_history", { path, limit }),
+   status: (path: string) => invoke<FileChange[]>("repository_status", { path }),
+   branches: (path: string) => invoke<BranchRecord[]>("repository_branches", { path }),
++  conflicts: (path: string) => invoke<ConflictFileSummary[]>("repository_conflicts", { path }),
++  conflictDetail: (path: string, file: string) => invoke<ConflictFileDetail>("conflict_detail", { path, file }),
++  resolveConflict: (path: string, request: ConflictResolutionRequest) => invoke<ConflictResolutionResult>("resolve_conflict", { path, request }),
+   operationState: (path: string) => invoke<RepositoryOperationState>("repository_operation_state", { path }),
+   controlOperation: (path: string, action: RepositoryOperationAction) => invoke<CommandResult>("control_repository_operation", { path, action }),
+   stage: (path: string, files: string[]) => invoke<void>("stage_paths", { path, files }),
+diff --git a/next/src/components/ConflictCenter.tsx b/next/src/components/ConflictCenter.tsx
+new file mode 100644
+index 0000000..00a3956
+--- /dev/null
++++ b/next/src/components/ConflictCenter.tsx
+@@ -0,0 +1,280 @@
++import { useCallback, useEffect, useMemo, useState } from "react";
++import type { ChangeEvent, KeyboardEvent } from "react";
++import type {
++  ConflictFileDetail,
++  ConflictFileSummary,
++  ConflictResolutionRequest,
++  ConflictStage,
++  RepositoryOperationKind
++} from "../types";
++import { api } from "../api";
++import { parseConflictBlocks, replaceConflictBlock } from "../conflictMarkers";
++import { Icon } from "./Icon";
++
++type Props = {
++  repositoryPath: string;
++  operation: RepositoryOperationKind | null;
++  onRepositoryChanged: () => Promise<void>;
++};
++
++const kindLabels: Record<ConflictFileSummary["kind"], string> = {
++  content: "Both modified",
++  addAdd: "Both added",
++  currentDeleted: "Deleted / modified",
++  incomingDeleted: "Modified / deleted",
++  bothDeleted: "Both deleted",
++  complex: "Complex conflict"
++};
++
++function formatSize(size: number): string {
++  if (size < 1024) return `${size} B`;
++  if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KiB`;
++  return `${(size / (1024 * 1024)).toFixed(1)} MiB`;
++}
++
++function StagePreview({ label, stage }: { label: string; stage: ConflictStage | null }) {
++  return (
++    <section className="ux-conflict-stage">
++      <header>
++        <strong>{label}</strong>
++        {stage && <span>{stage.kind === "gitlink" ? "submodule" : stage.kind === "symlink" ? "symlink" : formatSize(stage.size)}</span>}
++      </header>
++      {!stage && <div className="ux-stage-empty"><Icon name="minus" /><span>Deleted on this side</span></div>}
++      {stage?.kind === "gitlink" && (
++        <div className="ux-stage-special"><span>Gitlink commit</span><code>{stage.oid}</code></div>
++      )}
++      {stage?.kind === "symlink" && (
++        <div className="ux-stage-special"><span>Symbolic link target</span><code>{stage.text || stage.oid}</code></div>
++      )}
++      {stage?.binary && (
++        <div className="ux-stage-special"><span>Binary content</span><code>{stage.oid.slice(0, 12)}</code><small>{formatSize(stage.size)}</small></div>
++      )}
++      {stage?.truncated && (
++        <div className="ux-stage-special"><span>Too large for inline editing</span><code>{stage.oid.slice(0, 12)}</code><small>{formatSize(stage.size)}</small></div>
++      )}
++      {stage?.kind === "blob" && !stage.binary && !stage.truncated && <pre>{stage.text ?? ""}</pre>}
++    </section>
++  );
++}
++
++export function ConflictCenter({ repositoryPath, operation, onRepositoryChanged }: Props) {
++  const [conflicts, setConflicts] = useState<ConflictFileSummary[]>([]);
++  const [selectedPath, setSelectedPath] = useState<string | null>(null);
++  const [detail, setDetail] = useState<ConflictFileDetail | null>(null);
++  const [mergedText, setMergedText] = useState("");
++  const [loading, setLoading] = useState(false);
++  const [pending, setPending] = useState<string | null>(null);
++  const [error, setError] = useState<string | null>(null);
++
++  const loadConflicts = useCallback(async (preferred?: string | null) => {
++    setLoading(true);
++    setError(null);
++    try {
++      const next = await api.conflicts(repositoryPath);
++      setConflicts(next);
++      setSelectedPath((current) => {
++        if (preferred && next.some((item) => item.path === preferred)) return preferred;
++        if (current && next.some((item) => item.path === current)) return current;
++        return next[0]?.path ?? null;
++      });
++      if (!next.length) setDetail(null);
++      return next;
++    } catch (reason) {
++      setError(String(reason));
++      return [];
++    } finally {
++      setLoading(false);
++    }
++  }, [repositoryPath]);
++
++  useEffect(() => { void loadConflicts(); }, [loadConflicts]);
++
++  useEffect(() => {
++    if (!selectedPath) { setDetail(null); return; }
++    let cancelled = false;
++    setLoading(true);
++    setError(null);
++    api.conflictDetail(repositoryPath, selectedPath)
++      .then((next) => {
++        if (cancelled) return;
++        setDetail(next);
++        setMergedText(next.workingText ?? next.current?.text ?? next.incoming?.text ?? "");
++      })
++      .catch((reason) => { if (!cancelled) setError(String(reason)); })
++      .finally(() => { if (!cancelled) setLoading(false); });
++    return () => { cancelled = true; };
++  }, [repositoryPath, selectedPath]);
++
++  const markerBlocks = useMemo(() => parseConflictBlocks(mergedText), [mergedText]);
++  const selectedSummary = conflicts.find((item) => item.path === selectedPath) ?? null;
++  const textEditable = Boolean(detail)
++    && !detail!.workingBinary
++    && !detail!.workingTruncated
++    && [detail!.base, detail!.current, detail!.incoming].filter(Boolean).every((stage) => stage!.kind === "blob" && !stage!.binary && !stage!.truncated);
++
++  const applyBlock = (index: number, choice: "current" | "incoming" | "bothCurrent" | "bothIncoming") => {
++    setMergedText((current) => replaceConflictBlock(current, index, choice));
++  };
++
++  const resolve = async (request: ConflictResolutionRequest, label: string) => {
++    if (!selectedPath || pending) return;
++    setPending(label);
++    setError(null);
++    try {
++      const result = await api.resolveConflict(repositoryPath, request);
++      await loadConflicts(result.nextPath);
++      await onRepositoryChanged();
++    } catch (reason) {
++      setError(String(reason));
++    } finally {
++      setPending(null);
++    }
++  };
++
++  const selectedCanEdit = textEditable && detail !== null;
++  const hasCurrent = Boolean(detail?.current);
++  const hasIncoming = Boolean(detail?.incoming);
++
++  if (error && !conflicts.length && !loading) {
++    return (
++      <div className="ux-conflict-center ux-conflicts-done is-error">
++        <Icon name="warning" />
++        <h2>Conflict Center unavailable</h2>
++        <p>{error}</p>
++      </div>
++    );
++  }
++
++  if (!conflicts.length && !loading) {
++    return (
++      <div className="ux-conflict-center ux-conflicts-done">
++        <Icon name="check" />
++        <h2>All conflicts resolved</h2>
++        <p>The index no longer contains unmerged entries. {operation ? "Use Continue in the operation banner to resume Git." : "You can return to Changes or History."}</p>
++      </div>
++    );
++  }
++
++  return (
++    <div className="ux-conflict-center">
++      <aside className="ux-conflict-files" aria-label="Unresolved files">
++        <header>
++          <div><span className="ux-eyebrow">Conflict Center</span><strong>{conflicts.length} unresolved</strong></div>
++          <button className="ux-icon-button" onClick={() => void loadConflicts(selectedPath)} title="Refresh conflicts" aria-label="Refresh conflicts"><Icon name="refresh" /></button>
++        </header>
++        <div className="ux-conflict-file-list">
++          {conflicts.map((conflict) => (
++            <button
++              key={conflict.path}
++              className={conflict.path === selectedPath ? "is-active" : ""}
++              onClick={() => setSelectedPath(conflict.path)}
++              title={conflict.path}
++            >
++              <Icon name={conflict.special ? "submodule" : conflict.binary ? "file" : "warning"} />
++              <span><strong>{conflict.path.split(/[\\/]/).pop()}</strong><small>{conflict.path}</small></span>
++              <em>{conflict.special ? "Special" : conflict.binary ? "Binary" : kindLabels[conflict.kind]}</em>
++            </button>
++          ))}
++        </div>
++      </aside>
++
++      <main className="ux-conflict-workspace">
++        <header className="ux-conflict-toolbar">
++          <div>
++            <span className="ux-eyebrow">Three-way resolution</span>
++            <h2 title={selectedPath || undefined}>{selectedPath || "Select a conflict"}</h2>
++            {selectedSummary && <small>{kindLabels[selectedSummary.kind]}{selectedSummary.tooLarge ? " · large file" : ""}</small>}
++          </div>
++          <div className="ux-conflict-toolbar-actions">
++            <button
++              className="ux-button"
++              disabled={!detail || pending !== null}
++              onClick={() => void resolve({ file: detail!.path, strategy: "current" }, hasCurrent ? "current" : "delete-current")}
++            >
++              {hasCurrent ? `Use ${detail?.labels.current || "current"}` : `Accept deletion (${detail?.labels.current || "current"})`}
++            </button>
++            <button
++              className="ux-button"
++              disabled={!detail || pending !== null}
++              onClick={() => void resolve({ file: detail!.path, strategy: "incoming" }, hasIncoming ? "incoming" : "delete-incoming")}
++            >
++              {hasIncoming ? `Use ${detail?.labels.incoming || "incoming"}` : `Accept deletion (${detail?.labels.incoming || "incoming"})`}
++            </button>
++          </div>
++        </header>
++
++        {error && <div className="ux-inline-error" role="alert"><Icon name="warning" /><span>{error}</span></div>}
++
++        {detail ? (
++          <>
++            <div className="ux-conflict-stages">
++              <StagePreview label={detail.labels.base} stage={detail.base} />
++              <StagePreview label={detail.labels.current} stage={detail.current} />
++              <StagePreview label={detail.labels.incoming} stage={detail.incoming} />
++            </div>
++
++            <section className="ux-merge-result">
++              <header>
++                <div>
++                  <strong>Merged result</strong>
++                  <span>{selectedCanEdit ? markerBlocks.length ? `${markerBlocks.length} unresolved block${markerBlocks.length === 1 ? "" : "s"}` : "Ready to stage" : "Side selection only for this conflict type"}</span>
++                </div>
++                <div>
++                  {selectedCanEdit && <button className="ux-button" disabled={pending !== null} onClick={() => setMergedText(detail.workingText ?? detail.current?.text ?? detail.incoming?.text ?? "")}>Reset working copy</button>}
++                  {selectedCanEdit && (
++                    <button
++                      className="ux-primary-button compact"
++                      disabled={pending !== null || markerBlocks.length > 0}
++                      title={markerBlocks.length ? "Resolve all conflict blocks before staging" : "Write this result and stage the file"}
++                      onClick={() => void resolve({ file: detail.path, strategy: "merged", content: mergedText }, "merged")}
++                    >
++                      {pending === "merged" ? "Saving…" : "Save, stage & next"}
++                    </button>
++                  )}
++                </div>
++              </header>
++
++              {selectedCanEdit && markerBlocks.length > 0 && (
++                <div className="ux-conflict-block-list" aria-label="Conflict blocks">
++                  {markerBlocks.map((_, index) => (
++                    <div key={`${detail.path}-block-${index}`}>
++                      <strong>Conflict {index + 1}</strong>
++                      <button onClick={() => applyBlock(index, "current")}>Use {detail.labels.current}</button>
++                      <button onClick={() => applyBlock(index, "incoming")}>Use {detail.labels.incoming}</button>
++                      <button onClick={() => applyBlock(index, "bothCurrent")}>Both · current first</button>
++                      <button onClick={() => applyBlock(index, "bothIncoming")}>Both · incoming first</button>
++                    </div>
++                  ))}
++                </div>
++              )}
++
++              {selectedCanEdit ? (
++                <textarea
++                  aria-label={`Merged result for ${detail.path}`}
++                  value={mergedText}
++                  spellCheck={false}
++                  onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setMergedText(event.target.value)}
++                  onKeyDown={(event: KeyboardEvent<HTMLTextAreaElement>) => {
++                    if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && markerBlocks.length === 0 && pending === null) {
++                      event.preventDefault();
++                      void resolve({ file: detail.path, strategy: "merged", content: mergedText }, "merged");
++                    }
++                  }}
++                />
++              ) : (
++                <div className="ux-merge-special">
++                  <Icon name={detail.current?.kind === "gitlink" || detail.incoming?.kind === "gitlink" ? "submodule" : "file"} />
++                  <strong>{detail.workingBinary ? "Binary conflict" : detail.workingTruncated ? "Large file conflict" : "Special Git object conflict"}</strong>
++                  <span>Inline text editing is intentionally disabled. Choose the correct side above, or stage a working copy you resolved with an external tool.</span>
++                  <button className="ux-button" disabled={pending !== null} onClick={() => void resolve({ file: detail.path, strategy: "working" }, "working")}>Stage working copy & next</button>
++                </div>
++              )}
++            </section>
++          </>
++        ) : (
++          <div className="ux-empty-state large"><Icon name="warning" /><strong>{loading ? "Loading conflict…" : "Select a conflict"}</strong></div>
++        )}
++      </main>
++    </div>
++  );
++}
+diff --git a/next/src/components/Icon.tsx b/next/src/components/Icon.tsx
+index ab34241..62c2bbe 100644
+--- a/next/src/components/Icon.tsx
++++ b/next/src/components/Icon.tsx
+@@ -4,12 +4,15 @@ export type IconName =
+   | "activity"
+   | "branch"
+   | "changes"
++  | "check"
+   | "chevronLeft"
+   | "chevronRight"
+   | "command"
+   | "download"
++  | "file"
+   | "history"
+   | "layers"
++  | "minus"
+   | "refresh"
+   | "repository"
+   | "search"
+@@ -26,12 +29,15 @@ const paths: Record<IconName, ReactNode> = {
+   activity: <path d="M3 12h3l2-5 4 10 2-5h7" />,
+   branch: <><circle cx="6" cy="5" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="19" r="2"/><path d="M6 7v10M8 12h4a6 6 0 0 0 6-6"/></>,
+   changes: <><path d="M4 7h10M4 12h16M4 17h10"/><path d="m16 5 3 2-3 2M16 15l3 2-3 2"/></>,
++  check: <path d="m5 12 4 4L19 6" />,
+   chevronLeft: <path d="m15 18-6-6 6-6" />,
+   chevronRight: <path d="m9 18 6-6-6-6" />,
+   command: <><path d="M8 8V6a2 2 0 1 0-2 2h12a2 2 0 1 0-2-2v12a2 2 0 1 0 2-2H6a2 2 0 1 0 2 2V6"/></>,
+   download: <><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></>,
++  file: <><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/></>,
+   history: <><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8"/><path d="M4 4v4h4M12 8v5l3 2"/></>,
+   layers: <><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></>,
++  minus: <path d="M5 12h14" />,
+   refresh: <><path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18.4 9A7 7 0 0 0 6 6.6L4 9M5.6 15A7 7 0 0 0 18 17.4L20 15"/></>,
+   repository: <><path d="M5 4h12a2 2 0 0 1 2 2v13H7a2 2 0 0 1-2-2V4Z"/><path d="M7 4v15M10 8h6"/></>,
+   search: <><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></>,
+diff --git a/next/src/components/RepositorySidebar.tsx b/next/src/components/RepositorySidebar.tsx
+index ba75a53..faa10bf 100644
+--- a/next/src/components/RepositorySidebar.tsx
++++ b/next/src/components/RepositorySidebar.tsx
+@@ -2,6 +2,7 @@ import type { RepositorySummary, Workspace } from "../types";
+ import { Icon, type IconName } from "./Icon";
+ 
+ export type RepositoryView =
++  | "conflicts"
+   | "changes"
+   | "history"
+   | "branches"
+@@ -49,7 +50,8 @@ export function RepositorySidebar({
+   onToggleCollapsed
+ }: Props) {
+   const navigation: NavItem[] = [
+-    { id: "changes", label: conflictCount ? "Conflicts" : "Changes", icon: conflictCount ? "warning" : "changes", badge: conflictCount || changeCount, critical: conflictCount > 0 },
++    ...(conflictCount > 0 ? [{ id: "conflicts" as RepositoryView, label: "Conflict Center", icon: "warning" as IconName, badge: conflictCount, critical: true }] : []),
++    { id: "changes", label: "Changes", icon: "changes", badge: changeCount },
+     { id: "history", label: "History", icon: "history" },
+     { id: "branches", label: "Branches", icon: "branch" },
+     { id: "worktrees", label: "Worktrees", icon: "worktree" },
+diff --git a/next/src/components/StatusPanel.tsx b/next/src/components/StatusPanel.tsx
+index 6c96afa..5616424 100644
+--- a/next/src/components/StatusPanel.tsx
++++ b/next/src/components/StatusPanel.tsx
+@@ -10,6 +10,7 @@ type Props = {
+   onUnstage: (paths: string[]) => Promise<void>;
+   onCommit: (message: string) => Promise<void>;
+   operationActive?: boolean;
++  onResolveConflicts?: () => void;
+ };
+ 
+ type GroupProps = {
+@@ -43,7 +44,7 @@ function ChangeGroup({ title, hint, items, selected, onToggle, tone = "normal" }
+   );
+ }
+ 
+-export function StatusPanel({ changes, onStage, onUnstage, onCommit, operationActive = false }: Props) {
++export function StatusPanel({ changes, onStage, onUnstage, onCommit, operationActive = false, onResolveConflicts }: Props) {
+   const [selectedStageable, setSelectedStageable] = useState<Set<string>>(new Set());
+   const [selectedStaged, setSelectedStaged] = useState<Set<string>>(new Set());
+   const [message, setMessage] = useState("");
+@@ -99,7 +100,8 @@ export function StatusPanel({ changes, onStage, onUnstage, onCommit, operationAc
+         {grouped.conflicts.length > 0 && (
+           <div className="ux-operation-banner is-critical" role="status">
+             <Icon name="warning" />
+-            <div><strong>{grouped.conflicts.length} unresolved conflict{grouped.conflicts.length === 1 ? "" : "s"}</strong><span>Resolve each file, then stage it to mark the result resolved.</span></div>
++            <div><strong>{grouped.conflicts.length} unresolved conflict{grouped.conflicts.length === 1 ? "" : "s"}</strong><span>Use the three-way Conflict Center, then continue the active Git operation.</span></div>
++            {onResolveConflicts && <button className="ux-button" onClick={onResolveConflicts}>Open Conflict Center</button>}
+           </div>
+         )}
+ 
+diff --git a/next/src/conflictMarkers.ts b/next/src/conflictMarkers.ts
+new file mode 100644
+index 0000000..e8e06ca
+--- /dev/null
++++ b/next/src/conflictMarkers.ts
+@@ -0,0 +1,33 @@
++export type ConflictBlockChoice = "current" | "incoming" | "bothCurrent" | "bothIncoming";
++
++export type MarkerBlock = {
++  start: number;
++  end: number;
++  current: string;
++  incoming: string;
++};
++
++export function parseConflictBlocks(text: string): MarkerBlock[] {
++  const pattern = /^<<<<<<<[^\n]*\r?\n([\s\S]*?)(?:^\|\|\|\|\|\|\|[^\n]*\r?\n[\s\S]*?)?^=======[^\n]*\r?\n([\s\S]*?)^>>>>>>>[^\n]*(?:\r?\n|$)/gm;
++  const blocks: MarkerBlock[] = [];
++  for (const match of text.matchAll(pattern)) {
++    const start = match.index ?? 0;
++    blocks.push({ start, end: start + match[0].length, current: match[1], incoming: match[2] });
++  }
++  return blocks;
++}
++
++function joinBoth(first: string, second: string): string {
++  if (!first || !second || first.endsWith("\n") || second.startsWith("\n")) return first + second;
++  return `${first}\n${second}`;
++}
++
++export function replaceConflictBlock(text: string, index: number, choice: ConflictBlockChoice): string {
++  const block = parseConflictBlocks(text)[index];
++  if (!block) return text;
++  const replacement = choice === "current" ? block.current
++    : choice === "incoming" ? block.incoming
++    : choice === "bothCurrent" ? joinBoth(block.current, block.incoming)
++    : joinBoth(block.incoming, block.current);
++  return `${text.slice(0, block.start)}${replacement}${text.slice(block.end)}`;
++}
+diff --git a/next/src/types.ts b/next/src/types.ts
+index 79325ca..8c1be52 100644
+--- a/next/src/types.ts
++++ b/next/src/types.ts
+@@ -83,6 +83,63 @@ export type RepositoryOperationState = {
+   message: string;
+ };
+ 
++export type ConflictStageKind = "blob" | "symlink" | "gitlink";
++
++export type ConflictStage = {
++  oid: string;
++  mode: string;
++  kind: ConflictStageKind;
++  text: string | null;
++  binary: boolean;
++  truncated: boolean;
++  size: number;
++};
++
++export type ConflictLabels = {
++  base: string;
++  current: string;
++  incoming: string;
++};
++
++export type ConflictKind = "content" | "addAdd" | "currentDeleted" | "incomingDeleted" | "bothDeleted" | "complex";
++
++export type ConflictFileSummary = {
++  path: string;
++  kind: ConflictKind;
++  hasBase: boolean;
++  hasCurrent: boolean;
++  hasIncoming: boolean;
++  binary: boolean;
++  special: boolean;
++  tooLarge: boolean;
++};
++
++export type ConflictFileDetail = {
++  path: string;
++  kind: ConflictKind;
++  labels: ConflictLabels;
++  base: ConflictStage | null;
++  current: ConflictStage | null;
++  incoming: ConflictStage | null;
++  workingText: string | null;
++  workingBinary: boolean;
++  workingTruncated: boolean;
++  workingSize: number;
++};
++
++export type ConflictResolutionStrategy = "current" | "incoming" | "merged" | "working" | "delete";
++
++export type ConflictResolutionRequest = {
++  file: string;
++  strategy: ConflictResolutionStrategy;
++  content?: string;
++};
++
++export type ConflictResolutionResult = {
++  remaining: number;
++  nextPath: string | null;
++};
++
+ export type PullRequestRecord = {
+   id: string;
+   number: number;
+diff --git a/next/src/ux.css b/next/src/ux.css
+index b689b62..8df4b2f 100644
+--- a/next/src/ux.css
++++ b/next/src/ux.css
+@@ -1,4 +1,4 @@
+-/* GitAhead Next UX v3
++/* GitAhead Next UX v4
+    Intent: compact cross-platform desktop UI, repository-state first navigation,
+    high information density, explicit focus states, and low visual noise. */
+ 
+@@ -2045,3 +2045,473 @@ button.ux-reference-row:hover:not(:disabled) {
+   .ux-git-operation { grid-template-columns: 24px minmax(0, 1fr); }
+   .ux-operation-actions { grid-column: 1 / -1; justify-content: flex-end; }
+ }
++
++/* Three-way Conflict Center */
++.ux-operation-banner {
++  grid-template-columns: 18px minmax(0, 1fr) auto;
++}
++
++.ux-operation-banner > .ux-button {
++  align-self: center;
++}
++
++.ux-conflict-center {
++  height: 100%;
++  min-width: 0;
++  min-height: 0;
++  display: grid;
++  grid-template-columns: 252px minmax(0, 1fr);
++  background: var(--ux-bg-0);
++}
++
++.ux-conflict-files {
++  min-width: 0;
++  min-height: 0;
++  display: grid;
++  grid-template-rows: auto minmax(0, 1fr);
++  background: var(--ux-bg-1);
++  border-right: 1px solid var(--ux-border);
++}
++
++.ux-conflict-files > header {
++  min-height: 52px;
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 8px;
++  padding: 8px 8px 8px 10px;
++  border-bottom: 1px solid var(--ux-border);
++}
++
++.ux-conflict-files > header > div {
++  min-width: 0;
++  display: grid;
++  gap: 2px;
++}
++
++.ux-conflict-files > header strong {
++  font-size: 11.5px;
++}
++
++.ux-conflict-file-list {
++  min-height: 0;
++  overflow: auto;
++}
++
++.ux-conflict-file-list > button {
++  width: 100%;
++  min-height: 48px;
++  display: grid;
++  grid-template-columns: 22px minmax(0, 1fr) auto;
++  align-items: center;
++  gap: 7px;
++  padding: 6px 8px;
++  border: 0;
++  border-bottom: 1px solid #252a33;
++  background: transparent;
++  color: var(--ux-text);
++  text-align: left;
++}
++
++.ux-conflict-file-list > button:hover {
++  background: var(--ux-bg-hover);
++}
++
++.ux-conflict-file-list > button.is-active {
++  background: #26394c;
++  box-shadow: inset 3px 0 0 var(--ux-accent);
++}
++
++.ux-conflict-file-list .ux-icon {
++  width: 15px;
++  height: 15px;
++  color: #e18d93;
++}
++
++.ux-conflict-file-list button > span {
++  min-width: 0;
++  display: grid;
++  gap: 1px;
++}
++
++.ux-conflict-file-list strong,
++.ux-conflict-file-list small {
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++}
++
++.ux-conflict-file-list strong {
++  font-size: 10.5px;
++  font-weight: 600;
++}
++
++.ux-conflict-file-list small {
++  color: var(--ux-text-3);
++  font-size: 9px;
++}
++
++.ux-conflict-file-list em {
++  max-width: 82px;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  padding: 2px 5px;
++  border-radius: 8px;
++  background: #47262c;
++  color: #efafb4;
++  font-size: 8.5px;
++  font-style: normal;
++}
++
++.ux-conflict-workspace {
++  min-width: 0;
++  min-height: 0;
++  display: flex;
++  flex-direction: column;
++  overflow: hidden;
++}
++
++.ux-conflict-toolbar {
++  min-height: 54px;
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 12px;
++  padding: 7px 10px;
++  background: var(--ux-bg-1);
++  border-bottom: 1px solid var(--ux-border);
++}
++
++.ux-conflict-toolbar > div:first-child {
++  min-width: 0;
++  display: grid;
++  gap: 1px;
++}
++
++.ux-conflict-toolbar h2 {
++  min-width: 0;
++  margin: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  font-family: var(--ux-mono);
++  font-size: 11.5px;
++  font-weight: 600;
++}
++
++.ux-conflict-toolbar small {
++  color: var(--ux-text-3);
++  font-size: 9px;
++}
++
++.ux-conflict-toolbar-actions {
++  display: flex;
++  align-items: center;
++  gap: 5px;
++  flex: 0 0 auto;
++}
++
++.ux-inline-error {
++  min-height: 34px;
++  display: flex;
++  align-items: center;
++  gap: 7px;
++  padding: 6px 10px;
++  color: #ffc1c5;
++  background: #45252b;
++  border-bottom: 1px solid #70333b;
++  font-size: 10px;
++}
++
++.ux-inline-error .ux-icon {
++  width: 14px;
++  height: 14px;
++  flex: 0 0 auto;
++}
++
++.ux-conflict-stages {
++  min-height: 145px;
++  flex: 0 1 42%;
++  display: grid;
++  grid-template-columns: repeat(3, minmax(0, 1fr));
++  border-bottom: 1px solid var(--ux-border);
++}
++
++.ux-conflict-stage {
++  min-width: 0;
++  min-height: 0;
++  display: grid;
++  grid-template-rows: 30px minmax(0, 1fr);
++  background: var(--ux-bg-0);
++  border-right: 1px solid var(--ux-border);
++}
++
++.ux-conflict-stage:last-child {
++  border-right: 0;
++}
++
++.ux-conflict-stage > header {
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 8px;
++  padding: 0 8px;
++  background: var(--ux-bg-2);
++  border-bottom: 1px solid var(--ux-border);
++}
++
++.ux-conflict-stage > header strong {
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  font-size: 10px;
++}
++
++.ux-conflict-stage > header span {
++  color: var(--ux-text-3);
++  font-size: 8.5px;
++}
++
++.ux-conflict-stage pre {
++  min-width: 0;
++  min-height: 0;
++  margin: 0;
++  overflow: auto;
++  padding: 8px 9px;
++  color: #d7dde7;
++  background: #171b21;
++  font-family: var(--ux-mono);
++  font-size: 9.5px;
++  line-height: 1.45;
++  tab-size: 4;
++  white-space: pre;
++}
++
++.ux-stage-empty,
++.ux-stage-special {
++  min-height: 0;
++  display: grid;
++  place-content: center;
++  justify-items: center;
++  gap: 6px;
++  padding: 12px;
++  color: var(--ux-text-3);
++  text-align: center;
++}
++
++.ux-stage-empty .ux-icon {
++  width: 20px;
++  height: 20px;
++}
++
++.ux-stage-special code {
++  max-width: 100%;
++  overflow-wrap: anywhere;
++  color: var(--ux-text-2);
++  font-family: var(--ux-mono);
++  font-size: 9.5px;
++}
++
++.ux-stage-special small {
++  color: var(--ux-text-3);
++  font-size: 9px;
++}
++
++.ux-merge-result {
++  min-height: 190px;
++  flex: 1 1 58%;
++  display: grid;
++  grid-template-rows: 38px auto minmax(0, 1fr);
++  overflow: hidden;
++  background: var(--ux-bg-1);
++}
++
++.ux-merge-result > header {
++  min-width: 0;
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 10px;
++  padding: 5px 8px 5px 10px;
++  border-bottom: 1px solid var(--ux-border);
++}
++
++.ux-merge-result > header > div:first-child {
++  min-width: 0;
++  display: grid;
++}
++
++.ux-merge-result > header strong {
++  font-size: 10.5px;
++}
++
++.ux-merge-result > header span {
++  color: var(--ux-text-3);
++  font-size: 9px;
++}
++
++.ux-merge-result > header > div:last-child {
++  display: flex;
++  gap: 5px;
++}
++
++.ux-conflict-block-list {
++  max-height: 104px;
++  overflow: auto;
++  padding: 5px 7px;
++  background: #2d241d;
++  border-bottom: 1px solid #51402e;
++}
++
++.ux-conflict-block-list > div {
++  min-height: 28px;
++  display: flex;
++  align-items: center;
++  gap: 5px;
++  padding: 3px 4px;
++}
++
++.ux-conflict-block-list strong {
++  min-width: 70px;
++  color: #e6c080;
++  font-size: 9.5px;
++}
++
++.ux-conflict-block-list button {
++  min-height: 22px;
++  padding: 2px 6px;
++  border: 1px solid #5b4a34;
++  border-radius: 2px;
++  background: #352c22;
++  color: #ded3bf;
++  font-size: 8.5px;
++}
++
++.ux-conflict-block-list button:hover,
++.ux-conflict-block-list button:focus-visible {
++  border-color: #947346;
++  background: #473724;
++  outline: 0;
++}
++
++.ux-merge-result textarea {
++  width: 100%;
++  min-width: 0;
++  min-height: 0;
++  resize: none;
++  padding: 9px 10px;
++  border: 0;
++  outline: 0;
++  background: #15191f;
++  color: #e2e6ed;
++  font-family: var(--ux-mono);
++  font-size: 10px;
++  line-height: 1.48;
++  tab-size: 4;
++  white-space: pre;
++}
++
++.ux-merge-result textarea:focus {
++  box-shadow: inset 0 0 0 1px #3c6d9e;
++}
++
++.ux-merge-special {
++  min-height: 0;
++  display: grid;
++  place-content: center;
++  justify-items: center;
++  gap: 7px;
++  padding: 20px;
++  color: var(--ux-text-3);
++  text-align: center;
++}
++
++.ux-merge-special .ux-icon {
++  width: 30px;
++  height: 30px;
++  color: var(--ux-text-2);
++}
++
++.ux-merge-special strong {
++  color: var(--ux-text-2);
++  font-size: 11px;
++}
++
++.ux-merge-special span {
++  max-width: 500px;
++  font-size: 9.5px;
++  line-height: 1.5;
++}
++
++.ux-conflicts-done {
++  display: grid;
++  place-content: center;
++  justify-items: center;
++  gap: 7px;
++  padding: 28px;
++  color: var(--ux-text-3);
++  text-align: center;
++}
++
++.ux-conflicts-done .ux-icon {
++  width: 42px;
++  height: 42px;
++  padding: 9px;
++  border: 1px solid #335f4a;
++  border-radius: 50%;
++  color: #8ad1a9;
++  background: #20382d;
++}
++
++.ux-conflicts-done h2 {
++  margin: 0;
++  color: var(--ux-text);
++  font-size: 14px;
++}
++
++.ux-conflicts-done p {
++  max-width: 520px;
++  margin: 0;
++  font-size: 10.5px;
++  line-height: 1.5;
++}
++
++@media (max-width: 1050px) {
++  .ux-conflict-center {
++    grid-template-columns: 210px minmax(0, 1fr);
++  }
++  .ux-conflict-toolbar {
++    align-items: flex-start;
++  }
++  .ux-conflict-toolbar-actions {
++    display: grid;
++  }
++}
++
++@media (max-width: 780px) {
++  .ux-conflict-center {
++    grid-template-columns: 1fr;
++    grid-template-rows: 170px minmax(0, 1fr);
++  }
++  .ux-conflict-files {
++    border-right: 0;
++    border-bottom: 1px solid var(--ux-border);
++  }
++  .ux-conflict-stages {
++    grid-template-columns: 1fr;
++    overflow: auto;
++  }
++  .ux-conflict-stage {
++    min-height: 150px;
++    border-right: 0;
++    border-bottom: 1px solid var(--ux-border);
++  }
++}
++
++.ux-conflicts-done.is-error .ux-icon {
++  border-color: #71343b;
++  color: #ff9fa6;
++  background: #3b2025;
++}

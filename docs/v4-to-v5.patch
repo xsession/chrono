@@ -1,0 +1,2509 @@
+diff --git a/next/docs/GITLENS_CLEANROOM_FEATURE_RESEARCH.md b/next/docs/GITLENS_CLEANROOM_FEATURE_RESEARCH.md
+new file mode 100644
+index 0000000..895c407
+--- /dev/null
++++ b/next/docs/GITLENS_CLEANROOM_FEATURE_RESEARCH.md
+@@ -0,0 +1,281 @@
++# GitAhead Next — GitLens Functionality Deep Research and Clean-Room Feature Plan
++
++## Executive summary
++
++GitLens has evolved beyond an annotation extension into a Git workbench. The most important product lesson for GitAhead Next is not any individual VS Code command; it is the consolidation of repository context into one place. GitLens 19 places the Commit Graph at the center of the experience, mixes current working state with history, makes worktrees visible as parallel contexts, and opens comparisons/details in-place rather than forcing users through a sequence of disconnected dialogs.[1][2]
++
++That direction aligns well with GitAhead Next, but the implementation should remain a native desktop Git client rather than imitate VS Code. The highest-value transferable capabilities are therefore repository-centric: rich commit search, merge-base-aware branch comparison, real commit diff statistics, multi-worktree WIP visibility, file and line history, blame, contributors, revision inspection, guided interactive rebase, and provider-neutral autolink/remote actions. These are useful offline and can be built directly on Git data.
++
++The v5 implementation delivers the first major wave:
++
++- interactive rebase planner with Pick, Reword, Edit, Squash, Fixup, Drop and reordering;
++- merge-topology safety checks and explicit history-rewrite confirmation;
++- rich search prefixes: `message:`, `author:`, `file:`, `change:`, `ref:`, `commit:` and `@me`;
++- Search & Compare with common-base analysis, unique commits and file deltas;
++- file history with rename following and optional all-ref scope;
++- line-range history using Git's `-L` history traversal;
++- full-file blame with author, commit, date, message and optional whitespace ignoring;
++- contributor activity aggregation;
++- change statistics in the history graph;
++- real commit file-change details in the inspector;
++- working-change summaries across linked worktrees in the History workbench.
++
++The implementation is clean-room. Feature behavior and interaction patterns were studied from GitLens public documentation and release notes. GitLens source code was not copied. This matters because the repository contains both MIT-licensed source and a separately licensed `plus` tree; GitAhead Next should not create an accidental dependency on proprietary implementation details.[3]
++
++## 1. Current GitLens product direction
++
++### 1.1 Commit Graph as the home/workbench
++
++GitLens 19.0, released August 12, 2026, rebuilt the Commit Graph and made it the leading GitLens view. The release emphasizes large-repository performance, complete keyboard navigation, richer row state, branch/tag detail sheets, reference search, lane folding, a changes column, and visibility of work in progress.[2]
++
++The current product documentation describes the Graph as the place where branch, HEAD, upstream, merge target, incoming/outgoing work, working changes across worktrees, branches, commits and agent activity can be understood together.[4] This is a stronger design than a classic Git client's pattern of separate History, Status, Branch Manager and Worktree dialogs with no shared context.
++
++**GitAhead implication:** History should be a workbench, not a read-only log. The graph/list should surface current WIP, change magnitude, worktree context and a details inspector. Specialized screens remain appropriate for complex tasks, but they should link back into the same repository context.
++
++### 1.2 Work-in-progress rows and multi-worktree awareness
++
++GitLens 18 introduced secondary-worktree WIP rows and an integrated details panel. GitLens 18.3 added more precise worktree and WIP actions, per-file added/removed counts and cleaner WIP navigation. GitLens 19.1 expanded live agent/worktree integration and lets users start tasks in worktrees without switching the main window.[1][5]
++
++The generalizable idea is independent of coding agents: a worktree is not just an administrative Git record. It is an active development context with branch, HEAD, dirty/conflict state and potentially pending work.
++
++**GitAhead implication:** show dirty secondary worktrees near history, and enrich the Worktrees screen with status before enabling destructive removal. The v5 History view now exposes WIP cards for any linked worktree that has uncommitted changes or conflicts.
++
++### 1.3 Rich history search
++
++GitLens exposes commit search by message, author, file and code/patch changes. Current documentation also describes reference/range search, `@me`, SHA matching and more advanced graph filters.[6][7]
++
++The important UX quality is that search is expressed in Git concepts rather than forcing separate forms for every query type. A developer can narrow history with a compact grammar and still use guided hints.
++
++**GitAhead implication:** provide a query grammar but keep it understandable and deterministic. The v5 parser supports:
++
++| Prefix | Meaning | Git basis |
++|---|---|---|
++| `message:` | commit message text | `git log --grep` |
++| `author:` | author identity | `git log --author` |
++| `file:` | repository path/pathspec | `git log -- <path>` |
++| `change:` | patch content regex | `git log -G` |
++| `ref:` | branch/tag/range scope | log revision argument |
++| `commit:` | exact revision/SHA | `--no-walk` |
++| `@me` | configured user identity | `user.name` / `user.email` |
++
++Unlike terminal command construction, all arguments are passed as process arguments rather than interpolated into a shell command.
++
++### 1.4 Search & Compare
++
++GitLens' Search & Compare view can persist searches and comparisons. Comparisons expose commits unique to each side and changed files, and GitLens has specific common-base comparison actions intended to show what a branch would contribute when merged.[7][8]
++
++**GitAhead implication:** branch comparison should be based on graph topology rather than only a two-tip diff. The v5 comparison endpoint computes:
++
++- resolved left/right commits;
++- merge base;
++- left-only and right-only commit counts;
++- bounded lists of unique commits;
++- file deltas from the common base to each side.
++
++This supports both "what do I have that main does not?" and "what would this branch introduce?" without conflating those questions.
++
++### 1.5 File history, line history and revision navigation
++
++GitLens File History supports rename following, all-branch scope and line-history switching. Line History tracks a selected line range. Revision navigation can move between file revisions and compare a revision with previous/next/working versions.[6][9]
++
++**GitAhead implication:** file evolution should be available even though GitAhead is not a source-code editor. The first implementation provides file history and `git log -L` line-range history in Git Intelligence. A later revision viewer should add previous/next navigation and a proper two-revision diff viewer.
++
++### 1.6 Blame and authorship
++
++Blame remains one of GitLens' core differentiators. It presents commit, author and age at line level, optionally with a heatmap, and its CodeLens layer summarizes recent change and authorship at file/block level.[6]
++
++**GitAhead implication:** do not fake editor decorations in a standalone Git client. Instead, expose blame as a high-density table with line number, commit, author, time, summary and source line. The v5 blame API uses `git blame --line-porcelain`, which is stable machine-oriented output, and supports whitespace-ignore mode.
++
++A future GitAhead file viewer can reuse this API to add gutter authorship or an age heatmap without coupling the Git backend to a particular editor widget.
++
++### 1.7 Contributors as navigation, not vanity metrics
++
++GitLens maintains a Contributors view. The useful part is not merely a commit leaderboard; contributors help answer "who knows this history?" and act as author filters for history searches.[9]
++
++**GitAhead implication:** contributor data should be actionable. v5 aggregates name, email, commit count, first observed commit and most recent activity. Future integration should let clicking a contributor open `author:` search and filter file-history ownership.
++
++### 1.8 Interactive rebase
++
++GitLens includes an Interactive Rebase Editor with reorder, edit, squash and drop, and newer releases integrate conflicted files directly into the rebase workflow.[6][10] GitKraken Desktop similarly treats interactive rebase as a visual history-shaping operation with restrictions around merge topology.[11]
++
++GitAhead Next already had persistent operation state and the v4 Conflict Center. The natural next step was therefore not another generic workflow command, but a plan editor that hands conflicts into the existing resolver.
++
++The v5 planner uses a native Git interactive-rebase session. It builds and validates a todo plan, injects it through a temporary `GIT_SEQUENCE_EDITOR`, and lets Git remain the state machine. This preserves standard `git rebase --continue`, `--skip` and `--abort` semantics, so the existing v3 operation controller and v4 Conflict Center work without a second custom rebase engine.
++
++### 1.9 Changes column and lazy cost
++
++GitLens 19 added a Changes column with several visualizations and deliberately made it optional because computing history statistics can be expensive on large repositories.[2]
++
++**GitAhead implication:** compute stats in a batch and make the column user-toggleable. v5 adds a single `git log --numstat` batch endpoint for loaded history rather than issuing one Git process per visible commit. The preference is stored locally and can be disabled.
++
++### 1.10 Keyboard-first operation
++
++GitLens 19 specifically emphasizes keyboard navigability in the graph. Search result navigation, reference jump and row actions are first-class keyboard workflows.[2][6]
++
++**GitAhead implication:** every mouse affordance needs a non-drag alternative. The rebase planner supports drag reorder but also provides explicit Up/Down buttons, which are more discoverable and usable with keyboard/assistive technology.
++
++## 2. Clean-room feature matrix
++
++| GitLens capability | Value to GitAhead | v5 status | Notes |
++|---|---:|---|---|
++| Commit Graph workbench | Very high | **Expanded** | WIP cards, changes column, real commit details |
++| Rich commit search | Very high | **Implemented** | Offline, provider-neutral |
++| Search & Compare | Very high | **Implemented** | Merge-base-aware |
++| File history | High | **Implemented** | Follow renames/all refs |
++| Line history | High | **Implemented** | Git `-L` range history |
++| File blame | High | **Implemented** | Standalone table, not editor overlay |
++| Contributors | Medium-high | **Implemented** | Activity + counts |
++| Interactive rebase | Very high | **Implemented** | Integrates existing conflict workflow; optional `--update-refs` |
++| Multi-worktree WIP | Very high | **Implemented first slice** | Dirty/conflict cards in History |
++| Changes/diffstat column | High | **Implemented** | Batch load + toggle |
++| Commit details file list | High | **Implemented** | On-demand |
++| Pinned searches | Medium | **Implemented locally** | Stored in browser local storage |
++| Branch focus/solo/hide | High | Planned | Best next graph-density feature |
++| Tags/remotes side graph rail | Medium-high | Planned | Needs structured refs API |
++| Revision prev/next diff | High | Planned | Needs file revision viewer |
++| Autolinks | Medium-high | Planned | Provider/custom patterns |
++| Remote URL actions | High | Planned | GitHub/GitLab/Gitea/Forgejo already fit project direction |
++| PR Launchpad | Medium-high | Partial foundation | Existing normalized PR API; needs triage UI |
++| WIP copy patch / move to worktree | High | Planned | Requires patch generation/apply safety layer |
++| Co-author picker | Medium | Planned | Contributor data now provides source |
++| Multi-diff review | High | Planned | Needs reusable diff viewer |
++| File heatmap/visual history | Medium | Planned | Useful, but after textual history tools |
++| AI compose/review/conflict resolution | Optional | Deferred | External model/service concern; core app should work fully offline |
++| Agent session tracking | Optional | Deferred | Separate integration architecture, not core Git semantics |
++| Cloud patches/workspaces | Optional | Deferred | Server/service feature, conflicts with offline-first default |
++
++## 3. Interactive rebase architecture
++
++### 3.1 Plan preparation
++
++The backend resolves the requested target, current HEAD and merge base. The replay range is the commits from merge base to HEAD. Merge commits are detected separately.
++
++The first planner intentionally blocks histories containing merge commits. Git can preserve merges with `--rebase-merges`, but exposing that safely requires representing labels, reset points and merge todo instructions. Silently flattening merge topology would be an unacceptable UX default.
++
++Each plan row contains:
++
++- commit SHA;
++- subject;
++- author identity;
++- timestamp;
++- added/deleted line counts;
++- file count.
++
++### 3.2 Supported actions
++
++- **Pick** — replay unchanged.
++- **Reword** — replay, then amend the message through a non-interactive `exec` instruction.
++- **Edit** — pause after replay so the user can amend manually.
++- **Squash** — combine with the previous surviving commit, keeping combined message material.
++- **Fixup** — combine with the previous surviving commit while discarding this commit's message.
++- **Drop** — omit the commit.
++
++The plan validates that Squash/Fixup cannot occur before a surviving commit, Reword has a message, every original commit appears exactly once, and the plan does not drop every commit.
++
++GitAhead also exposes Git's `--update-refs` behavior when the installed Git is new enough. Because GitAhead supplies its own reordered todo, it explicitly preserves the relationship between each original commit and any local branch refs that Git would update, while excluding branches checked out in another worktree. This matters when commits are reordered, reworded, squashed, fixed up, or dropped.
++
++### 3.3 Execution and recovery
++
++GitAhead writes a temporary rebase todo and a tiny sequence-editor helper in the repository Git directory, starts `git rebase --interactive --onto <target> <base>`, then removes the helper files once Git has consumed them.
++
++If Git pauses, on-disk Git state remains authoritative. The existing operation-state controller detects the rebase, the operation banner appears, and conflicts flow directly into Conflict Center. This avoids duplicated app-level rebase state.
++
++Current GitLens 19 follows the same broad safety direction: paused merge/rebase/cherry-pick/revert states are surfaced in one place, and its rebase confirmation exposes an Update Branches toggle backed by `--update-refs`.[1] GitAhead adopts the Git behavior without copying GitLens implementation code.
++
++## 4. Git Intelligence backend design
++
++### 4.1 Process isolation and safety
++
++All Git operations are executed as an argument array with `git -C <path> ...`. User query text is never concatenated into a shell command. Revision strings beginning with `-` are rejected for endpoints that treat input as a revision to avoid option confusion.
++
++The one deliberate shell-facing path is Git's own interactive-rebase todo `exec` action for Reword. Commit messages are single-quote escaped before being placed in that todo line. Real Git smoke tests include Reword execution.
++
++### 4.2 Performance rules
++
++The research highlights an important failure mode in feature-rich Git clients: background Git work can saturate repositories with many worktrees or large histories.[5] GitAhead should adopt explicit cost classes:
++
++- **cheap / refresh path** — status, summary, branch refs;
++- **visible-lazy** — selected commit details, blame, file history;
++- **batch optional** — history change statistics;
++- **explicit expensive** — all-ref search, contributors, fsck.
++
++v5 follows this model. Worktree WIP summaries load in the History view because they are visible; contributor scans happen only when the Contributors tab is opened; diffstats can be disabled.
++
++## 5. UX recommendations for the next iteration
++
++### P0 — finish workbench integration
++
++1. **Branch focus / solo / hide.** Large histories need a way to reduce reference noise. GitLens' Solo/Hide and focused graph scope are strong patterns.[10]
++2. **Graph-quality DAG.** GitAhead's current history lane is still intentionally minimal. A true parent-lane renderer should precede more graph ornaments.
++3. **Reusable diff viewer.** Search, comparison, file history, commit details and PR review all need one efficient text/binary diff surface.
++4. **Revision navigation.** Previous/next revision controls become straightforward once the diff viewer exists.
++
++### P1 — provider-aware context
++
++1. **Remote URL model** for GitHub, GitLab, Gitea, Forgejo, Bitbucket and Azure DevOps.
++2. **Autolink rules** for issue IDs in commit messages. GitLens supports both provider integration and custom pattern rules.[12]
++3. **PR association** in branch/commit details using GitAhead's existing normalized pull-request API.
++4. **Launchpad-style triage** only after provider authentication/settings are robust.
++
++### P1 — worktree precision
++
++1. dirty/conflict status in Worktrees manager (backend now exposes this);
++2. open terminal/reveal folder actions;
++3. safe removal with dirty/locked/main-worktree guardrails;
++4. copy selected working changes as patch to another worktree;
++5. per-worktree commit-message drafts.
++
++GitLens' recent release notes are particularly useful here because they document subtle bugs when an action is invoked from one worktree but accidentally runs against another.[5] GitAhead should require every worktree action to carry an explicit worktree path to the backend.
++
++### P2 — visual analytics
++
++Visual History, churn maps and heatmaps are valuable for discovery but lower priority than accurate history/compare/blame flows. When added, they should be derived from the same backend data rather than maintain a second history engine.
++
++## 6. Features intentionally not cloned
++
++### AI as a required workflow
++
++GitLens increasingly includes AI compose, review, explanation and conflict resolution. These can be useful, but GitAhead Next is explicitly positioned as an offline-capable standalone client. Core operations must not require an account or hosted AI service. Any future AI layer should consume exported Git/diff context through a plugin interface and remain optional.
++
++### Agent session UI in the core navigation
++
++GitLens 19.1 shows Codex, Copilot CLI, OpenCode and Claude Code sessions in graph/worktree context.[1] That makes sense in an IDE extension. For GitAhead, agent session tracking should be an optional integration because the application cannot assume which agent/runtime owns a worktree.
++
++### Cloud-only patch/workspace state
++
++Cloud Patches and Cloud Workspaces solve collaboration problems, but they would introduce account/server semantics into an otherwise local Git data model. A provider-neutral patch export/import feature is a better first step.
++
++## 7. Validation requirements
++
++The new functionality should be considered production-ready only when all of the following pass on Linux, Windows and macOS:
++
++- TypeScript typecheck and production Vite build;
++- Rust `cargo check` and `cargo test`;
++- rebase-plan test for Pick/Reword/Edit/Squash/Fixup/Drop;
++- rebase conflict → Conflict Center → Continue;
++- malformed/outdated plan rejection;
++- search qualifiers and quoted values;
++- rename-follow file history;
++- line history on moved/edited ranges;
++- blame on text, binary rejection behavior and large-file limits;
++- worktree status with spaces/unicode paths, detached HEAD, locked and prunable worktrees;
++- comparison when refs are equal, diverged, unrelated or deleted;
++- performance test on at least a 100k-commit repository and 20+ linked worktrees.
++
++The current container lacks Rust tooling, so v5 includes real Git smoke tests and TypeScript semantic checks but still requires `cargo check` on a development machine.
++
++## 8. Sources
++
++1. GitKraken, **GitLens Release Notes — Version 19.1 / 19.0**, September/August 2026. https://help.gitkraken.com/gitlens/gitlens-release-notes-current/
++2. GitKraken, **GitLens Release Notes — Version 19.0 Commit Graph redesign**, August 12, 2026. https://help.gitkraken.com/gitlens/gitlens-release-notes-current/
++3. GitKraken, **vscode-gitlens LICENSE** — MIT outside directories named `plus`; separate license for `plus`. https://github.com/gitkraken/vscode-gitlens/blob/main/LICENSE
++4. GitKraken, **Commit Graph is Home**, updated August 2026. https://help.gitkraken.com/gitlens/home-view/
++5. GitKraken, **GitLens current release notes — worktree/WIP improvements and performance fixes**, 2026. https://help.gitkraken.com/gitlens/gitlens-release-notes-current/
++6. GitKraken, **GitLens Core Features** — revision navigation, blame, CodeLens, rich search, interactive rebase. https://help.gitkraken.com/gitlens/gitlens-features/
++7. GitKraken, **GitLens Side Bar Views** — Search & Compare, File History, Line History, branches, contributors. https://help.gitkraken.com/gitlens/side-bar/
++8. GitKraken, **GitLens older release notes — Compare with Common Base**, GitLens 14.9. https://help.gitkraken.com/gitlens/gl-test/
++9. GitKraken, **GitLens Side Bar — File History, Line History and Contributors**, 2026 documentation. https://help.gitkraken.com/gitlens/side-bar/
++10. GitKraken, **GitLens Release Notes — Version 17.12**, April 15, 2026: graph sidebar, interactive rebase conflicted-files panel and search enhancements. https://help.gitkraken.com/gitlens/gl-release-v17-x/
++11. GitKraken, **GitKraken Desktop Interactive Rebase**, updated March 2026. https://help.gitkraken.com/gitkraken-desktop/interactive-rebase/
++12. GitKraken, **GitLens Integrations / Autolinks**, provider capabilities and custom remote context. https://help.gitkraken.com/gitlens/gl-integrations/
++13. GitKraken, **GitLens README**, current product scope including graph, worktrees, file/line history and search. https://github.com/gitkraken/vscode-gitlens/blob/main/README.md
+diff --git a/next/docs/UI_UX_DEEP_RESEARCH.md b/next/docs/UI_UX_DEEP_RESEARCH.md
+index 762091a..3b7d412 100644
+--- a/next/docs/UI_UX_DEEP_RESEARCH.md
++++ b/next/docs/UI_UX_DEEP_RESEARCH.md
+@@ -917,3 +917,29 @@ Real Git 2.47.3 smoke scenarios passed for text, manual merge result, add/add, m
+ 32. Git documentation, **git-update-index** — `--cacheinfo` direct index insertion. https://git-scm.com/docs/git-update-index
+ 33. Git documentation, **Git User Manual — conflict resolution help** — stage blob extraction, merge result and index resolution. https://git-scm.com/docs/user-manual
+ 34. Git documentation, **git-add** — staging the verified result into the index. https://git-scm.com/docs/git-add
++
++---
++
++# v5 addendum — Interactive Rebase + Git Intelligence
++
++The v5 slice extends the repository-state architecture in two directions: history rewriting and repository intelligence. The implementation follows the clean-room findings documented in `GITLENS_CLEANROOM_FEATURE_RESEARCH.md`.
++
++## Interactive rebase planner
++
++The new `RebasePlanner` turns rebase into a plan-first workflow instead of a generic command form. It resolves target/HEAD/common base, blocks merge-containing histories rather than silently flattening topology, loads diffstat per replayed commit, supports Pick/Reword/Edit/Squash/Fixup/Drop, allows drag or keyboard-order changes, validates plan invariants, and requires an explicit rewrite confirmation. Execution remains a native Git interactive rebase so v3's persistent operation state and v4's Conflict Center continue to own pause/conflict/continue/skip/abort behavior.
++
++## Git Intelligence workbench
++
++A new repository view brings high-value GitLens-style insight workflows into GitAhead without adopting IDE-only assumptions:
++
++- rich commit query grammar;
++- common-base reference comparison;
++- file and line history;
++- blame with commit/author/date/message data;
++- contributor activity;
++- pinned searches;
++- batch change statistics in History;
++- real selected-commit changed-file lists;
++- WIP cards for dirty/conflicted linked worktrees.
++
++The design stays offline-first. Provider/cloud/AI/agent functionality remains an optional future integration layer rather than becoming a prerequisite for core Git operations.
+diff --git a/next/src/App.tsx b/next/src/App.tsx
+index 6da4ec9..3b85761 100644
+--- a/next/src/App.tsx
++++ b/next/src/App.tsx
+@@ -13,6 +13,8 @@ import { Icon } from "./components/Icon";
+ import { CloneDialog } from "./components/CloneDialog";
+ import { OperationBanner } from "./components/OperationBanner";
+ import { ConflictCenter } from "./components/ConflictCenter";
++import { RebasePlanner } from "./components/RebasePlanner";
++import { GitIntelligencePanel } from "./components/GitIntelligencePanel";
+ 
+ const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
+ 
+@@ -196,6 +198,8 @@ export default function App() {
+     { id: "changes", title: "Show working tree", category: "View", shortcut: "Ctrl+1", disabled: !path, run: () => setView("changes") },
+     { id: "history", title: "Show history", category: "View", shortcut: "Ctrl+2", disabled: !path, run: () => setView("history") },
+     { id: "branches", title: "Show branches", category: "View", shortcut: "Ctrl+3", disabled: !path, run: () => setView("branches") },
++    { id: "rebase", title: "Plan interactive rebase", category: "History", keywords: ["rewrite", "squash", "fixup", "reword"], disabled: !path || operationActive, run: () => setView("rebase") },
++    { id: "intelligence", title: "Open Git Intelligence", category: "Explore", keywords: ["search", "compare", "blame", "file history", "contributors"], disabled: !path, run: () => setView("insights") },
+     { id: "worktrees", title: "Manage worktrees", category: "Repository", keywords: ["parallel", "checkout"], disabled: !path, run: () => setView("worktrees") },
+     { id: "submodules", title: "Manage submodules", category: "Repository", disabled: !path, run: () => setView("submodules") },
+     { id: "stashes", title: "Manage stashes", category: "Repository", disabled: !path, run: () => setView("stashes") },
+@@ -305,7 +309,7 @@ export default function App() {
+               onCommit={async (commitMessage) => { await api.commit(path, commitMessage); await refresh(); }}
+             />
+           )}
+-          {path && view === "history" && <CommitGraph commits={commits} selected={selectedCommit} onSelect={setSelectedCommit} />}
++          {path && view === "history" && <CommitGraph repositoryPath={path} commits={commits} selected={selectedCommit} onSelect={setSelectedCommit} />}
+           {path && view === "branches" && (
+             <BranchPanel
+               branches={branches}
+@@ -314,6 +318,12 @@ export default function App() {
+               onCreate={async (branch) => { await api.createBranch(path, branch); await refresh(); }}
+             />
+           )}
++          {path && view === "rebase" && (
++            <RebasePlanner repositoryPath={path} branches={branches} operationActive={operationActive} onStarted={() => refresh(path)} />
++          )}
++          {path && view === "insights" && (
++            <GitIntelligencePanel repositoryPath={path} branches={branches} onOpenCommit={(commit) => { setSelectedCommit(commit); setView("history"); }} />
++          )}
+           {path && (view === "worktrees" || view === "submodules" || view === "stashes" || view === "recovery") && (
+             <WorkflowPanel section={view} operationLocked={operationActive} onRun={(request) => api.workflow(path, request)} />
+           )}
+diff --git a/next/src/api.ts b/next/src/api.ts
+index 6d51cbc..bc337f5 100644
+--- a/next/src/api.ts
++++ b/next/src/api.ts
+@@ -11,6 +11,17 @@ import type {
+   CommitRecord,
+   FileChange,
+   PullRequestRecord,
++  BlameResult,
++  CommitDetails,
++  CommitSearchResult,
++  ContributorRecord,
++  FileHistoryRequest,
++  HistoryChangeStat,
++  RebasePlan,
++  RebaseStartRequest,
++  RebaseStartResult,
++  RefComparison,
++  WorktreeSummary,
+   RepositoryOperationAction,
+   RepositoryOperationState,
+   RepositorySummary,
+@@ -26,6 +37,17 @@ export const api = {
+   conflicts: (path: string) => invoke<ConflictFileSummary[]>("repository_conflicts", { path }),
+   conflictDetail: (path: string, file: string) => invoke<ConflictFileDetail>("conflict_detail", { path, file }),
+   resolveConflict: (path: string, request: ConflictResolutionRequest) => invoke<ConflictResolutionResult>("resolve_conflict", { path, request }),
++  prepareRebase: (path: string, target: string) => invoke<RebasePlan>("prepare_rebase_plan", { path, target }),
++  startRebase: (path: string, request: RebaseStartRequest) => invoke<RebaseStartResult>("start_rebase_plan", { path, request }),
++  searchCommits: (path: string, query: string, limit = 200) => invoke<CommitSearchResult>("search_commits", { path, request: { query, limit } }),
++  commitDetails: (path: string, commit: string) => invoke<CommitDetails>("commit_details", { path, commit }),
++  historyStats: (path: string, limit = 300) => invoke<HistoryChangeStat[]>("history_change_stats", { path, limit }),
++  compareRefs: (path: string, left: string, right: string, limit = 100) => invoke<RefComparison>("compare_refs", { path, left, right, limit }),
++  fileHistory: (path: string, request: FileHistoryRequest) => invoke<CommitRecord[]>("file_history", { path, request }),
++  lineHistory: (path: string, file: string, start: number, end: number, limit = 100) => invoke<CommitRecord[]>("line_history", { path, file, start, end, limit }),
++  blameFile: (path: string, file: string, revision: string | null = null, ignoreWhitespace = false, limit = 5000) => invoke<BlameResult>("blame_file", { path, file, revision, ignoreWhitespace, limit }),
++  contributors: (path: string, maxCommits = 20000) => invoke<ContributorRecord[]>("contributors", { path, maxCommits }),
++  worktreeSummaries: (path: string) => invoke<WorktreeSummary[]>("worktree_summaries", { path }),
+   operationState: (path: string) => invoke<RepositoryOperationState>("repository_operation_state", { path }),
+   controlOperation: (path: string, action: RepositoryOperationAction) => invoke<CommandResult>("control_repository_operation", { path, action }),
+   stage: (path: string, files: string[]) => invoke<void>("stage_paths", { path, files }),
+diff --git a/next/src/components/CommitGraph.tsx b/next/src/components/CommitGraph.tsx
+index a08bbd2..44eab52 100644
+--- a/next/src/components/CommitGraph.tsx
++++ b/next/src/components/CommitGraph.tsx
+@@ -1,10 +1,12 @@
+-import { useMemo, useState } from "react";
++import { useEffect, useMemo, useState } from "react";
+ import type { ChangeEvent } from "react";
+-import type { CommitRecord } from "../types";
++import type { CommitDetails, CommitRecord, HistoryChangeStat, WorktreeSummary } from "../types";
++import { api } from "../api";
+ import { Icon } from "./Icon";
+ import { SplitHandle } from "./SplitHandle";
+ 
+ type Props = {
++  repositoryPath: string;
+   commits: CommitRecord[];
+   selected: CommitRecord | null;
+   onSelect: (commit: CommitRecord) => void;
+@@ -13,16 +15,18 @@ type Props = {
+ function formatDate(value: string): string {
+   const date = /^\d+$/.test(value) ? new Date(Number(value) * 1000) : new Date(value);
+   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined, {
+-    month: "short",
+-    day: "2-digit",
+-    hour: "2-digit",
+-    minute: "2-digit"
++    month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit"
+   }).format(date);
+ }
+ 
+-export function CommitGraph({ commits, selected, onSelect }: Props) {
++export function CommitGraph({ repositoryPath, commits, selected, onSelect }: Props) {
+   const [query, setQuery] = useState("");
+-  const [inspectorWidth, setInspectorWidth] = useState(360);
++  const [inspectorWidth, setInspectorWidth] = useState(380);
++  const [stats, setStats] = useState<Map<string, HistoryChangeStat>>(new Map());
++  const [details, setDetails] = useState<CommitDetails | null>(null);
++  const [worktrees, setWorktrees] = useState<WorktreeSummary[]>([]);
++  const [showChanges, setShowChanges] = useState(() => localStorage.getItem("gitahead.history.changes") !== "off");
++
+   const filtered = useMemo(() => {
+     const needle = query.trim().toLowerCase();
+     if (!needle) return commits;
+@@ -30,86 +34,79 @@ export function CommitGraph({ commits, selected, onSelect }: Props) {
+       .some((value) => value.toLowerCase().includes(needle)));
+   }, [commits, query]);
+ 
++  useEffect(() => {
++    let cancelled = false;
++    if (!repositoryPath || !showChanges) { setStats(new Map()); return; }
++    api.historyStats(repositoryPath, commits.length || 300).then((rows) => {
++      if (!cancelled) setStats(new Map(rows.map((row) => [row.commit, row])));
++    }).catch(() => { if (!cancelled) setStats(new Map()); });
++    return () => { cancelled = true; };
++  }, [commits.length, repositoryPath, showChanges]);
++
++  useEffect(() => {
++    let cancelled = false;
++    if (!repositoryPath || !selected) { setDetails(null); return; }
++    setDetails(null);
++    api.commitDetails(repositoryPath, selected.id).then((value) => { if (!cancelled) setDetails(value); }).catch(() => undefined);
++    return () => { cancelled = true; };
++  }, [repositoryPath, selected]);
++
++  useEffect(() => {
++    let cancelled = false;
++    if (!repositoryPath) return;
++    api.worktreeSummaries(repositoryPath).then((value) => { if (!cancelled) setWorktrees(value); }).catch(() => undefined);
++    return () => { cancelled = true; };
++  }, [repositoryPath, commits]);
++
++  const wip = worktrees.filter((worktree) => worktree.dirtyCount > 0 || worktree.conflictCount > 0);
++
+   return (
+-    <div className="ux-history-view" style={{ gridTemplateColumns: `minmax(520px, 1fr) 6px ${inspectorWidth}px` }}>
++    <div className="ux-history-view" style={{ gridTemplateColumns: `minmax(560px, 1fr) 6px ${inspectorWidth}px` }}>
+       <section className="ux-history-list" aria-label="Commit history">
+         <header className="ux-view-toolbar">
+-          <div>
+-            <h2>History</h2>
+-            <span>{commits.length} commits loaded</span>
++          <div><h2>History</h2><span>{commits.length} commits loaded</span></div>
++          <div className="ux-history-toolbar-actions">
++            <label className="ux-check-row"><input type="checkbox" checked={showChanges} onChange={(event) => { setShowChanges(event.target.checked); localStorage.setItem("gitahead.history.changes", event.target.checked ? "on" : "off"); }} />Changes</label>
++            <label className="ux-search-field"><Icon name="search" /><input value={query} onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)} placeholder="Filter loaded commits" aria-label="Filter loaded commits" /></label>
+           </div>
+-          <label className="ux-search-field">
+-            <Icon name="search" />
+-            <input
+-              value={query}
+-              onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)}
+-              placeholder="Filter commits"
+-              aria-label="Filter commits"
+-            />
+-          </label>
+         </header>
+ 
+-        <div className="ux-commit-grid" aria-label="Commit history list">
+-          <div className="ux-commit-grid-header" aria-hidden="true">
+-            <span>Graph</span>
+-            <span>Commit</span>
+-            <span>Author</span>
+-            <span>Date</span>
+-            <span>SHA</span>
+-          </div>
++        {wip.length > 0 && <div className="ux-wip-strip" aria-label="Working changes across worktrees">
++          <span className="ux-wip-label">WIP</span>
++          {wip.map((worktree) => <div className={`ux-wip-item${worktree.conflictCount ? " has-conflicts" : ""}`} key={worktree.path} title={worktree.path}><Icon name="worktree" /><span><strong>{worktree.branch || "Detached HEAD"}{worktree.isMain ? " · current" : ""}</strong><small>{worktree.conflictCount ? `${worktree.conflictCount} conflicts · ` : ""}{worktree.dirtyCount} changed</small></span></div>)}
++        </div>}
++
++        <div className={`ux-commit-grid${showChanges ? " show-changes" : ""}`} aria-label="Commit history list">
++          <div className="ux-commit-grid-header" aria-hidden="true"><span>Graph</span><span>Commit</span><span>Author</span><span>Date</span>{showChanges && <span>Changes</span>}<span>SHA</span></div>
+           <div className="ux-commit-rows">
+             {filtered.map((commit, index) => {
+               const isSelected = selected?.id === commit.id;
+               const mergeParents = Math.max(0, commit.parents.length - 1);
+-              return (
+-                <button
+-                  key={commit.id}
+-                  className={`ux-commit-row${isSelected ? " is-selected" : ""}`}
+-                  onClick={() => onSelect(commit)}
+-                  aria-pressed={isSelected}
+-                >
+-                  <span className="ux-graph-cell" aria-label={mergeParents ? `${commit.parents.length} parents` : "Commit"}>
+-                    <i className={`ux-graph-node lane-${index % 5}`} />
+-                    {mergeParents > 0 && <small>+{mergeParents}</small>}
+-                  </span>
+-                  <span className="ux-commit-subject">{commit.subject}</span>
+-                  <span>{commit.authorName}</span>
+-                  <span>{formatDate(commit.authoredAt)}</span>
+-                  <code>{commit.id.slice(0, 8)}</code>
+-                </button>
+-              );
++              const stat = stats.get(commit.id);
++              return <button key={commit.id} className={`ux-commit-row${isSelected ? " is-selected" : ""}`} onClick={() => onSelect(commit)} aria-pressed={isSelected}>
++                <span className="ux-graph-cell" aria-label={mergeParents ? `${commit.parents.length} parents` : "Commit"}><i className={`ux-graph-node lane-${index % 5}`} />{mergeParents > 0 && <small>+{mergeParents}</small>}</span>
++                <span className="ux-commit-subject">{commit.subject}</span><span>{commit.authorName}</span><span>{formatDate(commit.authoredAt)}</span>
++                {showChanges && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} files, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}
++                <code>{commit.id.slice(0, 8)}</code>
++              </button>;
+             })}
+-            {!filtered.length && <div className="ux-empty-state">No commits match “{query}”.</div>}
++            {!filtered.length && <div className="ux-empty-state">No loaded commits match “{query}”. Use Git Intelligence for full-history file, patch and range search.</div>}
+           </div>
+         </div>
+       </section>
+ 
+-      <SplitHandle
+-        label="Resize commit inspector"
+-        onDelta={(delta) => setInspectorWidth((width) => Math.min(720, Math.max(280, width - delta)))}
+-      />
++      <SplitHandle label="Resize commit inspector" onDelta={(delta) => setInspectorWidth((width) => Math.min(780, Math.max(300, width - delta)))} />
+ 
+       <aside className="ux-inspector" aria-label="Commit details">
+-        {selected ? (
+-          <>
+-            <header className="ux-inspector-header">
+-              <span className="ux-eyebrow">Selected commit</span>
+-              <h2>{selected.subject}</h2>
+-            </header>
+-            <dl className="ux-metadata-list">
+-              <dt>Commit</dt><dd><code>{selected.id}</code></dd>
+-              <dt>Author</dt><dd>{selected.authorName}<small>{selected.authorEmail}</small></dd>
+-              <dt>Date</dt><dd>{formatDate(selected.authoredAt)}</dd>
+-              <dt>Parents</dt><dd>{selected.parents.length ? selected.parents.map((parent) => <code key={parent}>{parent.slice(0, 10)}</code>) : "Root commit"}</dd>
+-            </dl>
+-            <section className="ux-inspector-section">
+-              <div className="ux-section-title"><strong>Changes</strong><span>Patch data not loaded</span></div>
+-              <div className="ux-callout compact">
+-                Selectable file-level and hunk-level diffs should be loaded on demand here instead of rendering placeholder diff lines in the graph.
+-              </div>
+-            </section>
+-          </>
+-        ) : <div className="ux-empty-state">Select a commit to inspect it.</div>}
++        {selected ? <>
++          <header className="ux-inspector-header"><span className="ux-eyebrow">Selected commit</span><h2>{selected.subject}</h2></header>
++          <dl className="ux-metadata-list"><dt>Commit</dt><dd><code>{selected.id}</code></dd><dt>Author</dt><dd>{selected.authorName}<small>{selected.authorEmail}</small></dd><dt>Date</dt><dd>{formatDate(selected.authoredAt)}</dd><dt>Parents</dt><dd>{selected.parents.length ? selected.parents.map((parent) => <code key={parent}>{parent.slice(0, 10)}</code>) : "Root commit"}</dd></dl>
++          <section className="ux-inspector-section">
++            <div className="ux-section-title"><strong>Changes</strong><span>{details ? `${details.files.length} files · +${details.additions} −${details.deletions}` : "Loading…"}</span></div>
++            {details ? <div className="ux-commit-file-list">{details.files.map((file, index) => <div key={`${file.path}-${index}`}><span title={file.path}>{file.path}</span>{file.binary ? <small>binary</small> : <small><b>+{file.additions ?? 0}</b><i>−{file.deletions ?? 0}</i></small>}</div>)}</div> : <div className="ux-empty-state compact">Loading commit details…</div>}
++          </section>
++          {details?.body && details.body.trim() !== details.subject.trim() && <section className="ux-inspector-section"><div className="ux-section-title"><strong>Message</strong></div><pre className="ux-commit-body">{details.body}</pre></section>}
++        </> : <div className="ux-empty-state">Select a commit to inspect it.</div>}
+       </aside>
+     </div>
+   );
+diff --git a/next/src/components/GitIntelligencePanel.tsx b/next/src/components/GitIntelligencePanel.tsx
+new file mode 100644
+index 0000000..8277b8e
+--- /dev/null
++++ b/next/src/components/GitIntelligencePanel.tsx
+@@ -0,0 +1,238 @@
++import { useEffect, useMemo, useState } from "react";
++import type { ChangeEvent } from "react";
++import type { BlameResult, BranchRecord, CommitRecord, ContributorRecord, RefComparison } from "../types";
++import { api } from "../api";
++import { Icon } from "./Icon";
++
++type Tab = "search" | "compare" | "file" | "blame" | "contributors";
++
++type Props = {
++  repositoryPath: string;
++  branches: BranchRecord[];
++  onOpenCommit?: (commit: CommitRecord) => void;
++};
++
++function formatDate(value: string | number) {
++  const date = typeof value === "number" ? new Date(value * 1000) : new Date(value);
++  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
++}
++
++function CommitList({ commits, empty, onOpenCommit }: { commits: CommitRecord[]; empty: string; onOpenCommit?: (commit: CommitRecord) => void }) {
++  if (!commits.length) return <div className="ux-empty-state">{empty}</div>;
++  return <div className="ux-intel-commit-list">{commits.map((commit) => (
++    <button key={commit.id} onClick={() => onOpenCommit?.(commit)}>
++      <code>{commit.id.slice(0, 8)}</code><span><strong>{commit.subject}</strong><small>{commit.authorName} · {formatDate(commit.authoredAt)}</small></span>
++    </button>
++  ))}</div>;
++}
++
++function FileDeltaList({ files }: { files: RefComparison["filesFromBaseToLeft"] }) {
++  if (!files.length) return <div className="ux-empty-state compact">No file changes.</div>;
++  return <div className="ux-intel-file-list">{files.map((file, index) => (
++    <div key={`${file.path}-${index}`}><span title={file.path}>{file.path}</span>{file.binary ? <small>binary</small> : <small><b>+{file.additions ?? 0}</b> <i>−{file.deletions ?? 0}</i></small>}</div>
++  ))}</div>;
++}
++
++export function GitIntelligencePanel({ repositoryPath, branches, onOpenCommit }: Props) {
++  const [tab, setTab] = useState<Tab>("search");
++  const [busy, setBusy] = useState(false);
++  const [message, setMessage] = useState("Search history, compare refs, inspect file evolution, blame lines, and find repository experts.");
++
++  const [query, setQuery] = useState("");
++  const [searchResults, setSearchResults] = useState<CommitRecord[]>([]);
++  const [pins, setPins] = useState<string[]>(() => {
++    try {
++      const parsed: unknown = JSON.parse(localStorage.getItem("gitahead.searchPins") || "[]");
++      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(0, 12) : [];
++    } catch { return []; }
++  });
++
++  const current = branches.find((branch) => branch.current)?.name || "HEAD";
++  const likelyBase = branches.find((branch) => !branch.remote && !branch.current && ["main", "master", "develop"].includes(branch.name))?.name || "main";
++  const [left, setLeft] = useState(current);
++  const [right, setRight] = useState(likelyBase);
++  const [comparison, setComparison] = useState<RefComparison | null>(null);
++  const [compareTab, setCompareTab] = useState<"left" | "right" | "filesLeft" | "filesRight">("right");
++
++  const [filePath, setFilePath] = useState("");
++  const [followRenames, setFollowRenames] = useState(true);
++  const [allRefs, setAllRefs] = useState(false);
++  const [fileHistory, setFileHistory] = useState<CommitRecord[]>([]);
++  const [lineStart, setLineStart] = useState("1");
++  const [lineEnd, setLineEnd] = useState("1");
++  const [lineHistory, setLineHistory] = useState<CommitRecord[]>([]);
++
++  const [blamePath, setBlamePath] = useState("");
++  const [blameRevision, setBlameRevision] = useState("");
++  const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
++  const [blame, setBlame] = useState<BlameResult | null>(null);
++
++  const [contributors, setContributors] = useState<ContributorRecord[]>([]);
++
++  useEffect(() => {
++    setLeft(current);
++    setRight(likelyBase);
++    setComparison(null);
++    setSearchResults([]);
++    setFileHistory([]);
++    setLineHistory([]);
++    setBlame(null);
++    setContributors([]);
++    setMessage("Search history, compare refs, inspect file evolution, blame lines, and find repository experts.");
++  }, [repositoryPath, current, likelyBase]);
++
++  const run = async (label: string, work: () => Promise<void>) => {
++    setBusy(true);
++    setMessage(`${label}…`);
++    try { await work(); }
++    catch (error) { setMessage(String(error)); }
++    finally { setBusy(false); }
++  };
++
++  const search = () => run("Searching history", async () => {
++    const result = await api.searchCommits(repositoryPath, query.trim(), 250);
++    setSearchResults(result.commits);
++    setMessage(`${result.commits.length} commit${result.commits.length === 1 ? "" : "s"} matched.`);
++  });
++
++  const compare = () => run("Comparing references", async () => {
++    const result = await api.compareRefs(repositoryPath, left.trim(), right.trim(), 150);
++    setComparison(result);
++    setMessage(`${result.leftOnlyCount} only on ${result.left}; ${result.rightOnlyCount} only on ${result.right}.`);
++  });
++
++  const loadFileHistory = () => run("Loading file history", async () => {
++    const result = await api.fileHistory(repositoryPath, { file: filePath.trim(), followRenames, allRefs, limit: 300 });
++    setFileHistory(result);
++    setMessage(`${result.length} revisions touched ${filePath.trim()}.`);
++  });
++
++  const loadLineHistory = () => run("Loading line history", async () => {
++    const start = Math.max(1, Number(lineStart) || 1);
++    const end = Math.max(start, Number(lineEnd) || start);
++    const result = await api.lineHistory(repositoryPath, filePath.trim(), start, end, 150);
++    setLineHistory(result);
++    setMessage(`${result.length} commits affected lines ${start}–${end}.`);
++  });
++
++  const loadBlame = () => run("Blaming file", async () => {
++    const result = await api.blameFile(repositoryPath, blamePath.trim(), blameRevision.trim() || null, ignoreWhitespace, 5000);
++    setBlame(result);
++    setMessage(`${result.lines.length} lines attributed${result.truncated ? " (truncated)" : ""}.`);
++  });
++
++  useEffect(() => {
++    if (tab !== "contributors" || contributors.length) return;
++    void run("Loading contributors", async () => {
++      const result = await api.contributors(repositoryPath, 30000);
++      setContributors(result);
++      setMessage(`${result.length} contributors found.`);
++    });
++  // eslint-disable-next-line react-hooks/exhaustive-deps
++  }, [tab, repositoryPath]);
++
++  const pinQuery = (value: string) => {
++    const normalized = value.trim();
++    if (!normalized) return;
++    const next = [normalized, ...pins.filter((item) => item !== normalized)].slice(0, 12);
++    setPins(next);
++    localStorage.setItem("gitahead.searchPins", JSON.stringify(next));
++  };
++
++  const tabs: Array<{ id: Tab; label: string; icon: "search" | "compare" | "file" | "eye" | "users" }> = [
++    { id: "search", label: "Search", icon: "search" },
++    { id: "compare", label: "Compare", icon: "compare" },
++    { id: "file", label: "File & line history", icon: "file" },
++    { id: "blame", label: "Blame", icon: "eye" },
++    { id: "contributors", label: "Contributors", icon: "users" }
++  ];
++
++  const contributorMax = useMemo(() => Math.max(1, ...contributors.map((item) => item.commits)), [contributors]);
++
++  return (
++    <div className="ux-intelligence-view">
++      <header className="ux-view-toolbar">
++        <div><h2>Git Intelligence</h2><span>Search, compare and trace repository history without leaving the workbench</span></div>
++        <span className="ux-help-text">GitLens-inspired clean-room workflow</span>
++      </header>
++
++      <nav className="ux-intel-tabs" aria-label="Git intelligence tools">
++        {tabs.map((item) => <button key={item.id} className={tab === item.id ? "is-active" : ""} onClick={() => setTab(item.id)}><Icon name={item.icon} />{item.label}</button>)}
++      </nav>
++
++      <section className="ux-intel-content">
++        {tab === "search" && <>
++          <div className="ux-intel-querybar">
++            <label className="ux-search-field wide"><Icon name="search" /><input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void search(); }} placeholder={'message:"fix crash" author:alice file:src change:timeout ref:main..feature'} /></label>
++            <button className="ux-primary-button" disabled={busy || !query.trim()} onClick={() => void search()}>Search</button>
++            <button className="ux-button" disabled={!query.trim()} onClick={() => pinQuery(query)}>Pin</button>
++          </div>
++          <div className="ux-search-hints"><code>message:</code><code>author:</code><code>file:</code><code>change:</code><code>ref:</code><code>commit:</code><code>@me</code></div>
++          {pins.length > 0 && <div className="ux-pinned-searches"><span>Pinned</span>{pins.map((item) => <button key={item} onClick={() => setQuery(item)}>{item}</button>)}</div>}
++          <CommitList commits={searchResults} empty="Run a search to find commits by message, author, file, SHA, patch content, or revision range." onOpenCommit={onOpenCommit} />
++        </>}
++
++        {tab === "compare" && <>
++          <div className="ux-compare-controls">
++            <label><span>Left</span><input list="intel-refs" value={left} onChange={(event) => setLeft(event.target.value)} /></label>
++            <button className="ux-icon-button" onClick={() => { setLeft(right); setRight(left); }} title="Swap references" aria-label="Swap references">⇄</button>
++            <label><span>Right</span><input list="intel-refs" value={right} onChange={(event) => setRight(event.target.value)} /></label>
++            <datalist id="intel-refs">{branches.map((branch) => <option key={`${branch.remote}-${branch.name}`} value={branch.name} />)}</datalist>
++            <button className="ux-primary-button" disabled={busy || !left.trim() || !right.trim()} onClick={() => void compare()}>Compare</button>
++          </div>
++          {comparison ? <>
++            <div className="ux-comparison-summary">
++              <article><strong>{comparison.leftOnlyCount}</strong><span>only on {comparison.left}</span></article>
++              <article><strong>{comparison.rightOnlyCount}</strong><span>only on {comparison.right}</span></article>
++              <article><code>{comparison.mergeBase.slice(0, 10)}</code><span>common base</span></article>
++            </div>
++            <div className="ux-intel-subtabs">
++              <button className={compareTab === "left" ? "is-active" : ""} onClick={() => setCompareTab("left")}>Ahead: {comparison.left}</button>
++              <button className={compareTab === "right" ? "is-active" : ""} onClick={() => setCompareTab("right")}>Ahead: {comparison.right}</button>
++              <button className={compareTab === "filesLeft" ? "is-active" : ""} onClick={() => setCompareTab("filesLeft")}>Files → {comparison.left}</button>
++              <button className={compareTab === "filesRight" ? "is-active" : ""} onClick={() => setCompareTab("filesRight")}>Files → {comparison.right}</button>
++            </div>
++            {compareTab === "left" && <CommitList commits={comparison.leftOnly} empty="No commits unique to the left reference." onOpenCommit={onOpenCommit} />}
++            {compareTab === "right" && <CommitList commits={comparison.rightOnly} empty="No commits unique to the right reference." onOpenCommit={onOpenCommit} />}
++            {compareTab === "filesLeft" && <FileDeltaList files={comparison.filesFromBaseToLeft} />}
++            {compareTab === "filesRight" && <FileDeltaList files={comparison.filesFromBaseToRight} />}
++          </> : <div className="ux-empty-state">Compare two branches, tags or commits. The common base is calculated so you can review what each side would contribute to a merge.</div>}
++        </>}
++
++        {tab === "file" && <>
++          <div className="ux-file-history-controls">
++            <label className="grow"><span>Repository-relative file</span><input value={filePath} onChange={(event) => setFilePath(event.target.value)} placeholder="src/App.tsx" /></label>
++            <label className="ux-check-row"><input type="checkbox" checked={followRenames} onChange={(event) => setFollowRenames(event.target.checked)} />Follow renames</label>
++            <label className="ux-check-row"><input type="checkbox" checked={allRefs} onChange={(event) => setAllRefs(event.target.checked)} />All refs</label>
++            <button className="ux-primary-button" disabled={busy || !filePath.trim()} onClick={() => void loadFileHistory()}>File history</button>
++          </div>
++          <div className="ux-line-history-controls">
++            <span>Selected lines</span><input type="number" min="1" value={lineStart} onChange={(event) => setLineStart(event.target.value)} /><span>to</span><input type="number" min="1" value={lineEnd} onChange={(event) => setLineEnd(event.target.value)} /><button className="ux-button" disabled={busy || !filePath.trim()} onClick={() => void loadLineHistory()}>Line history</button>
++          </div>
++          <div className="ux-file-history-columns"><section><h3>File history <span>{fileHistory.length}</span></h3><CommitList commits={fileHistory} empty="Load a file to trace its revisions." onOpenCommit={onOpenCommit} /></section><section><h3>Line history <span>{lineHistory.length}</span></h3><CommitList commits={lineHistory} empty="Choose a line range to trace when those lines changed." onOpenCommit={onOpenCommit} /></section></div>
++        </>}
++
++        {tab === "blame" && <>
++          <div className="ux-file-history-controls">
++            <label className="grow"><span>Repository-relative file</span><input value={blamePath} onChange={(event) => setBlamePath(event.target.value)} placeholder="src/App.tsx" /></label>
++            <label><span>Revision</span><input value={blameRevision} onChange={(event) => setBlameRevision(event.target.value)} placeholder="working tree" /></label>
++            <label className="ux-check-row"><input type="checkbox" checked={ignoreWhitespace} onChange={(event) => setIgnoreWhitespace(event.target.checked)} />Ignore whitespace</label>
++            <button className="ux-primary-button" disabled={busy || !blamePath.trim()} onClick={() => void loadBlame()}>Blame</button>
++          </div>
++          {blame ? <div className="ux-blame-table" role="table" aria-label={`Blame for ${blame.file}`}>
++            <div className="ux-blame-row is-header" role="row"><span>Line</span><span>Commit</span><span>Author</span><span>Date</span><span>Content</span></div>
++            {blame.lines.map((line) => <div className="ux-blame-row" role="row" key={`${line.lineNumber}-${line.commit}`} title={line.summary}><code>{line.lineNumber}</code><code>{line.commit.slice(0, 8)}</code><span>{line.author}</span><span>{formatDate(line.authoredAt)}</span><pre>{line.content}</pre></div>)}
++            {blame.truncated && <div className="ux-inline-warning is-info"><Icon name="activity" /><span>Blame output is truncated for UI performance.</span></div>}
++          </div> : <div className="ux-empty-state">Load blame to see the commit, author and age of every line. This is repository data only; it does not annotate an external code editor.</div>}
++        </>}
++
++        {tab === "contributors" && <div className="ux-contributor-list">
++          {contributors.map((person) => <article key={`${person.email}-${person.name}`}><span className="ux-contributor-avatar">{person.name.slice(0, 2).toUpperCase()}</span><div><strong>{person.name}</strong><small>{person.email}</small><span>{formatDate(person.firstCommit)} → {formatDate(person.lastCommit)}</span></div><div className="ux-contributor-count"><b>{person.commits}</b><small>commits</small><i style={{ width: `${Math.max(4, person.commits / contributorMax * 100)}%` }} /></div></article>)}
++          {!contributors.length && <div className="ux-empty-state">{busy ? "Loading contributors…" : "No contributor data loaded."}</div>}
++        </div>}
++      </section>
++
++      <footer className="ux-intel-status"><span>{message}</span><span>{busy ? <><i className="ux-spinner" />Working…</> : "Ready"}</span></footer>
++    </div>
++  );
++}
+diff --git a/next/src/components/Icon.tsx b/next/src/components/Icon.tsx
+index 62c2bbe..b7a5c17 100644
+--- a/next/src/components/Icon.tsx
++++ b/next/src/components/Icon.tsx
+@@ -8,8 +8,10 @@ export type IconName =
+   | "chevronLeft"
+   | "chevronRight"
+   | "command"
++  | "compare"
+   | "download"
+   | "file"
++  | "eye"
+   | "history"
+   | "layers"
+   | "minus"
+@@ -20,6 +22,7 @@ export type IconName =
+   | "stash"
+   | "submodule"
+   | "upload"
++  | "users"
+   | "warning"
+   | "worktree";
+ 
+@@ -33,8 +36,10 @@ const paths: Record<IconName, ReactNode> = {
+   chevronLeft: <path d="m15 18-6-6 6-6" />,
+   chevronRight: <path d="m9 18 6-6-6-6" />,
+   command: <><path d="M8 8V6a2 2 0 1 0-2 2h12a2 2 0 1 0-2-2v12a2 2 0 1 0 2-2H6a2 2 0 1 0 2 2V6"/></>,
++  compare: <><path d="M7 7h11l-3-3M17 17H6l3 3"/><path d="m18 7-3 3M6 17l3-3"/></>,
+   download: <><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></>,
+   file: <><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v5h5"/></>,
++  eye: <><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.5"/></>,
+   history: <><path d="M4 12a8 8 0 1 0 2.3-5.7L4 8"/><path d="M4 4v4h4M12 8v5l3 2"/></>,
+   layers: <><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></>,
+   minus: <path d="M5 12h14" />,
+@@ -45,6 +50,7 @@ const paths: Record<IconName, ReactNode> = {
+   stash: <><path d="M4 7h16v13H4z"/><path d="M7 4h10l2 3H5l2-3ZM9 12h6"/></>,
+   submodule: <><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/><path d="M11 7h5a2 2 0 0 1 2 2v4M13 17H8a2 2 0 0 1-2-2v-4"/></>,
+   upload: <><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 4h14"/></>,
++  users: <><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20a6 6 0 0 1 12 0M14 15a5 5 0 0 1 7 5"/></>,
+   warning: <><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17h.01"/></>,
+   worktree: <><path d="M4 5h6v6H4zM14 13h6v6h-6z"/><path d="M10 8h4a3 3 0 0 1 3 3v2M7 11v3a3 3 0 0 0 3 3h4"/></>
+ };
+diff --git a/next/src/components/RebasePlanner.tsx b/next/src/components/RebasePlanner.tsx
+new file mode 100644
+index 0000000..f294fbd
+--- /dev/null
++++ b/next/src/components/RebasePlanner.tsx
+@@ -0,0 +1,291 @@
++import { useEffect, useMemo, useRef, useState } from "react";
++import type { BranchRecord, RebaseAction, RebasePlan, RebasePlanItem } from "../types";
++import { api } from "../api";
++import { Icon } from "./Icon";
++
++const actionLabels: Record<RebaseAction, string> = {
++  pick: "Pick",
++  reword: "Reword",
++  edit: "Edit / pause",
++  squash: "Squash",
++  fixup: "Fixup",
++  drop: "Drop"
++};
++
++type PlannedCommit = RebasePlanItem & {
++  authorName: string;
++  authorEmail: string;
++  authoredAt: string;
++  additions: number;
++  deletions: number;
++  filesChanged: number;
++};
++
++type Props = {
++  repositoryPath: string;
++  branches: BranchRecord[];
++  operationActive: boolean;
++  onStarted: () => Promise<void> | void;
++};
++
++function formatDate(value: string) {
++  const date = new Date(value);
++  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
++}
++
++function validatePlan(items: PlannedCommit[]): string[] {
++  const issues: string[] = [];
++  let priorKept = false;
++  for (const item of items) {
++    if ((item.action === "squash" || item.action === "fixup") && !priorKept) {
++      issues.push(`${actionLabels[item.action]} cannot be the first surviving action.`);
++    }
++    if (item.action === "reword" && !item.newMessage?.trim()) {
++      issues.push(`Reword for ${item.commit.slice(0, 8)} needs a new message.`);
++    }
++    if (item.action !== "drop") priorKept = true;
++  }
++  if (!priorKept) issues.push("The plan drops every commit.");
++  return issues;
++}
++
++export function RebasePlanner({ repositoryPath, branches, operationActive, onStarted }: Props) {
++  const localBranches = useMemo(() => branches.filter((branch) => !branch.remote), [branches]);
++  const suggestedTarget = useMemo(() => {
++    const current = localBranches.find((branch) => branch.current);
++    const preferred = localBranches.find((branch) => ["main", "master", "develop"].includes(branch.name) && !branch.current);
++    return preferred?.name || current?.upstream || "main";
++  }, [localBranches]);
++
++  const [target, setTarget] = useState(suggestedTarget);
++  const [plan, setPlan] = useState<RebasePlan | null>(null);
++  const [items, setItems] = useState<PlannedCommit[]>([]);
++  const [selected, setSelected] = useState<string | null>(null);
++  const [dragging, setDragging] = useState<string | null>(null);
++  const [busy, setBusy] = useState(false);
++  const [message, setMessage] = useState("Choose a target branch or revision, then load the commits that would be replayed.");
++  const [confirmStart, setConfirmStart] = useState(false);
++  const [updateRefs, setUpdateRefs] = useState(false);
++  const startButtonRef = useRef<HTMLButtonElement>(null);
++
++  const selectedItem = items.find((item) => item.commit === selected) || items[0] || null;
++  const issues = useMemo(() => validatePlan(items), [items]);
++  const rewriteCount = items.filter((item) => item.action !== "pick").length;
++
++  useEffect(() => {
++    setTarget(suggestedTarget);
++    setPlan(null);
++    setItems([]);
++    setSelected(null);
++    setDragging(null);
++    setConfirmStart(false);
++    setUpdateRefs(false);
++    setMessage("Choose a target branch or revision, then load the commits that would be replayed.");
++  }, [repositoryPath, suggestedTarget]);
++
++  const closeConfirm = () => {
++    setConfirmStart(false);
++    window.requestAnimationFrame(() => startButtonRef.current?.focus());
++  };
++
++  const load = async () => {
++    if (!target.trim()) return;
++    setBusy(true);
++    setMessage("Analyzing branch ancestry and rebase range…");
++    try {
++      const next = await api.prepareRebase(repositoryPath, target.trim());
++      setPlan(next);
++      const nextItems: PlannedCommit[] = next.commits.map((commit) => ({
++        commit: commit.commit,
++        subject: commit.subject,
++        action: "pick",
++        authorName: commit.authorName,
++        authorEmail: commit.authorEmail,
++        authoredAt: commit.authoredAt,
++        additions: commit.additions,
++        deletions: commit.deletions,
++        filesChanged: commit.filesChanged
++      }));
++      setItems(nextItems);
++      setSelected(nextItems[0]?.commit || null);
++      setMessage(next.blockedReason || `${nextItems.length} commit${nextItems.length === 1 ? "" : "s"} ready to plan.`);
++    } catch (error) {
++      setPlan(null);
++      setItems([]);
++      setMessage(String(error));
++    } finally {
++      setBusy(false);
++    }
++  };
++
++  const move = (commit: string, delta: number) => {
++    setItems((current) => {
++      const index = current.findIndex((item) => item.commit === commit);
++      const nextIndex = index + delta;
++      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) return current;
++      const next = [...current];
++      const [item] = next.splice(index, 1);
++      next.splice(nextIndex, 0, item);
++      return next;
++    });
++  };
++
++  const dropAt = (targetCommit: string) => {
++    if (!dragging || dragging === targetCommit) return setDragging(null);
++    setItems((current) => {
++      const from = current.findIndex((item) => item.commit === dragging);
++      const to = current.findIndex((item) => item.commit === targetCommit);
++      if (from < 0 || to < 0) return current;
++      const next = [...current];
++      const [item] = next.splice(from, 1);
++      next.splice(to, 0, item);
++      return next;
++    });
++    setDragging(null);
++  };
++
++  const changeAction = (commit: string, action: RebaseAction) => {
++    setItems((current) => current.map((item) => item.commit === commit ? { ...item, action, newMessage: action === "reword" ? (item.newMessage || item.subject) : item.newMessage } : item));
++  };
++
++  const start = async () => {
++    if (!plan || issues.length || plan.blockedReason) return;
++    setBusy(true);
++    setMessage("Starting interactive rebase…");
++    try {
++      const result = await api.startRebase(repositoryPath, {
++        target: plan.target,
++        base: plan.base,
++        items: items.map(({ commit, subject, action, newMessage }) => ({ commit, subject, action, newMessage })),
++        updateRefs: updateRefs && plan.supportsUpdateRefs
++      });
++      setConfirmStart(false);
++      if (result.operation.operation) {
++        setMessage(result.operation.hasConflicts ? "Rebase paused on conflicts. Continue in Conflict Center." : "Rebase paused at an edit step.");
++      } else {
++        setMessage("Interactive rebase completed successfully.");
++      }
++      await onStarted();
++    } catch (error) {
++      setMessage(String(error));
++    } finally {
++      setBusy(false);
++    }
++  };
++
++  return (
++    <div className="ux-rebase-planner">
++      <header className="ux-view-toolbar">
++        <div><h2>Interactive rebase</h2><span>Reorder and shape local history before it is shared</span></div>
++        <div className="ux-rebase-target">
++          <label><span>Rebase onto</span><input list="rebase-targets" value={target} onChange={(event) => setTarget(event.target.value)} placeholder="main" /></label>
++          <datalist id="rebase-targets">{branches.map((branch) => <option key={`${branch.remote}-${branch.name}`} value={branch.name} />)}</datalist>
++          <button className="ux-button" disabled={busy || operationActive || !target.trim()} onClick={() => void load()}><Icon name="refresh" />Load plan</button>
++        </div>
++      </header>
++
++      {operationActive && <div className="ux-inline-warning"><Icon name="warning" /><span>Finish or abort the current Git operation before starting a new interactive rebase.</span></div>}
++      {plan?.warnings.map((warning) => <div className="ux-inline-warning is-info" key={warning}><Icon name="activity" /><span>{warning}</span></div>)}
++      {plan?.blockedReason && <div className="ux-inline-warning"><Icon name="warning" /><span>{plan.blockedReason}</span></div>}
++
++      <div className="ux-rebase-body">
++        <section className="ux-rebase-list" aria-label="Interactive rebase plan">
++          <div className="ux-rebase-plan-header">
++            <span>Action</span><span>Commit</span><span>Author</span><span>Changes</span><span>Order</span>
++          </div>
++          {items.map((item, index) => (
++            <div
++              key={item.commit}
++              className={`ux-rebase-row${selected === item.commit ? " is-selected" : ""}${dragging === item.commit ? " is-dragging" : ""}`}
++              draggable
++              onDragStart={() => setDragging(item.commit)}
++              onDragEnd={() => setDragging(null)}
++              onDragOver={(event) => event.preventDefault()}
++              onDrop={() => dropAt(item.commit)}
++              onClick={() => setSelected(item.commit)}
++            >
++              <select aria-label={`Action for ${item.subject}`} value={item.action} onChange={(event) => changeAction(item.commit, event.target.value as RebaseAction)}>
++                {Object.entries(actionLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
++              </select>
++              <button className="ux-rebase-commit" onClick={() => setSelected(item.commit)}>
++                <code>{item.commit.slice(0, 8)}</code><strong>{item.subject}</strong>
++              </button>
++              <span title={item.authorEmail}>{item.authorName}</span>
++              <span className="ux-diffstat"><b>+{item.additions}</b><i>−{item.deletions}</i><small>{item.filesChanged} files</small></span>
++              <span className="ux-order-controls">
++                <button className="ux-icon-button" disabled={index === 0} onClick={(event) => { event.stopPropagation(); move(item.commit, -1); }} aria-label="Move commit up">↑</button>
++                <button className="ux-icon-button" disabled={index === items.length - 1} onClick={(event) => { event.stopPropagation(); move(item.commit, 1); }} aria-label="Move commit down">↓</button>
++                <span className="ux-drag-handle" title="Drag to reorder">⋮⋮</span>
++              </span>
++            </div>
++          ))}
++          {!items.length && <div className="ux-empty-state">{busy ? "Loading rebase plan…" : "No plan loaded."}</div>}
++        </section>
++
++        <aside className="ux-rebase-inspector">
++          {selectedItem ? <>
++            <span className="ux-eyebrow">Planned commit</span>
++            <h3>{selectedItem.subject}</h3>
++            <dl className="ux-metadata-list compact">
++              <dt>Commit</dt><dd><code>{selectedItem.commit}</code></dd>
++              <dt>Author</dt><dd>{selectedItem.authorName}<small>{selectedItem.authorEmail}</small></dd>
++              <dt>Date</dt><dd>{formatDate(selectedItem.authoredAt)}</dd>
++              <dt>Changes</dt><dd><b>+{selectedItem.additions}</b> / <span>−{selectedItem.deletions}</span> across {selectedItem.filesChanged} files</dd>
++            </dl>
++            <label className="ux-field-stack"><span>Action</span>
++              <select value={selectedItem.action} onChange={(event) => changeAction(selectedItem.commit, event.target.value as RebaseAction)}>
++                {Object.entries(actionLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
++              </select>
++            </label>
++            {selectedItem.action === "reword" && <label className="ux-field-stack"><span>New commit message</span><textarea value={selectedItem.newMessage || ""} onChange={(event) => setItems((current) => current.map((item) => item.commit === selectedItem.commit ? { ...item, newMessage: event.target.value } : item))} /></label>}
++            <div className="ux-rebase-action-help">
++              <strong>{actionLabels[selectedItem.action]}</strong>
++              <span>{{ pick: "Replay this commit unchanged.", reword: "Replay it and replace its commit message.", edit: "Pause after replaying this commit so you can amend it manually.", squash: "Combine it with the previous surviving commit and keep both messages.", fixup: "Combine it with the previous surviving commit and discard this message.", drop: "Remove this commit from the rewritten history." }[selectedItem.action]}</span>
++            </div>
++          </> : <div className="ux-empty-state">Select a commit to inspect it.</div>}
++        </aside>
++      </div>
++
++      <footer className="ux-rebase-footer">
++        <div>
++          <span>{message}</span>
++          {issues.length > 0 && <strong className="ux-validation-error">{issues[0]}{issues.length > 1 ? ` (+${issues.length - 1} more)` : ""}</strong>}
++        </div>
++        <div className="ux-rebase-footer-actions">
++          <label className="ux-check-row" title={plan?.supportsUpdateRefs ? "Move other local branch refs that point into the rewritten range." : "Requires Git 2.38 or newer."}>
++            <input type="checkbox" checked={updateRefs} disabled={!plan?.supportsUpdateRefs} onChange={(event) => setUpdateRefs(event.target.checked)} />Update related branches
++          </label>
++          <span>{rewriteCount ? `${rewriteCount} rewritten action${rewriteCount === 1 ? "" : "s"}` : "All commits picked"}</span>
++          <button ref={startButtonRef} className="ux-primary-button" disabled={busy || operationActive || !plan || Boolean(plan.blockedReason) || issues.length > 0 || items.length === 0} onClick={() => setConfirmStart(true)}>Start rebase…</button>
++        </div>
++      </footer>
++
++      {confirmStart && plan && (
++        <div className="ux-confirm-backdrop" role="presentation" onMouseDown={closeConfirm}>
++          <div
++            className="ux-confirm-dialog"
++            role="alertdialog"
++            aria-modal="true"
++            aria-labelledby="rebase-confirm-title"
++            aria-describedby="rebase-confirm-description"
++            onMouseDown={(event) => event.stopPropagation()}
++            onKeyDown={(event) => {
++              if (event.key === "Escape") { event.preventDefault(); closeConfirm(); return; }
++              if (event.key !== "Tab") return;
++              const buttons = [...event.currentTarget.querySelectorAll("button:not(:disabled)")] as HTMLButtonElement[];
++              if (!buttons.length) return;
++              const first = buttons[0];
++              const last = buttons[buttons.length - 1];
++              if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
++              else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
++            }}
++          >
++            <div className="ux-confirm-icon"><Icon name="warning" /></div>
++            <div><h2 id="rebase-confirm-title">Rewrite {items.length} local commit{items.length === 1 ? "" : "s"}?</h2><p id="rebase-confirm-description">This rebases the selected commits onto <strong>{plan.target}</strong>. Commit IDs will change.{updateRefs ? " Related local branch refs inside the rewritten range will also move." : ""} Do not use this on history other people are already depending on unless you have coordinated the rewrite.</p></div>
++            <div className="ux-confirm-actions"><button className="ux-button" autoFocus onClick={closeConfirm}>Review plan</button><button className="ux-danger-button solid" disabled={busy} onClick={() => void start()}>{busy ? "Starting…" : "Rewrite history"}</button></div>
++          </div>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/next/src/components/RepositorySidebar.tsx b/next/src/components/RepositorySidebar.tsx
+index faa10bf..464b0cd 100644
+--- a/next/src/components/RepositorySidebar.tsx
++++ b/next/src/components/RepositorySidebar.tsx
+@@ -6,6 +6,8 @@ export type RepositoryView =
+   | "changes"
+   | "history"
+   | "branches"
++  | "rebase"
++  | "insights"
+   | "worktrees"
+   | "submodules"
+   | "stashes"
+@@ -54,6 +56,8 @@ export function RepositorySidebar({
+     { id: "changes", label: "Changes", icon: "changes", badge: changeCount },
+     { id: "history", label: "History", icon: "history" },
+     { id: "branches", label: "Branches", icon: "branch" },
++    { id: "rebase", label: "Interactive rebase", icon: "layers" },
++    { id: "insights", label: "Git Intelligence", icon: "compare" },
+     { id: "worktrees", label: "Worktrees", icon: "worktree" },
+     { id: "submodules", label: "Submodules", icon: "submodule" },
+     { id: "stashes", label: "Stashes", icon: "stash" },
+diff --git a/next/src/types.ts b/next/src/types.ts
+index 8c1be52..0c0e7bc 100644
+--- a/next/src/types.ts
++++ b/next/src/types.ts
+@@ -151,3 +151,135 @@ export type PullRequestRecord = {
+   webUrl: string;
+   updatedAt: string | null;
+ };
++
++export type RebaseAction = "pick" | "reword" | "edit" | "squash" | "fixup" | "drop";
++
++export type RebasePlanCommit = {
++  commit: string;
++  authorName: string;
++  authorEmail: string;
++  authoredAt: string;
++  subject: string;
++  additions: number;
++  deletions: number;
++  filesChanged: number;
++};
++
++export type RebasePlan = {
++  target: string;
++  targetCommit: string;
++  base: string;
++  head: string;
++  commits: RebasePlanCommit[];
++  warnings: string[];
++  blockedReason: string | null;
++  supportsUpdateRefs: boolean;
++};
++
++export type RebasePlanItem = {
++  commit: string;
++  subject: string;
++  action: RebaseAction;
++  newMessage?: string;
++};
++
++export type RebaseStartRequest = {
++  target: string;
++  base: string;
++  items: RebasePlanItem[];
++  updateRefs: boolean;
++};
++
++export type RebaseStartResult = {
++  result: CommandResult;
++  operation: RepositoryOperationState;
++};
++
++export type CommitFileChange = {
++  path: string;
++  additions: number | null;
++  deletions: number | null;
++  binary: boolean;
++};
++
++export type CommitDetails = {
++  id: string;
++  parents: string[];
++  authorName: string;
++  authorEmail: string;
++  authoredAt: string;
++  subject: string;
++  body: string;
++  additions: number;
++  deletions: number;
++  files: CommitFileChange[];
++};
++
++export type HistoryChangeStat = {
++  commit: string;
++  additions: number;
++  deletions: number;
++  filesChanged: number;
++  binaryFiles: number;
++};
++
++export type CommitSearchResult = {
++  query: string;
++  commits: CommitRecord[];
++};
++
++export type RefComparison = {
++  left: string;
++  right: string;
++  leftId: string;
++  rightId: string;
++  mergeBase: string;
++  leftOnlyCount: number;
++  rightOnlyCount: number;
++  leftOnly: CommitRecord[];
++  rightOnly: CommitRecord[];
++  filesFromBaseToLeft: CommitFileChange[];
++  filesFromBaseToRight: CommitFileChange[];
++};
++
++export type FileHistoryRequest = {
++  file: string;
++  followRenames: boolean;
++  allRefs: boolean;
++  limit: number;
++};
++
++export type BlameLine = {
++  lineNumber: number;
++  commit: string;
++  author: string;
++  authorEmail: string;
++  authoredAt: number;
++  summary: string;
++  content: string;
++};
++
++export type BlameResult = {
++  file: string;
++  lines: BlameLine[];
++  truncated: boolean;
++};
++
++export type ContributorRecord = {
++  name: string;
++  email: string;
++  commits: number;
++  firstCommit: string;
++  lastCommit: string;
++};
++
++export type WorktreeSummary = {
++  path: string;
++  head: string;
++  branch: string | null;
++  isMain: boolean;
++  locked: string | null;
++  prunable: string | null;
++  dirtyCount: number;
++  conflictCount: number;
++};
+diff --git a/next/src/ux.css b/next/src/ux.css
+index 8df4b2f..ebdb62d 100644
+--- a/next/src/ux.css
++++ b/next/src/ux.css
+@@ -2515,3 +2515,245 @@ button.ux-reference-row:hover:not(:disabled) {
+   color: #ff9fa6;
+   background: #3b2025;
+ }
++
++/* v5 — interactive rebase + Git Intelligence workbench */
++.ux-rebase-planner,
++.ux-intelligence-view {
++  height: 100%;
++  min-width: 0;
++  display: grid;
++  grid-template-rows: auto minmax(0, 1fr) auto;
++  background: var(--surface-0, #1f2025);
++}
++
++.ux-rebase-target,
++.ux-history-toolbar-actions,
++.ux-intel-querybar,
++.ux-compare-controls,
++.ux-file-history-controls,
++.ux-line-history-controls {
++  display: flex;
++  align-items: end;
++  gap: 8px;
++  min-width: 0;
++}
++
++.ux-rebase-target label,
++.ux-compare-controls label,
++.ux-file-history-controls label {
++  display: grid;
++  gap: 4px;
++  min-width: 0;
++  color: #aeb5c2;
++  font-size: 11px;
++}
++
++.ux-rebase-target input,
++.ux-rebase-inspector input,
++.ux-rebase-inspector select,
++.ux-rebase-inspector textarea,
++.ux-compare-controls input,
++.ux-file-history-controls input,
++.ux-line-history-controls input {
++  min-height: 30px;
++  border: 1px solid #454852;
++  border-radius: 4px;
++  background: #27292f;
++  color: #edf1f7;
++  padding: 5px 8px;
++  outline: none;
++}
++
++.ux-rebase-target input:focus,
++.ux-rebase-inspector input:focus,
++.ux-rebase-inspector select:focus,
++.ux-rebase-inspector textarea:focus,
++.ux-compare-controls input:focus,
++.ux-file-history-controls input:focus,
++.ux-line-history-controls input:focus {
++  border-color: #4b91d1;
++  box-shadow: 0 0 0 2px #4b91d126;
++}
++
++.ux-rebase-body {
++  min-height: 0;
++  display: grid;
++  grid-template-columns: minmax(560px, 1fr) minmax(280px, 370px);
++  border-top: 1px solid #30323a;
++}
++
++.ux-rebase-list {
++  min-width: 0;
++  overflow: auto;
++  border-right: 1px solid #30323a;
++}
++
++.ux-rebase-plan-header,
++.ux-rebase-row {
++  display: grid;
++  grid-template-columns: 112px minmax(260px, 1fr) minmax(120px, .32fr) 118px 94px;
++  align-items: center;
++  min-width: 760px;
++}
++
++.ux-rebase-plan-header {
++  position: sticky;
++  top: 0;
++  z-index: 2;
++  height: 28px;
++  padding: 0 8px;
++  background: #2d2f36;
++  color: #929aa8;
++  border-bottom: 1px solid #3a3c44;
++  font-size: 10px;
++  text-transform: uppercase;
++  letter-spacing: .04em;
++}
++
++.ux-rebase-row {
++  min-height: 44px;
++  padding: 4px 8px;
++  border-bottom: 1px solid #2c2e34;
++  color: #e5e9ef;
++  transition: background .08s ease, opacity .08s ease;
++}
++
++.ux-rebase-row:hover { background: #2b2e35; }
++.ux-rebase-row.is-selected { background: #283b4e; box-shadow: inset 3px 0 #4b91d1; }
++.ux-rebase-row.is-dragging { opacity: .45; }
++.ux-rebase-row select { width: 102px; min-height: 28px; border: 1px solid #454852; border-radius: 3px; background: #23252b; color: #e8ecf3; }
++.ux-rebase-commit { min-width: 0; display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; align-items: center; border: 0; background: transparent; color: inherit; text-align: left; padding: 0 6px; }
++.ux-rebase-commit strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
++.ux-rebase-commit code { color: #8fbde8; font-size: 11px; }
++.ux-diffstat { display: grid; grid-template-columns: auto auto; gap: 0 7px; align-items: center; font-size: 11px; }
++.ux-diffstat b, .ux-change-cell b, .ux-intel-file-list b { color: #8dbb7a; font-weight: 600; }
++.ux-diffstat i, .ux-change-cell i, .ux-intel-file-list i { color: #d78b8b; font-style: normal; }
++.ux-diffstat small { grid-column: 1 / -1; color: #8f97a5; }
++.ux-order-controls { display: flex; align-items: center; justify-content: flex-end; gap: 3px; }
++.ux-drag-handle { padding: 5px 4px; color: #747d8b; cursor: grab; letter-spacing: -3px; }
++
++.ux-rebase-inspector { min-width: 0; overflow: auto; padding: 14px; background: #24262c; }
++.ux-rebase-inspector h3 { margin: 4px 0 12px; font-size: 15px; line-height: 1.35; }
++.ux-rebase-inspector .ux-field-stack { margin-top: 12px; }
++.ux-rebase-inspector textarea { min-height: 96px; resize: vertical; }
++.ux-rebase-action-help { margin-top: 12px; display: grid; gap: 5px; padding: 10px; border: 1px solid #3a3d45; background: #292c32; font-size: 12px; }
++.ux-rebase-action-help span { color: #aeb5c2; line-height: 1.45; }
++
++.ux-rebase-footer,
++.ux-intel-status {
++  min-height: 38px;
++  display: flex;
++  align-items: center;
++  justify-content: space-between;
++  gap: 16px;
++  padding: 5px 10px;
++  border-top: 1px solid #34363d;
++  background: #25272d;
++  color: #aeb5c2;
++  font-size: 11px;
++}
++.ux-rebase-footer > div { display: flex; align-items: center; gap: 10px; min-width: 0; }
++.ux-rebase-footer > div:first-child { overflow: hidden; }
++.ux-rebase-footer > div:first-child > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.ux-validation-error { color: #ef9a9a; font-weight: 500; }
++.ux-inline-warning.is-info { border-color: #39536c; background: #263542; color: #c4d7e8; }
++
++.ux-intelligence-view { grid-template-rows: auto auto minmax(0, 1fr) auto; }
++.ux-intel-tabs { display: flex; align-items: center; min-width: 0; overflow-x: auto; border-top: 1px solid #30323a; border-bottom: 1px solid #30323a; background: #292b31; }
++.ux-intel-tabs button { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-right: 1px solid #34363d; background: transparent; color: #aeb5c2; padding: 0 12px; white-space: nowrap; }
++.ux-intel-tabs button:hover { background: #31343b; color: #edf1f7; }
++.ux-intel-tabs button.is-active { background: #252b33; color: #fff; box-shadow: inset 0 -2px #4b91d1; }
++.ux-intel-tabs .ux-icon { width: 15px; height: 15px; }
++.ux-intel-content { min-height: 0; overflow: auto; padding: 10px; background: #202227; }
++.ux-intel-querybar .ux-search-field.wide { flex: 1; min-width: 280px; }
++.ux-intel-querybar .ux-search-field.wide input { width: 100%; }
++.ux-search-hints, .ux-pinned-searches { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin: 8px 0; color: #8f97a5; font-size: 11px; }
++.ux-search-hints code { padding: 2px 5px; border: 1px solid #363943; background: #292b31; }
++.ux-pinned-searches button { border: 1px solid #3d414a; border-radius: 10px; background: #292c33; color: #c6ccd5; padding: 2px 8px; font-size: 11px; }
++.ux-pinned-searches button:hover { border-color: #4b91d1; color: #fff; }
++
++.ux-intel-commit-list { border: 1px solid #34363e; background: #25272d; }
++.ux-intel-commit-list > button { width: 100%; min-height: 40px; display: grid; grid-template-columns: 76px minmax(0, 1fr); align-items: center; gap: 8px; border: 0; border-bottom: 1px solid #31343a; background: transparent; color: #e4e8ef; text-align: left; padding: 5px 9px; }
++.ux-intel-commit-list > button:last-child { border-bottom: 0; }
++.ux-intel-commit-list > button:hover { background: #2d3138; }
++.ux-intel-commit-list code { color: #8fbde8; font-size: 11px; }
++.ux-intel-commit-list span { min-width: 0; display: grid; gap: 2px; }
++.ux-intel-commit-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
++.ux-intel-commit-list small { color: #8f97a5; font-size: 10px; }
++
++.ux-compare-controls { align-items: end; margin-bottom: 10px; }
++.ux-compare-controls label { flex: 1; }
++.ux-comparison-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
++.ux-comparison-summary article { min-height: 64px; display: grid; align-content: center; gap: 2px; padding: 8px 10px; border: 1px solid #373a43; background: #282b31; }
++.ux-comparison-summary strong { font-size: 20px; }
++.ux-comparison-summary code { color: #8fbde8; }
++.ux-comparison-summary span { color: #929aa8; font-size: 11px; }
++.ux-intel-subtabs { display: flex; flex-wrap: wrap; border: 1px solid #353841; border-bottom: 0; background: #292b31; }
++.ux-intel-subtabs button { min-height: 29px; border: 0; border-right: 1px solid #353841; background: transparent; color: #aeb5c2; padding: 0 10px; font-size: 11px; }
++.ux-intel-subtabs button.is-active { background: #35485b; color: #fff; }
++.ux-intel-file-list { border: 1px solid #353841; background: #25272d; }
++.ux-intel-file-list > div { min-height: 30px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 3px 8px; border-bottom: 1px solid #30323a; font-size: 11px; }
++.ux-intel-file-list > div:last-child { border-bottom: 0; }
++.ux-intel-file-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.ux-intel-file-list small { display: inline-flex; gap: 6px; color: #8f97a5; }
++
++.ux-file-history-controls { align-items: end; margin-bottom: 8px; }
++.ux-file-history-controls .grow { flex: 1; }
++.ux-check-row { display: inline-flex !important; align-items: center !important; gap: 5px !important; min-height: 30px; color: #aeb5c2; font-size: 11px; white-space: nowrap; }
++.ux-check-row input { width: auto !important; min-height: 0 !important; accent-color: #4b91d1; }
++.ux-line-history-controls { align-items: center; padding: 6px 8px; margin-bottom: 8px; border: 1px solid #353841; background: #292c32; color: #aeb5c2; font-size: 11px; }
++.ux-line-history-controls input { width: 70px; }
++.ux-file-history-columns { min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
++.ux-file-history-columns section { min-width: 0; }
++.ux-file-history-columns h3 { display: flex; justify-content: space-between; margin: 0; padding: 7px 9px; border: 1px solid #34363e; border-bottom: 0; background: #292b31; font-size: 12px; }
++.ux-file-history-columns h3 span { color: #929aa8; font-weight: 400; }
++
++.ux-blame-table { min-width: 900px; border: 1px solid #34363e; background: #24262c; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11px; }
++.ux-blame-row { display: grid; grid-template-columns: 54px 76px 140px 150px minmax(280px, 1fr); align-items: center; min-height: 26px; border-bottom: 1px solid #30323a; }
++.ux-blame-row.is-header { position: sticky; top: -10px; z-index: 1; min-height: 28px; background: #2d3036; color: #929aa8; font-family: "Segoe UI", sans-serif; text-transform: uppercase; font-size: 10px; }
++.ux-blame-row > * { min-width: 0; padding: 3px 7px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.ux-blame-row pre { margin: 0; }
++.ux-blame-row:nth-child(odd):not(.is-header) { background: #27292f; }
++
++.ux-contributor-list { display: grid; gap: 5px; max-width: 900px; }
++.ux-contributor-list article { display: grid; grid-template-columns: 38px minmax(220px, 1fr) minmax(170px, .55fr); align-items: center; gap: 9px; min-height: 55px; padding: 6px 9px; border: 1px solid #343740; background: #282a30; }
++.ux-contributor-avatar { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: #3b536b; color: #eef7ff; font-size: 11px; font-weight: 700; }
++.ux-contributor-list article > div:nth-child(2) { min-width: 0; display: grid; gap: 1px; }
++.ux-contributor-list strong, .ux-contributor-list small, .ux-contributor-list article > div:nth-child(2) > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.ux-contributor-list small, .ux-contributor-list article > div:nth-child(2) > span { color: #8f97a5; font-size: 10px; }
++.ux-contributor-count { display: grid; grid-template-columns: auto 1fr; gap: 0 6px; align-items: center; }
++.ux-contributor-count b { font-size: 15px; }
++.ux-contributor-count small { color: #8f97a5; }
++.ux-contributor-count i { grid-column: 1 / -1; height: 3px; max-width: 100%; background: #4b91d1; margin-top: 4px; }
++
++.ux-wip-strip { display: flex; align-items: stretch; gap: 5px; padding: 5px 7px; overflow-x: auto; border-bottom: 1px solid #34363e; background: #25282e; }
++.ux-wip-label { display: grid; place-items: center; min-width: 38px; color: #8f97a5; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
++.ux-wip-item { min-width: 160px; max-width: 260px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid #3a3d46; background: #2a2d33; }
++.ux-wip-item.has-conflicts { border-color: #80515a; background: #382a2e; }
++.ux-wip-item .ux-icon { width: 15px; height: 15px; color: #8fbde8; }
++.ux-wip-item span { min-width: 0; display: grid; gap: 1px; }
++.ux-wip-item strong, .ux-wip-item small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.ux-wip-item strong { font-size: 11px; font-weight: 500; }
++.ux-wip-item small { color: #949ca9; font-size: 9px; }
++
++.ux-commit-grid.show-changes .ux-commit-grid-header,
++.ux-commit-grid.show-changes .ux-commit-row { grid-template-columns: 58px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px; }
++.ux-change-cell { display: inline-flex !important; align-items: center; gap: 5px; font-size: 10px; }
++.ux-change-cell small { color: #89929f; }
++.ux-commit-file-list { display: grid; border: 1px solid #34363d; }
++.ux-commit-file-list > div { min-height: 27px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 3px 7px; border-bottom: 1px solid #30323a; font-size: 11px; }
++.ux-commit-file-list > div:last-child { border-bottom: 0; }
++.ux-commit-file-list span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
++.ux-commit-file-list small { display: inline-flex; gap: 5px; color: #8f97a5; }
++.ux-commit-file-list b { color: #8dbb7a; }
++.ux-commit-file-list i { color: #d78b8b; font-style: normal; }
++.ux-commit-body { margin: 0; max-height: 180px; overflow: auto; white-space: pre-wrap; font-family: inherit; color: #c8ced8; font-size: 11px; line-height: 1.45; }
++
++@media (max-width: 1050px) {
++  .ux-rebase-body { grid-template-columns: 1fr; }
++  .ux-rebase-inspector { display: none; }
++  .ux-file-history-columns { grid-template-columns: 1fr; }
++  .ux-comparison-summary { grid-template-columns: 1fr; }
++}
++
++.ux-rebase-footer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+diff --git a/next/src-tauri/src/insights.rs b/next/src-tauri/src/insights.rs
+new file mode 100644
+index 0000000..732ced5
+--- /dev/null
++++ b/next/src-tauri/src/insights.rs
+@@ -0,0 +1,394 @@
++use crate::error::{AppError, AppResult};
++use crate::models::{
++    BlameLine, BlameResult, CommitDetails, CommitFileChange, CommitRecord, CommitSearchResult,
++    ContributorRecord, FileHistoryRequest, HistoryChangeStat, RefComparison, SearchRequest,
++    WorktreeSummary,
++};
++
++#[cfg(not(target_os = "android"))]
++mod desktop {
++    use std::collections::HashMap;
++    use std::process::{Command, Output};
++
++    use super::*;
++
++    fn run_git(path: &str, args: &[String]) -> AppResult<Output> {
++        let mut command = Command::new("git");
++        command.arg("-C").arg(path).args(args);
++        command.env("GIT_TERMINAL_PROMPT", "0");
++        Ok(command.output()?)
++    }
++
++    fn checked(path: &str, args: &[String]) -> AppResult<String> {
++        let output = run_git(path, args)?;
++        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
++        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
++        if output.status.success() {
++            Ok(stdout)
++        } else {
++            Err(AppError::Command(format!("git {}: {}", args.join(" "), stderr.trim())))
++        }
++    }
++
++    fn commit_format() -> &'static str {
++        "%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%s%x1e"
++    }
++
++    fn parse_commits(output: &str) -> Vec<CommitRecord> {
++        output.split('\u{1e}').filter_map(|record| {
++            let fields: Vec<&str> = record.trim().split('\u{1f}').collect();
++            (fields.len() == 6).then(|| CommitRecord {
++                id: fields[0].to_string(),
++                parents: fields[1].split_whitespace().map(str::to_string).collect(),
++                author_name: fields[2].to_string(),
++                author_email: fields[3].to_string(),
++                authored_at: fields[4].to_string(),
++                subject: fields[5].to_string(),
++            })
++        }).collect()
++    }
++
++    fn tokenize(input: &str) -> Vec<String> {
++        let mut output = Vec::new();
++        let mut current = String::new();
++        let mut quote: Option<char> = None;
++        let mut escaped = false;
++        for ch in input.chars() {
++            if escaped {
++                current.push(ch);
++                escaped = false;
++                continue;
++            }
++            if ch == '\\' {
++                escaped = true;
++                continue;
++            }
++            if let Some(marker) = quote {
++                if ch == marker { quote = None; } else { current.push(ch); }
++                continue;
++            }
++            if matches!(ch, '\'' | '"') {
++                quote = Some(ch);
++            } else if ch.is_whitespace() {
++                if !current.is_empty() { output.push(std::mem::take(&mut current)); }
++            } else {
++                current.push(ch);
++            }
++        }
++        if !current.is_empty() { output.push(current); }
++        output
++    }
++
++    fn safe_revision(value: &str) -> AppResult<String> {
++        let value = value.trim();
++        if value.is_empty() || value.starts_with('-') || value.contains('\0') {
++            return Err(AppError::Invalid("invalid revision or range".into()));
++        }
++        Ok(value.to_string())
++    }
++
++    fn current_identity(path: &str) -> String {
++        let name = checked(path, &["config".into(), "user.name".into()]).unwrap_or_default().trim().to_string();
++        let email = checked(path, &["config".into(), "user.email".into()]).unwrap_or_default().trim().to_string();
++        if !email.is_empty() { email } else { name }
++    }
++
++    pub fn search_commits(path: &str, request: &SearchRequest) -> AppResult<CommitSearchResult> {
++        let mut messages = Vec::<String>::new();
++        let mut authors = Vec::<String>::new();
++        let mut files = Vec::<String>::new();
++        let mut changes = Vec::<String>::new();
++        let mut revision: Option<String> = None;
++        let mut commit_exact: Option<String> = None;
++
++        for token in tokenize(&request.query) {
++            let Some((prefix, value)) = token.split_once(':') else {
++                if token == "@me" {
++                    let identity = current_identity(path);
++                    if !identity.is_empty() { authors.push(identity); }
++                } else {
++                    messages.push(token);
++                }
++                continue;
++            };
++            if value.trim().is_empty() { continue; }
++            match prefix.to_ascii_lowercase().as_str() {
++                "message" | "msg" => messages.push(value.to_string()),
++                "author" => authors.push(value.to_string()),
++                "file" => files.push(value.to_string()),
++                "change" | "patch" => changes.push(value.to_string()),
++                "ref" | "range" => revision = Some(safe_revision(value)?),
++                "commit" | "sha" => commit_exact = Some(safe_revision(value)?),
++                _ => messages.push(token),
++            }
++        }
++
++        let limit = request.limit.clamp(1, 1000).to_string();
++        let mut args = vec!["log".into(), "--date=iso-strict".into(), format!("--pretty=format:{}", commit_format()), "-n".into(), limit];
++        if let Some(commit) = commit_exact.as_ref() {
++            args.push(commit.clone());
++            args.push("--no-walk".into());
++        } else {
++            args.push(revision.unwrap_or_else(|| "--all".into()));
++        }
++        if messages.len() > 1 { args.push("--all-match".into()); }
++        for value in &messages { args.push(format!("--grep={value}")); }
++        for value in &authors { args.push(format!("--author={value}")); }
++        for value in &changes { args.push(format!("-G{value}")); }
++        if !files.is_empty() {
++            args.push("--".into());
++            args.extend(files.iter().cloned());
++        }
++        let output = checked(path, &args)?;
++        Ok(CommitSearchResult { query: request.query.clone(), commits: parse_commits(&output) })
++    }
++
++    fn parse_numstat(output: &str) -> Vec<CommitFileChange> {
++        output.lines().filter_map(|line| {
++            let mut fields = line.splitn(3, '\t');
++            let add = fields.next()?;
++            let del = fields.next()?;
++            let path = fields.next()?.to_string();
++            Some(CommitFileChange {
++                path,
++                additions: (add != "-").then(|| add.parse().unwrap_or(0)),
++                deletions: (del != "-").then(|| del.parse().unwrap_or(0)),
++                binary: add == "-" || del == "-",
++            })
++        }).collect()
++    }
++
++    pub fn commit_details(path: &str, commit: &str) -> AppResult<CommitDetails> {
++        let revision = safe_revision(commit)?;
++        let metadata = checked(path, &["show".into(), "-s".into(), "--date=iso-strict".into(), "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%s%x1f%B".into(), revision.clone()])?;
++        let fields: Vec<&str> = metadata.trim().splitn(7, '\u{1f}').collect();
++        if fields.len() != 7 { return Err(AppError::Command("unable to parse commit details".into())); }
++        let files = parse_numstat(&checked(path, &["show".into(), "--numstat".into(), "--format=".into(), "--find-renames".into(), revision])?);
++        let additions = files.iter().filter_map(|file| file.additions).sum();
++        let deletions = files.iter().filter_map(|file| file.deletions).sum();
++        Ok(CommitDetails {
++            id: fields[0].to_string(),
++            parents: fields[1].split_whitespace().map(str::to_string).collect(),
++            author_name: fields[2].to_string(),
++            author_email: fields[3].to_string(),
++            authored_at: fields[4].to_string(),
++            subject: fields[5].to_string(),
++            body: fields[6].trim().to_string(),
++            additions,
++            deletions,
++            files,
++        })
++    }
++
++    pub fn history_change_stats(path: &str, limit: usize) -> AppResult<Vec<HistoryChangeStat>> {
++        let limit = limit.clamp(1, 1000).to_string();
++        let output = checked(path, &["log".into(), "-n".into(), limit, "--format=@@%H".into(), "--numstat".into(), "--no-renames".into()])?;
++        let mut result = Vec::new();
++        let mut current: Option<HistoryChangeStat> = None;
++        for line in output.lines() {
++            if let Some(id) = line.strip_prefix("@@") {
++                if let Some(stat) = current.take() { result.push(stat); }
++                current = Some(HistoryChangeStat { commit: id.trim().to_string(), additions: 0, deletions: 0, files_changed: 0, binary_files: 0 });
++                continue;
++            }
++            let Some(stat) = current.as_mut() else { continue };
++            let mut fields = line.splitn(3, '\t');
++            let Some(add) = fields.next() else { continue };
++            let Some(del) = fields.next() else { continue };
++            if fields.next().is_none() { continue; }
++            stat.files_changed += 1;
++            if add == "-" || del == "-" { stat.binary_files += 1; }
++            if add != "-" { stat.additions = stat.additions.saturating_add(add.parse().unwrap_or(0)); }
++            if del != "-" { stat.deletions = stat.deletions.saturating_add(del.parse().unwrap_or(0)); }
++        }
++        if let Some(stat) = current { result.push(stat); }
++        Ok(result)
++    }
++
++    fn commits_for_range(path: &str, range: &str, limit: usize) -> AppResult<Vec<CommitRecord>> {
++        let output = checked(path, &["log".into(), "--date=iso-strict".into(), format!("--pretty=format:{}", commit_format()), "-n".into(), limit.clamp(1, 500).to_string(), range.into()])?;
++        Ok(parse_commits(&output))
++    }
++
++    fn diff_numstat(path: &str, from: &str, to: &str) -> AppResult<Vec<CommitFileChange>> {
++        let range = format!("{from}..{to}");
++        Ok(parse_numstat(&checked(path, &["diff".into(), "--numstat".into(), "--find-renames".into(), range])?))
++    }
++
++    pub fn compare_refs(path: &str, left: &str, right: &str, limit: usize) -> AppResult<RefComparison> {
++        let left = safe_revision(left)?;
++        let right = safe_revision(right)?;
++        let left_id = checked(path, &["rev-parse".into(), "--verify".into(), format!("{left}^{{commit}}")])?.trim().to_string();
++        let right_id = checked(path, &["rev-parse".into(), "--verify".into(), format!("{right}^{{commit}}")])?.trim().to_string();
++        let merge_base = checked(path, &["merge-base".into(), left_id.clone(), right_id.clone()])?.trim().to_string();
++        let counts = checked(path, &["rev-list".into(), "--left-right".into(), "--count".into(), format!("{left_id}...{right_id}")])?;
++        let mut count_fields = counts.split_whitespace();
++        let left_only_count = count_fields.next().and_then(|v| v.parse().ok()).unwrap_or(0);
++        let right_only_count = count_fields.next().and_then(|v| v.parse().ok()).unwrap_or(0);
++        let left_only = commits_for_range(path, &format!("{right_id}..{left_id}"), limit)?;
++        let right_only = commits_for_range(path, &format!("{left_id}..{right_id}"), limit)?;
++        let files_from_base_to_left = diff_numstat(path, &merge_base, &left_id)?;
++        let files_from_base_to_right = diff_numstat(path, &merge_base, &right_id)?;
++        Ok(RefComparison {
++            left,
++            right,
++            left_id,
++            right_id,
++            merge_base,
++            left_only_count,
++            right_only_count,
++            left_only,
++            right_only,
++            files_from_base_to_left,
++            files_from_base_to_right,
++        })
++    }
++
++    pub fn file_history(path: &str, request: &FileHistoryRequest) -> AppResult<Vec<CommitRecord>> {
++        let file = request.file.trim();
++        if file.is_empty() { return Err(AppError::Invalid("file path is required".into())); }
++        let mut args = vec!["log".into(), "--date=iso-strict".into(), format!("--pretty=format:{}", commit_format()), "-n".into(), request.limit.clamp(1, 1000).to_string()];
++        if request.all_refs { args.push("--all".into()); }
++        if request.follow_renames { args.push("--follow".into()); }
++        args.push("--".into());
++        args.push(file.to_string());
++        Ok(parse_commits(&checked(path, &args)?))
++    }
++
++    pub fn line_history(path: &str, file: &str, start: usize, end: usize, limit: usize) -> AppResult<Vec<CommitRecord>> {
++        let file = file.trim();
++        if file.is_empty() || start == 0 || end < start { return Err(AppError::Invalid("valid file and 1-based line range are required".into())); }
++        let range = format!("{start},{end}:{file}");
++        let args = vec!["log".into(), "-L".into(), range, "--date=iso-strict".into(), format!("--format={}", commit_format()), "--no-patch".into(), "-n".into(), limit.clamp(1, 500).to_string()];
++        Ok(parse_commits(&checked(path, &args)?))
++    }
++
++    pub fn blame_file(path: &str, file: &str, revision: Option<&str>, ignore_whitespace: bool, limit: usize) -> AppResult<BlameResult> {
++        let file = file.trim();
++        if file.is_empty() { return Err(AppError::Invalid("file path is required".into())); }
++        let mut args = vec!["blame".into(), "--line-porcelain".into()];
++        if ignore_whitespace { args.push("-w".into()); }
++        if let Some(revision) = revision.map(str::trim).filter(|value| !value.is_empty()) { args.push(safe_revision(revision)?); }
++        args.push("--".into());
++        args.push(file.to_string());
++        let output = checked(path, &args)?;
++        let mut lines = Vec::new();
++        let mut iter = output.lines().peekable();
++        while let Some(header) = iter.next() {
++            let mut head = header.split_whitespace();
++            let Some(commit) = head.next() else { continue };
++            let _original = head.next();
++            let final_line = head.next().and_then(|value| value.parse::<usize>().ok()).unwrap_or(lines.len() + 1);
++            if commit.len() < 8 { continue; }
++            let mut author = String::new();
++            let mut author_email = String::new();
++            let mut authored_at = 0i64;
++            let mut summary = String::new();
++            let mut content = String::new();
++            while let Some(next) = iter.next() {
++                if let Some(value) = next.strip_prefix("author ") { author = value.to_string(); }
++                else if let Some(value) = next.strip_prefix("author-mail ") { author_email = value.trim_matches(|ch| ch == '<' || ch == '>').to_string(); }
++                else if let Some(value) = next.strip_prefix("author-time ") { authored_at = value.parse().unwrap_or(0); }
++                else if let Some(value) = next.strip_prefix("summary ") { summary = value.to_string(); }
++                else if let Some(value) = next.strip_prefix('\t') { content = value.to_string(); break; }
++            }
++            lines.push(BlameLine { line_number: final_line, commit: commit.to_string(), author, author_email, authored_at, summary, content });
++            if lines.len() > limit { break; }
++        }
++        let truncated = lines.len() > limit;
++        if truncated { lines.truncate(limit); }
++        Ok(BlameResult { file: file.to_string(), lines, truncated })
++    }
++
++    pub fn contributors(path: &str, max_commits: usize) -> AppResult<Vec<ContributorRecord>> {
++        let output = checked(path, &["log".into(), "--all".into(), format!("-n{}", max_commits.clamp(1, 100_000)), "--date=iso-strict".into(), "--format=%an%x1f%ae%x1f%aI%x1e".into()])?;
++        #[derive(Default)]
++        struct Acc { name: String, email: String, commits: usize, first: String, last: String }
++        let mut map: HashMap<String, Acc> = HashMap::new();
++        for record in output.split('\u{1e}') {
++            let fields: Vec<&str> = record.trim().split('\u{1f}').collect();
++            if fields.len() != 3 { continue; }
++            let key = if fields[1].is_empty() { fields[0].to_ascii_lowercase() } else { fields[1].to_ascii_lowercase() };
++            let entry = map.entry(key).or_default();
++            entry.name = fields[0].to_string();
++            entry.email = fields[1].to_string();
++            entry.commits += 1;
++            let date = fields[2].to_string();
++            if entry.last.is_empty() || date > entry.last { entry.last = date.clone(); }
++            if entry.first.is_empty() || date < entry.first { entry.first = date; }
++        }
++        let mut records: Vec<ContributorRecord> = map.into_values().map(|entry| ContributorRecord {
++            name: entry.name,
++            email: entry.email,
++            commits: entry.commits,
++            first_commit: entry.first,
++            last_commit: entry.last,
++        }).collect();
++        records.sort_by(|a, b| b.commits.cmp(&a.commits).then_with(|| a.name.cmp(&b.name)));
++        Ok(records)
++    }
++
++    fn is_conflict_code(code: &str) -> bool {
++        matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") || code.contains('U')
++    }
++
++    pub fn worktree_summaries(path: &str) -> AppResult<Vec<WorktreeSummary>> {
++        let output = checked(path, &["worktree".into(), "list".into(), "--porcelain".into()])?;
++        let blocks: Vec<&str> = output.split("\n\n").filter(|block| !block.trim().is_empty()).collect();
++        let mut result = Vec::new();
++        for (index, block) in blocks.iter().enumerate() {
++            let mut worktree_path = String::new();
++            let mut head = String::new();
++            let mut branch: Option<String> = None;
++            let mut locked: Option<String> = None;
++            let mut prunable: Option<String> = None;
++            for line in block.lines() {
++                let (key, value) = line.split_once(' ').unwrap_or((line, ""));
++                match key {
++                    "worktree" => worktree_path = value.to_string(),
++                    "HEAD" => head = value.to_string(),
++                    "branch" => branch = Some(value.trim_start_matches("refs/heads/").to_string()),
++                    "detached" => branch = None,
++                    "locked" => locked = Some(if value.is_empty() { "Locked".into() } else { value.into() }),
++                    "prunable" => prunable = Some(if value.is_empty() { "Prunable".into() } else { value.into() }),
++                    _ => {}
++                }
++            }
++            if worktree_path.is_empty() { continue; }
++            let status = checked(&worktree_path, &["status".into(), "--porcelain=v1".into()]).unwrap_or_default();
++            let entries: Vec<&str> = status.lines().filter(|entry| !entry.is_empty()).collect();
++            let conflict_count = entries.iter().filter(|entry| entry.len() >= 2 && is_conflict_code(&entry[..2])).count();
++            result.push(WorktreeSummary {
++                path: worktree_path,
++                head,
++                branch,
++                is_main: index == 0,
++                locked,
++                prunable,
++                dirty_count: entries.len(),
++                conflict_count,
++            });
++        }
++        Ok(result)
++    }
++}
++
++#[cfg(target_os = "android")]
++mod android {
++    use super::*;
++    fn unsupported<T>() -> AppResult<T> { Err(AppError::Unsupported("Git intelligence workbench is desktop-only in this slice".into())) }
++    pub fn search_commits(_path: &str, _request: &SearchRequest) -> AppResult<CommitSearchResult> { unsupported() }
++    pub fn commit_details(_path: &str, _commit: &str) -> AppResult<CommitDetails> { unsupported() }
++    pub fn history_change_stats(_path: &str, _limit: usize) -> AppResult<Vec<HistoryChangeStat>> { unsupported() }
++    pub fn compare_refs(_path: &str, _left: &str, _right: &str, _limit: usize) -> AppResult<RefComparison> { unsupported() }
++    pub fn file_history(_path: &str, _request: &FileHistoryRequest) -> AppResult<Vec<CommitRecord>> { unsupported() }
++    pub fn line_history(_path: &str, _file: &str, _start: usize, _end: usize, _limit: usize) -> AppResult<Vec<CommitRecord>> { unsupported() }
++    pub fn blame_file(_path: &str, _file: &str, _revision: Option<&str>, _ignore_whitespace: bool, _limit: usize) -> AppResult<BlameResult> { unsupported() }
++    pub fn contributors(_path: &str, _max_commits: usize) -> AppResult<Vec<ContributorRecord>> { unsupported() }
++    pub fn worktree_summaries(_path: &str) -> AppResult<Vec<WorktreeSummary>> { unsupported() }
++}
++
++#[cfg(not(target_os = "android"))]
++pub use desktop::{blame_file, commit_details, compare_refs, contributors, file_history, history_change_stats, line_history, search_commits, worktree_summaries};
++#[cfg(target_os = "android")]
++pub use android::{blame_file, commit_details, compare_refs, contributors, file_history, history_change_stats, line_history, search_commits, worktree_summaries};
+diff --git a/next/src-tauri/src/lib.rs b/next/src-tauri/src/lib.rs
+index ee03c71..8cc3b73 100644
+--- a/next/src-tauri/src/lib.rs
++++ b/next/src-tauri/src/lib.rs
+@@ -3,6 +3,8 @@ mod conflict_center;
+ mod error;
+ mod models;
+ mod operation_state;
++mod rebase_planner;
++mod insights;
+ mod provider;
+ mod workspace;
+ 
+@@ -27,6 +29,28 @@ fn conflict_detail(path: String, file: String) -> AppResult<ConflictFileDetail>
+ #[tauri::command]
+ fn resolve_conflict(path: String, request: ConflictResolutionRequest) -> AppResult<ConflictResolutionResult> { conflict_center::resolve_conflict(&path, &request) }
+ #[tauri::command]
++fn prepare_rebase_plan(path: String, target: String) -> AppResult<RebasePlan> { rebase_planner::prepare_rebase_plan(&path, &target) }
++#[tauri::command]
++fn start_rebase_plan(path: String, request: RebaseStartRequest) -> AppResult<RebaseStartResult> { rebase_planner::start_rebase_plan(&path, &request) }
++#[tauri::command]
++fn search_commits(path: String, request: SearchRequest) -> AppResult<CommitSearchResult> { insights::search_commits(&path, &request) }
++#[tauri::command]
++fn commit_details(path: String, commit: String) -> AppResult<CommitDetails> { insights::commit_details(&path, &commit) }
++#[tauri::command]
++fn history_change_stats(path: String, limit: usize) -> AppResult<Vec<HistoryChangeStat>> { insights::history_change_stats(&path, limit) }
++#[tauri::command]
++fn compare_refs(path: String, left: String, right: String, limit: usize) -> AppResult<RefComparison> { insights::compare_refs(&path, &left, &right, limit) }
++#[tauri::command]
++fn file_history(path: String, request: FileHistoryRequest) -> AppResult<Vec<CommitRecord>> { insights::file_history(&path, &request) }
++#[tauri::command]
++fn line_history(path: String, file: String, start: usize, end: usize, limit: usize) -> AppResult<Vec<CommitRecord>> { insights::line_history(&path, &file, start, end, limit) }
++#[tauri::command]
++fn blame_file(path: String, file: String, revision: Option<String>, ignore_whitespace: bool, limit: usize) -> AppResult<BlameResult> { insights::blame_file(&path, &file, revision.as_deref(), ignore_whitespace, limit) }
++#[tauri::command]
++fn contributors(path: String, max_commits: usize) -> AppResult<Vec<ContributorRecord>> { insights::contributors(&path, max_commits) }
++#[tauri::command]
++fn worktree_summaries(path: String) -> AppResult<Vec<WorktreeSummary>> { insights::worktree_summaries(&path) }
++#[tauri::command]
+ fn repository_operation_state(path: String) -> AppResult<RepositoryOperationState> { operation_state::repository_operation_state(&path) }
+ #[tauri::command]
+ fn control_repository_operation(path: String, action: String) -> AppResult<CommandResult> { operation_state::control_repository_operation(&path, &action) }
+@@ -90,6 +114,8 @@ pub fn run() {
+         .invoke_handler(tauri::generate_handler![
+             repository_summary, repository_history, repository_status, repository_branches,
+             repository_conflicts, conflict_detail, resolve_conflict,
++            prepare_rebase_plan, start_rebase_plan,
++            search_commits, commit_details, history_change_stats, compare_refs, file_history, line_history, blame_file, contributors, worktree_summaries,
+             repository_operation_state, control_repository_operation,
+             stage_paths, unstage_paths, create_commit, fetch_repository, pull_repository,
+             push_repository, clone_repository, switch_branch, create_branch, run_workflow,
+diff --git a/next/src-tauri/src/models.rs b/next/src-tauri/src/models.rs
+index 1918914..958b2f0 100644
+--- a/next/src-tauri/src/models.rs
++++ b/next/src-tauri/src/models.rs
+@@ -152,6 +152,174 @@ pub struct ConflictResolutionResult {
+     pub next_path: Option<String>,
+ }
+ 
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RebasePlanCommit {
++    pub commit: String,
++    pub author_name: String,
++    pub author_email: String,
++    pub authored_at: String,
++    pub subject: String,
++    pub additions: usize,
++    pub deletions: usize,
++    pub files_changed: usize,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RebasePlan {
++    pub target: String,
++    pub target_commit: String,
++    pub base: String,
++    pub head: String,
++    pub commits: Vec<RebasePlanCommit>,
++    pub warnings: Vec<String>,
++    pub blocked_reason: Option<String>,
++    pub supports_update_refs: bool,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RebasePlanItem {
++    pub commit: String,
++    pub subject: String,
++    pub action: String,
++    pub new_message: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RebaseStartRequest {
++    pub target: String,
++    pub base: String,
++    pub items: Vec<RebasePlanItem>,
++    pub update_refs: bool,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RebaseStartResult {
++    pub result: CommandResult,
++    pub operation: RepositoryOperationState,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct SearchRequest {
++    pub query: String,
++    pub limit: usize,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CommitSearchResult {
++    pub query: String,
++    pub commits: Vec<CommitRecord>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CommitFileChange {
++    pub path: String,
++    pub additions: Option<usize>,
++    pub deletions: Option<usize>,
++    pub binary: bool,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CommitDetails {
++    pub id: String,
++    pub parents: Vec<String>,
++    pub author_name: String,
++    pub author_email: String,
++    pub authored_at: String,
++    pub subject: String,
++    pub body: String,
++    pub additions: usize,
++    pub deletions: usize,
++    pub files: Vec<CommitFileChange>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct HistoryChangeStat {
++    pub commit: String,
++    pub additions: usize,
++    pub deletions: usize,
++    pub files_changed: usize,
++    pub binary_files: usize,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RefComparison {
++    pub left: String,
++    pub right: String,
++    pub left_id: String,
++    pub right_id: String,
++    pub merge_base: String,
++    pub left_only_count: usize,
++    pub right_only_count: usize,
++    pub left_only: Vec<CommitRecord>,
++    pub right_only: Vec<CommitRecord>,
++    pub files_from_base_to_left: Vec<CommitFileChange>,
++    pub files_from_base_to_right: Vec<CommitFileChange>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct FileHistoryRequest {
++    pub file: String,
++    pub follow_renames: bool,
++    pub all_refs: bool,
++    pub limit: usize,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct BlameLine {
++    pub line_number: usize,
++    pub commit: String,
++    pub author: String,
++    pub author_email: String,
++    pub authored_at: i64,
++    pub summary: String,
++    pub content: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct BlameResult {
++    pub file: String,
++    pub lines: Vec<BlameLine>,
++    pub truncated: bool,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct ContributorRecord {
++    pub name: String,
++    pub email: String,
++    pub commits: usize,
++    pub first_commit: String,
++    pub last_commit: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct WorktreeSummary {
++    pub path: String,
++    pub head: String,
++    pub branch: Option<String>,
++    pub is_main: bool,
++    pub locked: Option<String>,
++    pub prunable: Option<String>,
++    pub dirty_count: usize,
++    pub conflict_count: usize,
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ #[serde(rename_all = "camelCase")]
+ pub struct WorkspaceRepository {
+diff --git a/next/src-tauri/src/rebase_planner.rs b/next/src-tauri/src/rebase_planner.rs
+new file mode 100644
+index 0000000..abec439
+--- /dev/null
++++ b/next/src-tauri/src/rebase_planner.rs
+@@ -0,0 +1,286 @@
++use crate::error::{AppError, AppResult};
++use crate::models::{CommandResult, RebasePlan, RebasePlanCommit, RebasePlanItem, RebaseStartRequest, RebaseStartResult};
++use crate::operation_state;
++
++#[cfg(not(target_os = "android"))]
++mod desktop {
++    use std::collections::{HashMap, HashSet};
++    use std::fs;
++    use std::path::{Path, PathBuf};
++    use std::process::{Command, Output};
++
++    use super::*;
++
++    fn run_git(path: &str, args: &[&str]) -> AppResult<Output> {
++        let mut command = Command::new("git");
++        command.arg("-C").arg(path).args(args);
++        command.env("GIT_TERMINAL_PROMPT", "0");
++        Ok(command.output()?)
++    }
++
++    fn command_result(output: Output) -> CommandResult {
++        CommandResult {
++            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
++            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
++            exit_code: output.status.code().unwrap_or(-1),
++        }
++    }
++
++    fn checked(path: &str, args: &[&str]) -> AppResult<CommandResult> {
++        let result = command_result(run_git(path, args)?);
++        if result.exit_code == 0 {
++            Ok(result)
++        } else {
++            Err(AppError::Command(format!("git {}: {}", args.join(" "), result.stderr.trim())))
++        }
++    }
++
++    fn rev_parse(path: &str, revision: &str) -> AppResult<String> {
++        let expression = format!("{revision}^{{commit}}");
++        Ok(checked(path, &["rev-parse", "--verify", &expression])?.stdout.trim().to_string())
++    }
++
++    fn repository_clean(path: &str) -> AppResult<bool> {
++        Ok(checked(path, &["status", "--porcelain=v1", "-z"])?.stdout.is_empty())
++    }
++
++    fn supports_update_refs(path: &str) -> bool {
++        let Ok(version) = checked(path, &["version"]) else { return false };
++        let raw = version.stdout.split_whitespace().last().unwrap_or("");
++        let mut parts = raw.split('.');
++        let major = parts.next().and_then(|value| value.parse::<u32>().ok()).unwrap_or(0);
++        let minor = parts.next().and_then(|value| value.parse::<u32>().ok()).unwrap_or(0);
++        major > 2 || (major == 2 && minor >= 38)
++    }
++
++    fn git_dir(path: &str) -> AppResult<PathBuf> {
++        Ok(PathBuf::from(checked(path, &["rev-parse", "--absolute-git-dir"])?.stdout.trim()))
++    }
++
++    fn parse_numstat(path: &str, commit: &str) -> AppResult<(usize, usize, usize)> {
++        let output = checked(path, &["show", "--numstat", "--format=", "--no-renames", commit])?.stdout;
++        let mut additions = 0usize;
++        let mut deletions = 0usize;
++        let mut files = 0usize;
++        for line in output.lines() {
++            let mut fields = line.splitn(3, '\t');
++            let Some(add) = fields.next() else { continue };
++            let Some(del) = fields.next() else { continue };
++            if fields.next().is_none() { continue; }
++            files += 1;
++            if add != "-" { additions = additions.saturating_add(add.parse().unwrap_or(0)); }
++            if del != "-" { deletions = deletions.saturating_add(del.parse().unwrap_or(0)); }
++        }
++        Ok((additions, deletions, files))
++    }
++
++    fn commit_record(path: &str, commit: &str) -> AppResult<RebasePlanCommit> {
++        let line = checked(path, &["show", "-s", "--date=iso-strict", "--format=%H%x1f%an%x1f%ae%x1f%aI%x1f%s", commit])?.stdout;
++        let fields: Vec<&str> = line.trim().split('\u{1f}').collect();
++        if fields.len() != 5 {
++            return Err(AppError::Command(format!("unable to parse commit metadata for {commit}")));
++        }
++        let (additions, deletions, files_changed) = parse_numstat(path, commit)?;
++        Ok(RebasePlanCommit {
++            commit: fields[0].to_string(),
++            author_name: fields[1].to_string(),
++            author_email: fields[2].to_string(),
++            authored_at: fields[3].to_string(),
++            subject: fields[4].to_string(),
++            additions,
++            deletions,
++            files_changed,
++        })
++    }
++
++    pub fn prepare_rebase_plan(path: &str, target: &str) -> AppResult<RebasePlan> {
++        if operation_state::repository_operation_state(path)?.operation.is_some() {
++            return Err(AppError::Invalid("finish or abort the current Git operation before planning another rebase".into()));
++        }
++        if !repository_clean(path)? {
++            return Err(AppError::Invalid("interactive rebase requires a clean working tree; commit or stash changes first".into()));
++        }
++
++        let target_commit = rev_parse(path, target)?;
++        let head = rev_parse(path, "HEAD")?;
++        let base = checked(path, &["merge-base", &target_commit, &head])?.stdout.trim().to_string();
++        if base.is_empty() {
++            return Err(AppError::Invalid("the selected target and HEAD do not have a merge base".into()));
++        }
++
++        let range = format!("{base}..{head}");
++        let merge_commits = checked(path, &["rev-list", "--merges", &range])?.stdout
++            .lines().filter(|line| !line.trim().is_empty()).count();
++        let blocked_reason = if merge_commits > 0 {
++            Some(format!("This branch contains {merge_commits} merge commit{}. The first planner slice intentionally refuses to flatten merge topology.", if merge_commits == 1 { "" } else { "s" }))
++        } else { None };
++
++        let list = checked(path, &["rev-list", "--reverse", "--topo-order", "--no-merges", &range])?.stdout;
++        let mut commits = Vec::new();
++        for commit in list.lines().map(str::trim).filter(|line| !line.is_empty()) {
++            commits.push(commit_record(path, commit)?);
++        }
++
++        let warnings = if target_commit == base {
++            Vec::new()
++        } else {
++            vec!["The selected target is not the current branch's merge base. GitAhead will replay the branch commits from the common base onto the selected target.".into()]
++        };
++
++        Ok(RebasePlan {
++            target: target.to_string(),
++            target_commit,
++            base,
++            head,
++            commits,
++            warnings,
++            blocked_reason,
++            supports_update_refs: supports_update_refs(path),
++        })
++    }
++
++    fn shell_quote(value: &str) -> String {
++        format!("'{}'", value.replace('\'', "'\\''"))
++    }
++
++    fn sanitize_subject(subject: &str) -> String {
++        subject.replace(['\r', '\n'], " ")
++    }
++
++    fn update_refs_by_commit(path: &str, commits: &HashSet<String>) -> AppResult<HashMap<String, Vec<String>>> {
++        let checked_out: HashSet<String> = checked(path, &["worktree", "list", "--porcelain"])?.stdout
++            .lines()
++            .filter_map(|line| line.strip_prefix("branch "))
++            .map(str::to_string)
++            .collect();
++        let refs = checked(path, &["for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads"])?.stdout;
++        let mut by_commit: HashMap<String, Vec<String>> = HashMap::new();
++        for line in refs.lines() {
++            let Some((reference, commit)) = line.split_once('\0') else { continue };
++            if checked_out.contains(reference) || !commits.contains(commit) { continue; }
++            by_commit.entry(commit.to_string()).or_default().push(reference.to_string());
++        }
++        for refs in by_commit.values_mut() { refs.sort(); }
++        Ok(by_commit)
++    }
++
++    fn build_todo(items: &[RebasePlanItem], update_refs: &HashMap<String, Vec<String>>) -> AppResult<String> {
++        let mut todo = String::new();
++        let mut previous_kept = false;
++        for item in items {
++            let action = item.action.as_str();
++            if !matches!(action, "pick" | "reword" | "edit" | "squash" | "fixup" | "drop") {
++                return Err(AppError::Invalid(format!("unknown rebase action: {action}")));
++            }
++            if matches!(action, "squash" | "fixup") && !previous_kept {
++                return Err(AppError::Invalid(format!("{} cannot be the first surviving action in an interactive rebase", action)));
++            }
++            let subject = sanitize_subject(&item.subject);
++            match action {
++                "reword" => {
++                    let message = item.new_message.as_deref().map(str::trim).filter(|value| !value.is_empty())
++                        .ok_or_else(|| AppError::Invalid(format!("reword for {} requires a new commit message", item.commit)))?;
++                    todo.push_str(&format!("pick {} {}\n", item.commit, subject));
++                    todo.push_str(&format!("exec git commit --amend -m {}\n", shell_quote(message)));
++                    previous_kept = true;
++                }
++                "drop" => {
++                    todo.push_str(&format!("drop {} {}\n", item.commit, subject));
++                }
++                _ => {
++                    todo.push_str(&format!("{} {} {}\n", action, item.commit, subject));
++                    previous_kept = true;
++                }
++            }
++            if let Some(references) = update_refs.get(&item.commit) {
++                for reference in references { todo.push_str(&format!("update-ref {}\n", reference)); }
++            }
++        }
++        if !previous_kept {
++            return Err(AppError::Invalid("the plan drops every commit; use reset/branch operations for that history rewrite instead".into()));
++        }
++        Ok(todo)
++    }
++
++    fn normalized_script_path(path: &Path) -> String {
++        path.to_string_lossy().replace('\\', "/")
++    }
++
++    pub fn start_rebase_plan(path: &str, request: &RebaseStartRequest) -> AppResult<RebaseStartResult> {
++        let current = prepare_rebase_plan(path, &request.target)?;
++        if let Some(reason) = current.blocked_reason.as_ref() {
++            return Err(AppError::Invalid(reason.clone()));
++        }
++        if request.base != current.base {
++            return Err(AppError::Invalid("the rebase base changed since the plan was loaded; refresh the plan before starting".into()));
++        }
++
++        let expected: HashSet<String> = current.commits.iter().map(|item| item.commit.clone()).collect();
++        let supplied: HashSet<String> = request.items.iter().map(|item| item.commit.clone()).collect();
++        if expected != supplied || supplied.len() != request.items.len() {
++            return Err(AppError::Invalid("the submitted rebase plan does not contain exactly the commits from the current plan".into()));
++        }
++
++        let update_refs = if request.update_refs {
++            if !current.supports_update_refs {
++                return Err(AppError::Unsupported("this Git version does not support rebase --update-refs".into()));
++            }
++            update_refs_by_commit(path, &expected)?
++        } else { HashMap::new() };
++        let todo = build_todo(&request.items, &update_refs)?;
++        let git_dir = git_dir(path)?;
++        let todo_path = git_dir.join("gitahead-rebase-todo");
++        let editor_path = git_dir.join("gitahead-sequence-editor.sh");
++        fs::write(&todo_path, todo)?;
++        fs::write(&editor_path, "#!/bin/sh\ncat \"$GITAHEAD_REBASE_TODO\" > \"$1\"\n")?;
++        #[cfg(unix)]
++        {
++            use std::os::unix::fs::PermissionsExt;
++            let mut permissions = fs::metadata(&editor_path)?.permissions();
++            permissions.set_mode(0o700);
++            fs::set_permissions(&editor_path, permissions)?;
++        }
++
++        let sequence_editor = format!("sh {}", shell_quote(&normalized_script_path(&editor_path)));
++        let mut command = Command::new("git");
++        command.arg("-C").arg(path)
++            .arg("rebase").arg("--interactive");
++        if request.update_refs { command.arg("--update-refs"); }
++        command.arg("--onto").arg(&current.target_commit)
++            .arg(&current.base);
++        command.env("GIT_TERMINAL_PROMPT", "0");
++        command.env("GIT_SEQUENCE_EDITOR", sequence_editor);
++        command.env("GITAHEAD_REBASE_TODO", normalized_script_path(&todo_path));
++        command.env("GIT_EDITOR", "true");
++        let output = command.output()?;
++        let result = command_result(output);
++        let state = operation_state::repository_operation_state(path)?;
++
++        let _ = fs::remove_file(&todo_path);
++        let _ = fs::remove_file(&editor_path);
++
++        if result.exit_code != 0 && state.operation.is_none() {
++            return Err(AppError::Command(format!("git rebase --interactive: {}", result.stderr.trim())));
++        }
++
++        Ok(RebaseStartResult { result, operation: state })
++    }
++}
++
++#[cfg(target_os = "android")]
++mod android {
++    use super::*;
++
++    pub fn prepare_rebase_plan(_path: &str, _target: &str) -> AppResult<RebasePlan> {
++        Err(AppError::Unsupported("interactive rebase planning is desktop-only in this slice".into()))
++    }
++
++    pub fn start_rebase_plan(_path: &str, _request: &RebaseStartRequest) -> AppResult<RebaseStartResult> {
++        Err(AppError::Unsupported("interactive rebase execution is desktop-only in this slice".into()))
++    }
++}
++
++#[cfg(not(target_os = "android"))]
++pub use desktop::{prepare_rebase_plan, start_rebase_plan};
++#[cfg(target_os = "android")]
++pub use android::{prepare_rebase_plan, start_rebase_plan};

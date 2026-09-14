@@ -1,0 +1,51 @@
+diff --git a/next/src-tauri/src/backend/cli.rs b/next/src-tauri/src/backend/cli.rs
+--- a/next/src-tauri/src/backend/cli.rs
++++ b/next/src-tauri/src/backend/cli.rs
+@@
+ pub fn repository_status(path: &str) -> AppResult<Vec<FileChange>> {
+     let result = checked(Some(Path::new(path)), &["status", "--porcelain=v1", "-z"])?;
+-    Ok(result.stdout.split('\0').filter(|entry| !entry.is_empty()).map(|entry| {
++    let mut entries = result.stdout.split('\0').filter(|entry| !entry.is_empty());
++    let mut changes = Vec::new();
++    while let Some(entry) = entries.next() {
+         let bytes = entry.as_bytes();
+         let index = bytes.first().copied().unwrap_or(b' ') as char;
+         let worktree = bytes.get(1).copied().unwrap_or(b' ') as char;
+-        FileChange {
++        let renamed_or_copied = matches!(index, 'R' | 'C') || matches!(worktree, 'R' | 'C');
++        changes.push(FileChange {
+             path: entry.get(3..).unwrap_or("").to_string(),
+             index_status: index.to_string(),
+             worktree_status: worktree.to_string(),
+             conflicted: matches!((index, worktree), ('U', _) | (_, 'U') | ('A', 'A') | ('D', 'D')),
+-        }
+-    }).collect())
++        });
++        // In porcelain v1 -z rename/copy records, the destination path is in
++        // this record and the original path is the next NUL-delimited field.
++        // Consume that source pathname so it is not emitted as a fake change.
++        if renamed_or_copied {
++            let _ = entries.next();
++        }
++    }
++    Ok(changes)
+ }
+@@
+ pub fn repository_branches(path: &str) -> AppResult<Vec<BranchRecord>> {
+     let result = checked(Some(Path::new(path)), &[
+-        "for-each-ref", "--format=%(refname:short)%1f%(objectname)%1f%(HEAD)%1f%(upstream:short)%1e", "refs/heads", "refs/remotes",
++        "for-each-ref", "--format=%(refname:short)%1f%(objectname)%1f%(HEAD)%1f%(upstream:short)%1f%(refname)%1e", "refs/heads", "refs/remotes",
+     ])?;
+     Ok(result.stdout.split('\u{1e}').filter_map(|record| {
+         let fields: Vec<&str> = record.trim().split('\u{1f}').collect();
+-        (fields.len() == 4).then(|| BranchRecord {
++        (fields.len() == 5).then(|| BranchRecord {
+             name: fields[0].to_string(),
+             target: fields[1].to_string(),
+             current: fields[2] == "*",
+-            remote: fields[0].contains('/'),
++            remote: fields[4].starts_with("refs/remotes/"),
+             upstream: (!fields[3].is_empty()).then(|| fields[3].to_string()),
+         })
+     }).collect())
+ }

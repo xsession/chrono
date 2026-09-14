@@ -1,0 +1,15 @@
+GitAhead Next v5 standalone full-repository packaging validation
+
+PASS JSON configuration parsing
+PASS shell smoke-test syntax
+PASS relative TS/TSX import audit
+PASS 22 TS/TSX files syntax/transpile
+PASS CSS braces: styles.css 6/6; ux.css 489/489
+PASS conflict marker parser test
+PASS operation state real-Git smoke suite
+PASS Conflict Center real-Git smoke suite
+PASS interactive rebase planner real-Git smoke suite
+PASS Git Intelligence real-Git smoke suite
+
+NOT RUN full npm typecheck/build: dependencies unavailable in packaging environment
+NOT RUN cargo fmt/check/test: Rust toolchain unavailable in packaging environment

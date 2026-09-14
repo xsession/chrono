@@ -1,0 +1,3822 @@
+diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/APPLY_AND_VALIDATE.md /mnt/data/gitahead-next-uiux-v3/docs/APPLY_AND_VALIDATE.md
+--- /mnt/data/gitahead-next-uiux-v2/docs/APPLY_AND_VALIDATE.md	2026-09-14 06:29:31.707824135 +0000
++++ /mnt/data/gitahead-next-uiux-v3/docs/APPLY_AND_VALIDATE.md	2026-09-14 06:59:40.833653147 +0000
+@@ -1,12 +1,13 @@
+-# Apply and Validate the GitAhead Next UI/UX Overlay
++# Apply and Validate the GitAhead Next v3 Overlay
+ 
+-The overlay is rooted at `next/`, so copy it into the **GitAhead repository root**.
++The overlay is rooted at `next/`. Copy it into the GitAhead repository root.
++
++## Linux / macOS
+ 
+ ```bash
+-# from the extracted package directory
+ cp -R overlay/next/. /path/to/gitahead/next/
+ 
+-# optional but recommended correctness fixes
++# Retain the CLI branch/rename correctness fixes from v2.
+ cd /path/to/gitahead
+ git apply /path/to/package/docs/backend-correctness.patch
+ 
+@@ -14,33 +15,55 @@
+ npm install
+ npm run typecheck
+ npm run build
++cargo check --manifest-path src-tauri/Cargo.toml
+ npm run tauri dev
+ ```
+ 
+-On Windows PowerShell, copy the contents of `overlay\next\` over `<repo>\next\`, then from the repository root run:
++## Windows PowerShell
++
++Copy the contents of `overlay\next\` over `<repo>\next\`, then:
+ 
+ ```powershell
+-git apply .\path\to\backend-correctness.patch
++cd C:\path\to\gitahead
++git apply C:\path\to\package\docs\backend-correctness.patch
++
+ cd next
+ npm install
+ npm run typecheck
+ npm run build
++cargo check --manifest-path .\src-tauri\Cargo.toml
+ npm run tauri dev
+ ```
+ 
+-## Manual smoke test
+-
+-1. Open a clean repository and verify History, Branches, Worktrees and Recovery navigation.
+-2. Resize/collapse the sidebar; resize the History inspector with pointer and arrow keys.
+-3. Create a local branch containing `/` (for example `feature/ui-review`) and confirm it stays in Local Branches after applying the backend patch.
+-4. Make a file partially staged and verify it appears in both Staged and Unstaged with independent checkboxes.
+-5. Create a conflict and verify the sidebar becomes `Conflicts`, the red conflict banner appears, and Commit is disabled.
+-6. Open the command palette with Ctrl/Cmd+Shift+P; navigate with arrows; run a command with Enter; close with Escape.
+-7. Open Clone and verify URL/destination validation and Browse behavior.
+-8. Open Worktrees and verify path, branch, HEAD and Locked/Prunable state are represented as structured rows.
+-9. Run a rename/copy status case and verify the old pathname is not emitted as a second fake changed-file row after applying the backend patch.
+-10. Resize the app through 1920×1080, 1440×900, 1280×720 and a narrow window. Confirm no text or action overlap.
++## Operation-state smoke test
+ 
+-## Visual reference
++1. Create a merge conflict. Confirm a persistent Merge banner appears.
++2. Verify Continue is disabled while unresolved entries exist.
++3. Resolve the file and Stage it. Refresh; Continue should become enabled.
++4. Continue and confirm the banner disappears after Git completes the merge.
++5. Start a conflicting rebase. Confirm progress is shown when Git exposes step/end files.
++6. Verify Skip Commit is offered for rebase, cherry-pick and revert but not merge.
++7. Click Abort and verify the destructive confirmation appears before Git is called.
++8. During a paused operation verify Pull, Push, branch switching/creation and normal Commit are disabled.
++9. Open Worktrees/Stashes/Submodules/Recovery. Verify mutating controls are locked but read-only inspection remains usable.
++10. Open Submodules and confirm merely entering the screen does not run `git submodule sync`.
++
++## Existing smoke tests
++
++- partial staging appears independently in Staged and Unstaged;
++- worktree list renders structured Branch / Path / HEAD / State rows;
++- command palette keyboard navigation works;
++- clone dialog validates URL/destination;
++- local branch `feature/ui-review` remains Local after applying the correctness patch;
++- rename/copy status records do not produce a fake second file row after applying the correctness patch.
++
++## Responsive visual check
++
++Validate at minimum:
++
++- 1920×1080
++- 1440×900
++- 1280×720
++- a narrow desktop window
+ 
+-The PNG captures in `visual/` are static QA proxies generated from the same visual specification. They are not screenshots of a live Tauri build; use them as the intended density/hierarchy reference while running the live smoke test.
++The operation banner must not overlap repository commands or the Changes/Commit panes. On narrower windows its action group should wrap beneath the operation summary.
+diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/GITAHEAD_NEXT_UI_UX_DEEP_RESEARCH.md /mnt/data/gitahead-next-uiux-v3/docs/GITAHEAD_NEXT_UI_UX_DEEP_RESEARCH.md
+--- /mnt/data/gitahead-next-uiux-v2/docs/GITAHEAD_NEXT_UI_UX_DEEP_RESEARCH.md	2026-09-14 06:29:31.131825685 +0000
++++ /mnt/data/gitahead-next-uiux-v3/docs/GITAHEAD_NEXT_UI_UX_DEEP_RESEARCH.md	2026-09-14 07:00:21.805525047 +0000
+@@ -793,3 +793,62 @@
+ 23. GitAhead repository, **next/src/App.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/App.tsx
+ 24. GitAhead repository, **next/src/components/StatusPanel.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/components/StatusPanel.tsx
+ 25. GitAhead repository, **next/src/components/CommitGraph.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/components/CommitGraph.tsx
++
++---
++
++## 18. Implemented operation-state slice
++
++The v3 continuation turns the earlier operation-state recommendation into an implemented cross-layer contract.
++
++### State ownership
++
++Repository operation state is derived from Git, not duplicated in React state machines. On desktop the backend inspects the worktree-specific Git directory (`--absolute-git-dir`) for the standard merge/rebase/cherry-pick/revert markers and counts unresolved index entries. This matters for linked worktrees because operation state belongs to a worktree, not simply the common repository directory.
++
++### Command semantics
++
++The UI only exposes sequencer actions documented by Git:
++
++- Merge: Continue, Abort.
++- Rebase: Continue, Skip, Abort.
++- Cherry-pick: Continue, Skip, Abort.
++- Revert: Continue, Skip, Abort.
++
++Continue is unavailable while unmerged index entries remain. The Changes view remains writable because resolving and staging conflict results is the required path to Continue. Normal Commit, Pull, Push, branch switching and unrelated mutating workflow commands are suppressed until the paused operation finishes or is aborted.
++
++### Persistent visual treatment
++
++The operation banner is intentionally outside individual repository views. A rebase remains visible while inspecting History or Branches, avoiding the common failure mode where a user forgets that the repository is mid-operation because they navigated away from a conflict page.
++
++The banner prioritizes:
++
++1. operation type;
++2. progress/current commit context;
++3. blocking conflict count;
++4. Resolve / Continue / Skip controls;
++5. destructive Abort behind confirmation.
++
++### Safe destructive control
++
++Abort requires a dedicated alert dialog rather than a generic browser confirmation. The dialog supports keyboard focus, Escape, Tab containment, explicit consequence copy, and a non-destructive default action.
++
++### Hidden-write correction
++
++The Submodules screen previously called `submodule_sync` as its automatic refresh behavior. Because `git submodule sync` updates local configuration, that made navigation itself mutating. The v3 implementation removes that automatic write. Until structured submodule status exists, entering the page performs no mutation and Sync remains explicit.
++
++### Validation result
++
++Real Git 2.47.3 repositories were used to induce and validate:
++
++- merge conflict -> resolve/stage -> Continue;
++- rebase conflict -> Skip;
++- cherry-pick conflict -> Abort;
++- revert conflict -> Abort.
++
++The state files and command paths used by the Rust controller matched Git's actual behavior in all four smoke scenarios.
++
++### Additional sources
++
++26. Git documentation, **git-merge** — `--continue`, `--abort`, merge conflict state. https://git-scm.com/docs/git-merge
++27. Git documentation, **git-cherry-pick** — sequencer `--continue`, `--skip`, `--abort`. https://git-scm.com/docs/git-cherry-pick
++28. Git documentation, **git-revert** — sequencer `--continue`, `--skip`, `--abort`. https://git-scm.com/docs/git-revert
++29. Rust `git2` crate 0.21, **RepositoryState** — merge/rebase/cherry-pick/revert native state variants. https://docs.rs/git2/latest/git2/enum.RepositoryState.html
+diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/IMPLEMENTATION_NOTES.md /mnt/data/gitahead-next-uiux-v3/docs/IMPLEMENTATION_NOTES.md
+--- /mnt/data/gitahead-next-uiux-v2/docs/IMPLEMENTATION_NOTES.md	2026-09-14 06:29:31.675824225 +0000
++++ /mnt/data/gitahead-next-uiux-v3/docs/IMPLEMENTATION_NOTES.md	2026-09-14 06:59:40.825653173 +0000
+@@ -1,79 +1,146 @@
+-# GitAhead Next UI/UX Refactor — Implementation Notes
++# GitAhead Next UI/UX Refactor — Operation State Slice
+ 
+ ## Scope
+ 
+-This package refactors the Qt-free `next/` frontend. It intentionally leaves the legacy Qt application untouched.
++This package continues the Qt-free `next/` UI/UX refactor with a repository-operation state layer for merge, rebase, cherry-pick and revert workflows.
+ 
+-Changed/replaced frontend files:
++The legacy Qt application remains untouched.
+ 
+-- `next/src/App.tsx`
+-- `next/src/main.tsx`
+-- `next/src/components/RepositorySidebar.tsx`
+-- `next/src/components/CommitGraph.tsx`
+-- `next/src/components/StatusPanel.tsx`
+-- `next/src/components/WorkflowPanel.tsx`
+-- `next/src/components/CommandPalette.tsx`
+-
+-New frontend files:
+-
+-- `next/src/ux.css`
+-- `next/src/components/Icon.tsx`
+-- `next/src/components/BranchPanel.tsx`
+-- `next/src/components/CloneDialog.tsx`
+-- `next/src/components/SplitHandle.tsx`
+-
+-Optional backend correctness patch:
+-
+-- `docs/backend-correctness.patch`
+-  - fixes local branches containing `/` being misclassified as remotes;
+-  - fixes `git status --porcelain=v1 -z` rename/copy source paths being emitted as fake file records.
+-
+-## Key interaction changes
+-
+-- Replaced menu/window-strip/legacy-toolbar/second-toolbar stacking with one compact application bar and one repository command bar.
+-- Repository state is first-class navigation: Changes/Conflicts, History, Branches, Worktrees, Submodules, Stashes, Recovery.
+-- Sidebar can collapse and resize.
+-- History inspector, commit composer, and advanced-workflow output use pointer- and keyboard-resizable separators.
+-- Working tree separates Conflicts, Staged, and Unstaged.
+-- Partially staged files have independent selection state in Staged vs Unstaged groups.
+-- Commit is disabled while conflicts remain, when no files are staged, or when the message is empty.
+-- History removes the fake single-lane graph and fake diff preview.
+-- New branch manager separates local vs remote branches and exposes explicit Create/Checkout interactions.
+-- Worktree porcelain output is parsed into a visible table.
+-- Stash list is shown as structured rows instead of only terminal output.
+-- Clone uses a proper modal task flow rather than `window.prompt()`.
+-- Command palette supports Up/Down, Enter, Escape, categories and shortcuts.
+-
+-## Compatibility strategy
+-
+-`main.tsx` imports the existing `styles.css` first and `ux.css` second. This keeps current Cherry workbench styles functioning while the new shell overrides the application workspace. Once the migration stabilizes, dead legacy shell selectors can be removed from `styles.css` in a cleanup pass.
+-
+-No additional npm dependency is introduced.
+-
+-## Validation performed here
+-
+-- TS/TSX syntax parsed with TypeScript 5.8.3 compiler API.
+-- CSS brace validation performed after the final edits.
+-- Worktree parser implementation checked against Git's documented `git worktree list --porcelain` record format.
+-- Two 1440×900 static visual QA captures produced and inspected:
+-  - History workspace
+-  - Conflict / staged / unstaged workspace
+-- Visual inspection checked hierarchy, density, row alignment, status prominence, splitter separation, selected state, and commit-disabled conflict state.
+-
+-A full `npm run build` / `tauri dev` runtime pass could not be completed in this execution environment because the repository and its npm dependencies are not locally available and outbound container DNS access to GitHub/npm is unavailable. Run the commands in `APPLY_AND_VALIDATE.md` on the development machine after copying the overlay.
+-
+-## Important remaining backend/UI work
+-
+-The current backend does not yet expose a structured operation state for merge/rebase/cherry-pick/revert and does not expose patch/hunk data or structured submodule status. Consequently this pass improves conflict visibility but does not pretend to provide a complete merge editor.
+-
+-Next implementation sequence:
+-
+-1. repository operation-state API;
+-2. persistent Continue / Skip / Abort banner;
+-3. structured conflicted-file API;
+-4. three-way conflict solver;
+-5. real commit DAG/lane renderer;
+-6. on-demand commit/file/hunk diff API;
+-7. structured worktree/submodule models;
+-8. interactive rebase planner;
+-9. per-repository layout persistence.
++## New operation-state architecture
++
++### Backend
++
++New file:
++
++- `next/src-tauri/src/operation_state.rs`
++
++The desktop implementation reads Git's actual worktree-specific state directory and exposes:
++
++- active operation: `merge`, `rebase`, `cherryPick`, `revert`;
++- unresolved conflict count;
++- Continue availability;
++- Skip availability only where Git supports it;
++- Abort availability;
++- current commit and subject when Git exposes them;
++- rebase step / total where the rebase state files expose progress;
++- a human-readable operation-state message.
++
++The Tauri API adds:
++
++- `repository_operation_state(path)`
++- `control_repository_operation(path, action)`
++
++Operation controls map to Git's sequencer commands:
++
++- merge: `git merge --continue|--abort`
++- rebase: `git rebase --continue|--skip|--abort`
++- cherry-pick: `git cherry-pick --continue|--skip|--abort`
++- revert: `git revert --continue|--skip|--abort`
++
++Desktop operation commands set a non-interactive Git editor to prevent the Tauri process from hanging on an external terminal editor while accepting Git's existing operation message.
++
++Android uses `git2::RepositoryState` for detection. Controls remain explicitly disabled there until the native sequencer continuation logic is implemented.
++
++### Error model
++
++`AppError::Unsupported` is added. The current repository already referenced this variant in Android backend code even though it was missing from `error.rs`, so this also fixes an existing Android compile-path defect.
++
++### Frontend types / API
++
++New frontend data types:
++
++- `RepositoryOperationKind`
++- `RepositoryOperationAction`
++- `RepositoryOperationState`
++
++`api.ts` adds `operationState()` and `controlOperation()`.
++
++## New persistent operation UX
++
++New component:
++
++- `next/src/components/OperationBanner.tsx`
++
++The banner lives between the repository command bar and the active workspace. It remains visible regardless of whether the user is looking at Changes, History, Branches or an advanced tool.
++
++It shows:
++
++- operation name;
++- rebase progress where available;
++- current commit subject where available;
++- unresolved conflict count and next action;
++- Resolve Conflicts;
++- Continue;
++- Skip Commit where supported;
++- Abort with a destructive-action confirmation.
++
++Abort is deliberately not one-click. The confirmation is keyboard operable, supports Escape, traps Tab inside the modal, and attempts to restore focus to the trigger when the operation remains mounted.
++
++## Safety interlocks
++
++While an operation is in progress:
++
++- Pull is disabled.
++- Push is disabled.
++- Branch create / checkout is disabled.
++- Normal Commit is disabled.
++- Worktree create/prune is disabled.
++- Submodule update/sync is disabled.
++- Stash push/pop is disabled.
++- Maintenance and mutating LFS actions are disabled.
++- Read-only inspection such as Fetch, worktree listing, stash listing, reflog, fsck and LFS lock listing remains available.
++
++The Changes view remains writable for Stage / Unstage because staging is the normal mechanism for marking conflict resolutions.
++
++## Additional UX correctness fix
++
++The previous Submodules screen used `submodule_sync` as its automatic refresh operation. Sync changes local submodule URL configuration, so opening a view could silently perform a write. Automatic refresh now performs no submodule write; the screen explains the structured-status backend gap and Sync remains an explicit user action.
++
++## Existing v2 improvements retained
++
++- repository-state-first navigation;
++- resizable/collapsible panes;
++- separate Conflicts / Staged / Unstaged groups;
++- independent partially-staged selections;
++- structured worktree list;
++- proper Clone dialog;
++- searchable keyboard command palette;
++- branch manager and remote/local separation UI;
++- compact engineering-oriented desktop density.
++
++## Optional backend correctness patch retained
++
++`docs/backend-correctness.patch` still fixes two pre-existing CLI backend defects:
++
++1. local branches containing `/` are no longer misclassified as remotes;
++2. `git status --porcelain=v1 -z` rename/copy source paths are consumed correctly instead of appearing as fake file rows.
++
++## Validation performed
++
++Frontend:
++
++- 14 TypeScript / TSX files parsed with TypeScript 5.8.3;
++- an additional semantic TypeScript pass was run with local React/Tauri API shims so cross-file prop/API contracts were checked without downloading npm dependencies;
++- CSS braces balanced after final edits.
++
++Backend logic:
++
++Real temporary Git repositories were created and exercised with Git 2.47.3:
++
++- merge conflict detected, staged resolution, `merge --continue` succeeded;
++- rebase conflict detected, `rebase --skip` succeeded;
++- cherry-pick conflict detected, `cherry-pick --abort` restored state;
++- revert conflict detected, `revert --abort` restored state.
++
++This validated the on-disk state markers and command semantics used by the Rust operation-state controller.
++
++Rust compilation itself could not be run in this container because `cargo`, `rustc` and `rustfmt` are not installed. Rust source received structural brace checks, but the definitive Rust validation remains `cargo check` / `npm run tauri dev` on the development machine.
++
++## Next slice
++
++1. structured conflicted-file API exposing index stages 1/2/3;
++2. three-way Conflict Center with Current Base / Replayed Commit semantics during rebase;
++3. save merged result + Stage + Next Conflict workflow;
++4. operation-specific conflict labels for merge/cherry-pick/revert;
++5. interactive rebase planner;
++6. real DAG/lane renderer and on-demand commit/file diff API.
+diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/OVERLAY_FILE_LIST.txt /mnt/data/gitahead-next-uiux-v3/docs/OVERLAY_FILE_LIST.txt
+--- /mnt/data/gitahead-next-uiux-v2/docs/OVERLAY_FILE_LIST.txt	2026-09-14 06:23:52.180979696 +0000
++++ /mnt/data/gitahead-next-uiux-v3/docs/OVERLAY_FILE_LIST.txt	2026-09-14 07:00:39.889471654 +0000
+@@ -1,13 +1,20 @@
+ next/docs/UI_UX_DEEP_RESEARCH.md
++next/src-tauri/src/error.rs
++next/src-tauri/src/lib.rs
++next/src-tauri/src/models.rs
++next/src-tauri/src/operation_state.rs
+ next/src/App.tsx
++next/src/api.ts
+ next/src/components/BranchPanel.tsx
+ next/src/components/CloneDialog.tsx
+ next/src/components/CommandPalette.tsx
+ next/src/components/CommitGraph.tsx
+ next/src/components/Icon.tsx
++next/src/components/OperationBanner.tsx
+ next/src/components/RepositorySidebar.tsx
+ next/src/components/SplitHandle.tsx
+ next/src/components/StatusPanel.tsx
+ next/src/components/WorkflowPanel.tsx
+ next/src/main.tsx
++next/src/types.ts
+ next/src/ux.css
+diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/VISUAL_QA.md /mnt/data/gitahead-next-uiux-v3/docs/VISUAL_QA.md
+--- /mnt/data/gitahead-next-uiux-v2/docs/VISUAL_QA.md	2026-09-14 06:29:31.783823923 +0000
++++ /mnt/data/gitahead-next-uiux-v3/docs/VISUAL_QA.md	2026-09-14 06:59:40.841653122 +0000
+@@ -1,33 +1,28 @@
+-# Visual QA Record
++# Visual QA Record — v3 Operation State
+ 
+-## History workspace
++## Operation-state workspace
+ 
+-Reviewed at 1440×900.
++Reviewed at 1440×900 using `visual/operation-state-workspace.png`.
+ 
+ Passed:
+-- application and repository command bars are visually distinct without duplicating navigation;
+-- active repository and History destination remain visible together;
+-- commit rows maintain stable column alignment;
+-- selection contrast is clear without overpowering the full window;
+-- inspector has a strong but low-noise boundary;
+-- metadata hierarchy is readable at compact density;
+-- fake patch content is absent;
+-- command/branch/status controls do not overlap.
+ 
+-## Conflict workspace
++- active Rebase state is visible before the user enters the Changes screen;
++- operation banner is visually subordinate to the application/repository bars but stronger than normal content;
++- unresolved conflict count is immediately visible;
++- Continue is visibly disabled while conflicts exist;
++- Resolve Conflicts remains the first recovery action;
++- Skip Commit is visible only as a sequencer action, not a generic repository action;
++- Abort is visually destructive and separated from the primary Continue action;
++- Pull and Push read as unavailable during the paused operation;
++- Changes view still exposes staging actions required to resolve the operation;
++- normal Commit area remains visible but clearly locked, teaching the correct Continue workflow;
++- long operation subject text has a dedicated truncation lane and does not collide with controls;
++- left navigation still surfaces Conflicts as repository-level state.
+ 
+-Reviewed at 1440×900.
++## Existing v2 captures
+ 
+-Passed:
+-- conflict state is visible in sidebar, repository header and content banner;
+-- conflict rows are visually stronger than staged/unstaged rows;
+-- Staged and Unstaged remain distinguishable without relying only on status codes;
+-- commit composer stays visible while working through file state;
+-- disabled Commit plus reason text makes the safety rule explicit;
+-- split-pane structure remains readable with long file paths.
+-
+-One issue found during review: the first conflict visual proxy contained a mismatched repository name inherited from the history fixture. The fixture was corrected and the final PNG regenerated. This was a QA-fixture error, not an application-code issue.
++The History and conflict/staging captures from v2 are retained for comparison. The new operation-state capture supersedes the old conflict capture for paused merge/rebase/cherry-pick/revert behavior.
+ 
+ ## Rendering limitation
+ 
+-A live Chromium capture of the static HTML proxy stalled in this container due the headless browser environment. The final QA images were therefore rendered from equivalent SVG layout proxies and inspected directly. The source HTML proxies are also included for local browser comparison.
++The PNG is an SVG-rendered visual QA proxy based on the same design tokens/layout rules, not a live Tauri WebView screenshot. The container does not have a usable full Tauri/Rust runtime. Final acceptance still requires a live `npm run tauri dev` visual pass on the development machine.
+diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/v2-to-v3.patch /mnt/data/gitahead-next-uiux-v3/docs/v2-to-v3.patch
+--- /mnt/data/gitahead-next-uiux-v2/docs/v2-to-v3.patch	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/docs/v2-to-v3.patch	2026-09-14 07:00:39.901471617 +0000
+@@ -0,0 +1,462 @@
++diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/APPLY_AND_VALIDATE.md /mnt/data/gitahead-next-uiux-v3/docs/APPLY_AND_VALIDATE.md
++--- /mnt/data/gitahead-next-uiux-v2/docs/APPLY_AND_VALIDATE.md	2026-09-14 06:29:31.707824135 +0000
+++++ /mnt/data/gitahead-next-uiux-v3/docs/APPLY_AND_VALIDATE.md	2026-09-14 06:59:40.833653147 +0000
++@@ -1,12 +1,13 @@
++-# Apply and Validate the GitAhead Next UI/UX Overlay
+++# Apply and Validate the GitAhead Next v3 Overlay
++ 
++-The overlay is rooted at `next/`, so copy it into the **GitAhead repository root**.
+++The overlay is rooted at `next/`. Copy it into the GitAhead repository root.
+++
+++## Linux / macOS
++ 
++ ```bash
++-# from the extracted package directory
++ cp -R overlay/next/. /path/to/gitahead/next/
++ 
++-# optional but recommended correctness fixes
+++# Retain the CLI branch/rename correctness fixes from v2.
++ cd /path/to/gitahead
++ git apply /path/to/package/docs/backend-correctness.patch
++ 
++@@ -14,33 +15,55 @@
++ npm install
++ npm run typecheck
++ npm run build
+++cargo check --manifest-path src-tauri/Cargo.toml
++ npm run tauri dev
++ ```
++ 
++-On Windows PowerShell, copy the contents of `overlay\next\` over `<repo>\next\`, then from the repository root run:
+++## Windows PowerShell
+++
+++Copy the contents of `overlay\next\` over `<repo>\next\`, then:
++ 
++ ```powershell
++-git apply .\path\to\backend-correctness.patch
+++cd C:\path\to\gitahead
+++git apply C:\path\to\package\docs\backend-correctness.patch
+++
++ cd next
++ npm install
++ npm run typecheck
++ npm run build
+++cargo check --manifest-path .\src-tauri\Cargo.toml
++ npm run tauri dev
++ ```
++ 
++-## Manual smoke test
++-
++-1. Open a clean repository and verify History, Branches, Worktrees and Recovery navigation.
++-2. Resize/collapse the sidebar; resize the History inspector with pointer and arrow keys.
++-3. Create a local branch containing `/` (for example `feature/ui-review`) and confirm it stays in Local Branches after applying the backend patch.
++-4. Make a file partially staged and verify it appears in both Staged and Unstaged with independent checkboxes.
++-5. Create a conflict and verify the sidebar becomes `Conflicts`, the red conflict banner appears, and Commit is disabled.
++-6. Open the command palette with Ctrl/Cmd+Shift+P; navigate with arrows; run a command with Enter; close with Escape.
++-7. Open Clone and verify URL/destination validation and Browse behavior.
++-8. Open Worktrees and verify path, branch, HEAD and Locked/Prunable state are represented as structured rows.
++-9. Run a rename/copy status case and verify the old pathname is not emitted as a second fake changed-file row after applying the backend patch.
++-10. Resize the app through 1920×1080, 1440×900, 1280×720 and a narrow window. Confirm no text or action overlap.
+++## Operation-state smoke test
++ 
++-## Visual reference
+++1. Create a merge conflict. Confirm a persistent Merge banner appears.
+++2. Verify Continue is disabled while unresolved entries exist.
+++3. Resolve the file and Stage it. Refresh; Continue should become enabled.
+++4. Continue and confirm the banner disappears after Git completes the merge.
+++5. Start a conflicting rebase. Confirm progress is shown when Git exposes step/end files.
+++6. Verify Skip Commit is offered for rebase, cherry-pick and revert but not merge.
+++7. Click Abort and verify the destructive confirmation appears before Git is called.
+++8. During a paused operation verify Pull, Push, branch switching/creation and normal Commit are disabled.
+++9. Open Worktrees/Stashes/Submodules/Recovery. Verify mutating controls are locked but read-only inspection remains usable.
+++10. Open Submodules and confirm merely entering the screen does not run `git submodule sync`.
+++
+++## Existing smoke tests
+++
+++- partial staging appears independently in Staged and Unstaged;
+++- worktree list renders structured Branch / Path / HEAD / State rows;
+++- command palette keyboard navigation works;
+++- clone dialog validates URL/destination;
+++- local branch `feature/ui-review` remains Local after applying the correctness patch;
+++- rename/copy status records do not produce a fake second file row after applying the correctness patch.
+++
+++## Responsive visual check
+++
+++Validate at minimum:
+++
+++- 1920×1080
+++- 1440×900
+++- 1280×720
+++- a narrow desktop window
++ 
++-The PNG captures in `visual/` are static QA proxies generated from the same visual specification. They are not screenshots of a live Tauri build; use them as the intended density/hierarchy reference while running the live smoke test.
+++The operation banner must not overlap repository commands or the Changes/Commit panes. On narrower windows its action group should wrap beneath the operation summary.
++diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/GITAHEAD_NEXT_UI_UX_DEEP_RESEARCH.md /mnt/data/gitahead-next-uiux-v3/docs/GITAHEAD_NEXT_UI_UX_DEEP_RESEARCH.md
++--- /mnt/data/gitahead-next-uiux-v2/docs/GITAHEAD_NEXT_UI_UX_DEEP_RESEARCH.md	2026-09-14 06:29:31.131825685 +0000
+++++ /mnt/data/gitahead-next-uiux-v3/docs/GITAHEAD_NEXT_UI_UX_DEEP_RESEARCH.md	2026-09-14 07:00:21.805525047 +0000
++@@ -793,3 +793,62 @@
++ 23. GitAhead repository, **next/src/App.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/App.tsx
++ 24. GitAhead repository, **next/src/components/StatusPanel.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/components/StatusPanel.tsx
++ 25. GitAhead repository, **next/src/components/CommitGraph.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/components/CommitGraph.tsx
+++
+++---
+++
+++## 18. Implemented operation-state slice
+++
+++The v3 continuation turns the earlier operation-state recommendation into an implemented cross-layer contract.
+++
+++### State ownership
+++
+++Repository operation state is derived from Git, not duplicated in React state machines. On desktop the backend inspects the worktree-specific Git directory (`--absolute-git-dir`) for the standard merge/rebase/cherry-pick/revert markers and counts unresolved index entries. This matters for linked worktrees because operation state belongs to a worktree, not simply the common repository directory.
+++
+++### Command semantics
+++
+++The UI only exposes sequencer actions documented by Git:
+++
+++- Merge: Continue, Abort.
+++- Rebase: Continue, Skip, Abort.
+++- Cherry-pick: Continue, Skip, Abort.
+++- Revert: Continue, Skip, Abort.
+++
+++Continue is unavailable while unmerged index entries remain. The Changes view remains writable because resolving and staging conflict results is the required path to Continue. Normal Commit, Pull, Push, branch switching and unrelated mutating workflow commands are suppressed until the paused operation finishes or is aborted.
+++
+++### Persistent visual treatment
+++
+++The operation banner is intentionally outside individual repository views. A rebase remains visible while inspecting History or Branches, avoiding the common failure mode where a user forgets that the repository is mid-operation because they navigated away from a conflict page.
+++
+++The banner prioritizes:
+++
+++1. operation type;
+++2. progress/current commit context;
+++3. blocking conflict count;
+++4. Resolve / Continue / Skip controls;
+++5. destructive Abort behind confirmation.
+++
+++### Safe destructive control
+++
+++Abort requires a dedicated alert dialog rather than a generic browser confirmation. The dialog supports keyboard focus, Escape, Tab containment, explicit consequence copy, and a non-destructive default action.
+++
+++### Hidden-write correction
+++
+++The Submodules screen previously called `submodule_sync` as its automatic refresh behavior. Because `git submodule sync` updates local configuration, that made navigation itself mutating. The v3 implementation removes that automatic write. Until structured submodule status exists, entering the page performs no mutation and Sync remains explicit.
+++
+++### Validation result
+++
+++Real Git 2.47.3 repositories were used to induce and validate:
+++
+++- merge conflict -> resolve/stage -> Continue;
+++- rebase conflict -> Skip;
+++- cherry-pick conflict -> Abort;
+++- revert conflict -> Abort.
+++
+++The state files and command paths used by the Rust controller matched Git's actual behavior in all four smoke scenarios.
+++
+++### Additional sources
+++
+++26. Git documentation, **git-merge** — `--continue`, `--abort`, merge conflict state. https://git-scm.com/docs/git-merge
+++27. Git documentation, **git-cherry-pick** — sequencer `--continue`, `--skip`, `--abort`. https://git-scm.com/docs/git-cherry-pick
+++28. Git documentation, **git-revert** — sequencer `--continue`, `--skip`, `--abort`. https://git-scm.com/docs/git-revert
+++29. Rust `git2` crate 0.21, **RepositoryState** — merge/rebase/cherry-pick/revert native state variants. https://docs.rs/git2/latest/git2/enum.RepositoryState.html
++diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/IMPLEMENTATION_NOTES.md /mnt/data/gitahead-next-uiux-v3/docs/IMPLEMENTATION_NOTES.md
++--- /mnt/data/gitahead-next-uiux-v2/docs/IMPLEMENTATION_NOTES.md	2026-09-14 06:29:31.675824225 +0000
+++++ /mnt/data/gitahead-next-uiux-v3/docs/IMPLEMENTATION_NOTES.md	2026-09-14 06:59:40.825653173 +0000
++@@ -1,79 +1,146 @@
++-# GitAhead Next UI/UX Refactor — Implementation Notes
+++# GitAhead Next UI/UX Refactor — Operation State Slice
++ 
++ ## Scope
++ 
++-This package refactors the Qt-free `next/` frontend. It intentionally leaves the legacy Qt application untouched.
+++This package continues the Qt-free `next/` UI/UX refactor with a repository-operation state layer for merge, rebase, cherry-pick and revert workflows.
++ 
++-Changed/replaced frontend files:
+++The legacy Qt application remains untouched.
++ 
++-- `next/src/App.tsx`
++-- `next/src/main.tsx`
++-- `next/src/components/RepositorySidebar.tsx`
++-- `next/src/components/CommitGraph.tsx`
++-- `next/src/components/StatusPanel.tsx`
++-- `next/src/components/WorkflowPanel.tsx`
++-- `next/src/components/CommandPalette.tsx`
++-
++-New frontend files:
++-
++-- `next/src/ux.css`
++-- `next/src/components/Icon.tsx`
++-- `next/src/components/BranchPanel.tsx`
++-- `next/src/components/CloneDialog.tsx`
++-- `next/src/components/SplitHandle.tsx`
++-
++-Optional backend correctness patch:
++-
++-- `docs/backend-correctness.patch`
++-  - fixes local branches containing `/` being misclassified as remotes;
++-  - fixes `git status --porcelain=v1 -z` rename/copy source paths being emitted as fake file records.
++-
++-## Key interaction changes
++-
++-- Replaced menu/window-strip/legacy-toolbar/second-toolbar stacking with one compact application bar and one repository command bar.
++-- Repository state is first-class navigation: Changes/Conflicts, History, Branches, Worktrees, Submodules, Stashes, Recovery.
++-- Sidebar can collapse and resize.
++-- History inspector, commit composer, and advanced-workflow output use pointer- and keyboard-resizable separators.
++-- Working tree separates Conflicts, Staged, and Unstaged.
++-- Partially staged files have independent selection state in Staged vs Unstaged groups.
++-- Commit is disabled while conflicts remain, when no files are staged, or when the message is empty.
++-- History removes the fake single-lane graph and fake diff preview.
++-- New branch manager separates local vs remote branches and exposes explicit Create/Checkout interactions.
++-- Worktree porcelain output is parsed into a visible table.
++-- Stash list is shown as structured rows instead of only terminal output.
++-- Clone uses a proper modal task flow rather than `window.prompt()`.
++-- Command palette supports Up/Down, Enter, Escape, categories and shortcuts.
++-
++-## Compatibility strategy
++-
++-`main.tsx` imports the existing `styles.css` first and `ux.css` second. This keeps current Cherry workbench styles functioning while the new shell overrides the application workspace. Once the migration stabilizes, dead legacy shell selectors can be removed from `styles.css` in a cleanup pass.
++-
++-No additional npm dependency is introduced.
++-
++-## Validation performed here
++-
++-- TS/TSX syntax parsed with TypeScript 5.8.3 compiler API.
++-- CSS brace validation performed after the final edits.
++-- Worktree parser implementation checked against Git's documented `git worktree list --porcelain` record format.
++-- Two 1440×900 static visual QA captures produced and inspected:
++-  - History workspace
++-  - Conflict / staged / unstaged workspace
++-- Visual inspection checked hierarchy, density, row alignment, status prominence, splitter separation, selected state, and commit-disabled conflict state.
++-
++-A full `npm run build` / `tauri dev` runtime pass could not be completed in this execution environment because the repository and its npm dependencies are not locally available and outbound container DNS access to GitHub/npm is unavailable. Run the commands in `APPLY_AND_VALIDATE.md` on the development machine after copying the overlay.
++-
++-## Important remaining backend/UI work
++-
++-The current backend does not yet expose a structured operation state for merge/rebase/cherry-pick/revert and does not expose patch/hunk data or structured submodule status. Consequently this pass improves conflict visibility but does not pretend to provide a complete merge editor.
++-
++-Next implementation sequence:
++-
++-1. repository operation-state API;
++-2. persistent Continue / Skip / Abort banner;
++-3. structured conflicted-file API;
++-4. three-way conflict solver;
++-5. real commit DAG/lane renderer;
++-6. on-demand commit/file/hunk diff API;
++-7. structured worktree/submodule models;
++-8. interactive rebase planner;
++-9. per-repository layout persistence.
+++## New operation-state architecture
+++
+++### Backend
+++
+++New file:
+++
+++- `next/src-tauri/src/operation_state.rs`
+++
+++The desktop implementation reads Git's actual worktree-specific state directory and exposes:
+++
+++- active operation: `merge`, `rebase`, `cherryPick`, `revert`;
+++- unresolved conflict count;
+++- Continue availability;
+++- Skip availability only where Git supports it;
+++- Abort availability;
+++- current commit and subject when Git exposes them;
+++- rebase step / total where the rebase state files expose progress;
+++- a human-readable operation-state message.
+++
+++The Tauri API adds:
+++
+++- `repository_operation_state(path)`
+++- `control_repository_operation(path, action)`
+++
+++Operation controls map to Git's sequencer commands:
+++
+++- merge: `git merge --continue|--abort`
+++- rebase: `git rebase --continue|--skip|--abort`
+++- cherry-pick: `git cherry-pick --continue|--skip|--abort`
+++- revert: `git revert --continue|--skip|--abort`
+++
+++Desktop operation commands set a non-interactive Git editor to prevent the Tauri process from hanging on an external terminal editor while accepting Git's existing operation message.
+++
+++Android uses `git2::RepositoryState` for detection. Controls remain explicitly disabled there until the native sequencer continuation logic is implemented.
+++
+++### Error model
+++
+++`AppError::Unsupported` is added. The current repository already referenced this variant in Android backend code even though it was missing from `error.rs`, so this also fixes an existing Android compile-path defect.
+++
+++### Frontend types / API
+++
+++New frontend data types:
+++
+++- `RepositoryOperationKind`
+++- `RepositoryOperationAction`
+++- `RepositoryOperationState`
+++
+++`api.ts` adds `operationState()` and `controlOperation()`.
+++
+++## New persistent operation UX
+++
+++New component:
+++
+++- `next/src/components/OperationBanner.tsx`
+++
+++The banner lives between the repository command bar and the active workspace. It remains visible regardless of whether the user is looking at Changes, History, Branches or an advanced tool.
+++
+++It shows:
+++
+++- operation name;
+++- rebase progress where available;
+++- current commit subject where available;
+++- unresolved conflict count and next action;
+++- Resolve Conflicts;
+++- Continue;
+++- Skip Commit where supported;
+++- Abort with a destructive-action confirmation.
+++
+++Abort is deliberately not one-click. The confirmation is keyboard operable, supports Escape, traps Tab inside the modal, and attempts to restore focus to the trigger when the operation remains mounted.
+++
+++## Safety interlocks
+++
+++While an operation is in progress:
+++
+++- Pull is disabled.
+++- Push is disabled.
+++- Branch create / checkout is disabled.
+++- Normal Commit is disabled.
+++- Worktree create/prune is disabled.
+++- Submodule update/sync is disabled.
+++- Stash push/pop is disabled.
+++- Maintenance and mutating LFS actions are disabled.
+++- Read-only inspection such as Fetch, worktree listing, stash listing, reflog, fsck and LFS lock listing remains available.
+++
+++The Changes view remains writable for Stage / Unstage because staging is the normal mechanism for marking conflict resolutions.
+++
+++## Additional UX correctness fix
+++
+++The previous Submodules screen used `submodule_sync` as its automatic refresh operation. Sync changes local submodule URL configuration, so opening a view could silently perform a write. Automatic refresh now performs no submodule write; the screen explains the structured-status backend gap and Sync remains an explicit user action.
+++
+++## Existing v2 improvements retained
+++
+++- repository-state-first navigation;
+++- resizable/collapsible panes;
+++- separate Conflicts / Staged / Unstaged groups;
+++- independent partially-staged selections;
+++- structured worktree list;
+++- proper Clone dialog;
+++- searchable keyboard command palette;
+++- branch manager and remote/local separation UI;
+++- compact engineering-oriented desktop density.
+++
+++## Optional backend correctness patch retained
+++
+++`docs/backend-correctness.patch` still fixes two pre-existing CLI backend defects:
+++
+++1. local branches containing `/` are no longer misclassified as remotes;
+++2. `git status --porcelain=v1 -z` rename/copy source paths are consumed correctly instead of appearing as fake file rows.
+++
+++## Validation performed
+++
+++Frontend:
+++
+++- 14 TypeScript / TSX files parsed with TypeScript 5.8.3;
+++- an additional semantic TypeScript pass was run with local React/Tauri API shims so cross-file prop/API contracts were checked without downloading npm dependencies;
+++- CSS braces balanced after final edits.
+++
+++Backend logic:
+++
+++Real temporary Git repositories were created and exercised with Git 2.47.3:
+++
+++- merge conflict detected, staged resolution, `merge --continue` succeeded;
+++- rebase conflict detected, `rebase --skip` succeeded;
+++- cherry-pick conflict detected, `cherry-pick --abort` restored state;
+++- revert conflict detected, `revert --abort` restored state.
+++
+++This validated the on-disk state markers and command semantics used by the Rust operation-state controller.
+++
+++Rust compilation itself could not be run in this container because `cargo`, `rustc` and `rustfmt` are not installed. Rust source received structural brace checks, but the definitive Rust validation remains `cargo check` / `npm run tauri dev` on the development machine.
+++
+++## Next slice
+++
+++1. structured conflicted-file API exposing index stages 1/2/3;
+++2. three-way Conflict Center with Current Base / Replayed Commit semantics during rebase;
+++3. save merged result + Stage + Next Conflict workflow;
+++4. operation-specific conflict labels for merge/cherry-pick/revert;
+++5. interactive rebase planner;
+++6. real DAG/lane renderer and on-demand commit/file diff API.
++diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/OVERLAY_FILE_LIST.txt /mnt/data/gitahead-next-uiux-v3/docs/OVERLAY_FILE_LIST.txt
++--- /mnt/data/gitahead-next-uiux-v2/docs/OVERLAY_FILE_LIST.txt	2026-09-14 06:23:52.180979696 +0000
+++++ /mnt/data/gitahead-next-uiux-v3/docs/OVERLAY_FILE_LIST.txt	2026-09-14 07:00:39.889471654 +0000
++@@ -1,13 +1,20 @@
++ next/docs/UI_UX_DEEP_RESEARCH.md
+++next/src-tauri/src/error.rs
+++next/src-tauri/src/lib.rs
+++next/src-tauri/src/models.rs
+++next/src-tauri/src/operation_state.rs
++ next/src/App.tsx
+++next/src/api.ts
++ next/src/components/BranchPanel.tsx
++ next/src/components/CloneDialog.tsx
++ next/src/components/CommandPalette.tsx
++ next/src/components/CommitGraph.tsx
++ next/src/components/Icon.tsx
+++next/src/components/OperationBanner.tsx
++ next/src/components/RepositorySidebar.tsx
++ next/src/components/SplitHandle.tsx
++ next/src/components/StatusPanel.tsx
++ next/src/components/WorkflowPanel.tsx
++ next/src/main.tsx
+++next/src/types.ts
++ next/src/ux.css
++diff -ruN /mnt/data/gitahead-next-uiux-v2/docs/VISUAL_QA.md /mnt/data/gitahead-next-uiux-v3/docs/VISUAL_QA.md
++--- /mnt/data/gitahead-next-uiux-v2/docs/VISUAL_QA.md	2026-09-14 06:29:31.783823923 +0000
+++++ /mnt/data/gitahead-next-uiux-v3/docs/VISUAL_QA.md	2026-09-14 06:59:40.841653122 +0000
++@@ -1,33 +1,28 @@
++-# Visual QA Record
+++# Visual QA Record — v3 Operation State
++ 
++-## History workspace
+++## Operation-state workspace
++ 
++-Reviewed at 1440×900.
+++Reviewed at 1440×900 using `visual/operation-state-workspace.png`.
++ 
++ Passed:
++-- application and repository command bars are visually distinct without duplicating navigation;
++-- active repository and History destination remain visible together;
++-- commit rows maintain stable column alignment;
++-- selection contrast is clear without overpowering the full window;
++-- inspector has a strong but low-noise boundary;
++-- metadata hierarchy is readable at compact density;
++-- fake patch content is absent;
++-- command/branch/status controls do not overlap.
++ 
++-## Conflict workspace
+++- active Rebase state is visible before the user enters the Changes screen;
+++- operation banner is visually subordinate to the application/repository bars but stronger than normal content;
+++- unresolved conflict count is immediately visible;
+++- Continue is visibly disabled while conflicts exist;
+++- Resolve Conflicts remains the first recovery action;
+++- Skip Commit is visible only as a sequencer action, not a generic repository action;
+++- Abort is visually destructive and separated from the primary Continue action;
+++- Pull and Push read as unavailable during the paused operation;
+++- Changes view still exposes staging actions required to resolve the operation;
+++- normal Commit area remains visible but clearly locked, teaching the correct Continue workflow;
+++- long operation subject text has a dedicated truncation lane and does not collide with controls;
+++- left navigation still surfaces Conflicts as repository-level state.
++ 
++-Reviewed at 1440×900.
+++## Existing v2 captures
++ 
++-Passed:
++-- conflict state is visible in sidebar, repository header and content banner;
++-- conflict rows are visually stronger than staged/unstaged rows;
++-- Staged and Unstaged remain distinguishable without relying only on status codes;
++-- commit composer stays visible while working through file state;
++-- disabled Commit plus reason text makes the safety rule explicit;
++-- split-pane structure remains readable with long file paths.
++-
++-One issue found during review: the first conflict visual proxy contained a mismatched repository name inherited from the history fixture. The fixture was corrected and the final PNG regenerated. This was a QA-fixture error, not an application-code issue.
+++The History and conflict/staging captures from v2 are retained for comparison. The new operation-state capture supersedes the old conflict capture for paused merge/rebase/cherry-pick/revert behavior.
++ 
++ ## Rendering limitation
++ 
++-A live Chromium capture of the static HTML proxy stalled in this container due the headless browser environment. The final QA images were therefore rendered from equivalent SVG layout proxies and inspected directly. The source HTML proxies are also included for local browser comparison.
+++The PNG is an SVG-rendered visual QA proxy based on the same design tokens/layout rules, not a live Tauri WebView screenshot. The container does not have a usable full Tauri/Rust runtime. Final acceptance still requires a live `npm run tauri dev` visual pass on the development machine.
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/docs/UI_UX_DEEP_RESEARCH.md /mnt/data/gitahead-next-uiux-v3/overlay/next/docs/UI_UX_DEEP_RESEARCH.md
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/docs/UI_UX_DEEP_RESEARCH.md	2026-09-14 06:23:52.157479426 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/docs/UI_UX_DEEP_RESEARCH.md	2026-09-14 07:00:04.648616379 +0000
+@@ -793,3 +793,62 @@
+ 23. GitAhead repository, **next/src/App.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/App.tsx
+ 24. GitAhead repository, **next/src/components/StatusPanel.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/components/StatusPanel.tsx
+ 25. GitAhead repository, **next/src/components/CommitGraph.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/components/CommitGraph.tsx
++
++---
++
++## 18. Implemented operation-state slice
++
++The v3 continuation turns the earlier operation-state recommendation into an implemented cross-layer contract.
++
++### State ownership
++
++Repository operation state is derived from Git, not duplicated in React state machines. On desktop the backend inspects the worktree-specific Git directory (`--absolute-git-dir`) for the standard merge/rebase/cherry-pick/revert markers and counts unresolved index entries. This matters for linked worktrees because operation state belongs to a worktree, not simply the common repository directory.
++
++### Command semantics
++
++The UI only exposes sequencer actions documented by Git:
++
++- Merge: Continue, Abort.
++- Rebase: Continue, Skip, Abort.
++- Cherry-pick: Continue, Skip, Abort.
++- Revert: Continue, Skip, Abort.
++
++Continue is unavailable while unmerged index entries remain. The Changes view remains writable because resolving and staging conflict results is the required path to Continue. Normal Commit, Pull, Push, branch switching and unrelated mutating workflow commands are suppressed until the paused operation finishes or is aborted.
++
++### Persistent visual treatment
++
++The operation banner is intentionally outside individual repository views. A rebase remains visible while inspecting History or Branches, avoiding the common failure mode where a user forgets that the repository is mid-operation because they navigated away from a conflict page.
++
++The banner prioritizes:
++
++1. operation type;
++2. progress/current commit context;
++3. blocking conflict count;
++4. Resolve / Continue / Skip controls;
++5. destructive Abort behind confirmation.
++
++### Safe destructive control
++
++Abort requires a dedicated alert dialog rather than a generic browser confirmation. The dialog supports keyboard focus, Escape, Tab containment, explicit consequence copy, and a non-destructive default action.
++
++### Hidden-write correction
++
++The Submodules screen previously called `submodule_sync` as its automatic refresh behavior. Because `git submodule sync` updates local configuration, that made navigation itself mutating. The v3 implementation removes that automatic write. Until structured submodule status exists, entering the page performs no mutation and Sync remains explicit.
++
++### Validation result
++
++Real Git 2.47.3 repositories were used to induce and validate:
++
++- merge conflict -> resolve/stage -> Continue;
++- rebase conflict -> Skip;
++- cherry-pick conflict -> Abort;
++- revert conflict -> Abort.
++
++The state files and command paths used by the Rust controller matched Git's actual behavior in all four smoke scenarios.
++
++### Additional sources
++
++26. Git documentation, **git-merge** — `--continue`, `--abort`, merge conflict state. https://git-scm.com/docs/git-merge
++27. Git documentation, **git-cherry-pick** — sequencer `--continue`, `--skip`, `--abort`. https://git-scm.com/docs/git-cherry-pick
++28. Git documentation, **git-revert** — sequencer `--continue`, `--skip`, `--abort`. https://git-scm.com/docs/git-revert
++29. Rust `git2` crate 0.21, **RepositoryState** — merge/rebase/cherry-pick/revert native state variants. https://docs.rs/git2/latest/git2/enum.RepositoryState.html
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src/App.tsx /mnt/data/gitahead-next-uiux-v3/overlay/next/src/App.tsx
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src/App.tsx	2026-09-14 06:23:52.135569937 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src/App.tsx	2026-09-14 06:58:20.436755789 +0000
+@@ -1,7 +1,7 @@
+ import { useCallback, useEffect, useMemo, useState } from "react";
+ import { open } from "@tauri-apps/plugin-dialog";
+ import { api } from "./api";
+-import type { BranchRecord, CommitRecord, FileChange, RepositorySummary, Workspace } from "./types";
++import type { BranchRecord, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
+ import { RepositorySidebar, type RepositoryView } from "./components/RepositorySidebar";
+ import { CommitGraph } from "./components/CommitGraph";
+ import { StatusPanel } from "./components/StatusPanel";
+@@ -11,9 +11,24 @@
+ import { CommandPalette, type Command } from "./components/CommandPalette";
+ import { Icon } from "./components/Icon";
+ import { CloneDialog } from "./components/CloneDialog";
++import { OperationBanner } from "./components/OperationBanner";
+ 
+ const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
+ 
++const idleOperation: RepositoryOperationState = {
++  operation: null,
++  hasConflicts: false,
++  conflictCount: 0,
++  canContinue: false,
++  canSkip: false,
++  canAbort: false,
++  currentCommit: null,
++  currentSubject: null,
++  step: null,
++  total: null,
++  message: "No merge, rebase, cherry-pick or revert is in progress."
++};
++
+ export default function App() {
+   const [workspaces, setWorkspaces] = useState<Workspace[]>([emptyWorkspace]);
+   const [path, setPath] = useState("");
+@@ -22,6 +37,7 @@
+   const [selectedCommit, setSelectedCommit] = useState<CommitRecord | null>(null);
+   const [changes, setChanges] = useState<FileChange[]>([]);
+   const [branches, setBranches] = useState<BranchRecord[]>([]);
++  const [operation, setOperation] = useState<RepositoryOperationState>(idleOperation);
+   const [view, setView] = useState<RepositoryView>("history");
+   const [busy, setBusy] = useState(false);
+   const [message, setMessage] = useState("Ready");
+@@ -39,11 +55,12 @@
+     if (!repositoryPath) return;
+     setBusy(true);
+     try {
+-      const [nextSummary, nextCommits, nextChanges, nextBranches] = await Promise.all([
++      const [nextSummary, nextCommits, nextChanges, nextBranches, nextOperation] = await Promise.all([
+         api.summary(repositoryPath),
+         api.history(repositoryPath),
+         api.status(repositoryPath),
+-        api.branches(repositoryPath)
++        api.branches(repositoryPath),
++        api.operationState(repositoryPath)
+       ]);
+       setPath(repositoryPath);
+       setSummary(nextSummary);
+@@ -51,6 +68,7 @@
+       setSelectedCommit((current) => nextCommits.find((commit) => commit.id === current?.id) || nextCommits[0] || null);
+       setChanges(nextChanges);
+       setBranches(nextBranches);
++      setOperation(nextOperation);
+       setMessage(`Refreshed ${nextSummary.name}`);
+     } catch (error) {
+       setMessage(String(error));
+@@ -111,8 +129,27 @@
+     }
+   }, [path, refresh]);
+ 
++  const runOperationAction = useCallback(async (action: RepositoryOperationAction) => {
++    if (!path || !operation.operation) return false;
++    const label = action === "continue" ? "Continue operation" : action === "skip" ? "Skip commit" : "Abort operation";
++    setBusy(true);
++    setMessage(`${label}…`);
++    try {
++      await api.controlOperation(path, action);
++      await refresh(path);
++      setMessage(`${label} completed`);
++      return true;
++    } catch (error) {
++      setMessage(String(error));
++      return false;
++    } finally {
++      setBusy(false);
++    }
++  }, [operation.operation, path, refresh]);
++
+   const conflictCount = changes.filter((change) => change.conflicted).length;
+   const dirtyCount = changes.length;
++  const operationActive = operation.operation !== null;
+ 
+   useEffect(() => {
+     const handler = (event: KeyboardEvent) => {
+@@ -146,8 +183,10 @@
+     { id: "clone", title: "Clone repository", category: "File", keywords: ["remote", "url"], run: () => void cloneRepository() },
+     { id: "refresh", title: "Refresh repository", category: "Repository", shortcut: "F5", disabled: !path, run: () => void refresh() },
+     { id: "fetch", title: "Fetch all remotes", category: "Remote", disabled: !path, run: () => void runRepositoryAction("Fetch", () => api.fetch(path)) },
+-    { id: "pull", title: "Pull current branch (fast-forward only)", category: "Remote", disabled: !path, run: () => void runRepositoryAction("Pull", () => api.pull(path)) },
+-    { id: "push", title: "Push current branch", category: "Remote", disabled: !path, run: () => void runRepositoryAction("Push", () => api.push(path)) },
++    { id: "pull", title: "Pull current branch (fast-forward only)", category: "Remote", disabled: !path || operationActive, run: () => void runRepositoryAction("Pull", () => api.pull(path)) },
++    { id: "push", title: "Push current branch", category: "Remote", disabled: !path || operationActive, run: () => void runRepositoryAction("Push", () => api.push(path)) },
++    { id: "operation-continue", title: "Continue current Git operation", category: "Operation", disabled: !operation.canContinue, run: () => void runOperationAction("continue") },
++    { id: "operation-skip", title: "Skip current commit", category: "Operation", disabled: !operation.canSkip, run: () => void runOperationAction("skip") },
+     { id: "changes", title: "Show working tree", category: "View", shortcut: "Ctrl+1", disabled: !path, run: () => setView("changes") },
+     { id: "history", title: "Show history", category: "View", shortcut: "Ctrl+2", disabled: !path, run: () => setView("history") },
+     { id: "branches", title: "Show branches", category: "View", shortcut: "Ctrl+3", disabled: !path, run: () => setView("branches") },
+@@ -157,7 +196,7 @@
+     { id: "recovery", title: "Open recovery & maintenance", category: "Repository", keywords: ["reflog", "fsck", "lfs"], disabled: !path, run: () => setView("recovery") },
+     { id: "sidebar", title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar", category: "View", shortcut: "Ctrl+B", run: () => setSidebarCollapsed((value) => !value) },
+     { id: "cherry", title: "Open UI workbench", category: "Developer", run: () => setView("cherry") }
+-  ], [path, refresh, runRepositoryAction, sidebarCollapsed]);
++  ], [operation.canContinue, operation.canSkip, operationActive, path, refresh, runOperationAction, runRepositoryAction, sidebarCollapsed]);
+ 
+   const currentBranch = summary?.branch || "Detached HEAD";
+ 
+@@ -199,7 +238,7 @@
+         onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+       />
+ 
+-      <main className="ux-main">
++      <main className={`ux-main${operationActive ? " has-operation" : ""}`}>
+         <header className="ux-repository-header">
+           <div className="ux-branch-context">
+             <span className="ux-branch-icon"><Icon name="branch" /></span>
+@@ -216,11 +255,22 @@
+           <div className="ux-repo-actions" role="toolbar" aria-label="Repository actions">
+             <button className="ux-icon-button" disabled={!path || busy} onClick={() => void refresh()} title="Refresh (F5)" aria-label="Refresh repository"><Icon name="refresh" /></button>
+             <button className="ux-button" disabled={!path || busy} onClick={() => void runRepositoryAction("Fetch", () => api.fetch(path))}><Icon name="download" />Fetch</button>
+-            <button className="ux-button" disabled={!path || busy} onClick={() => void runRepositoryAction("Pull", () => api.pull(path))}>Pull</button>
+-            <button className="ux-primary-button compact" disabled={!path || busy} onClick={() => void runRepositoryAction("Push", () => api.push(path))}><Icon name="upload" />Push</button>
++            <button className="ux-button" disabled={!path || busy || operationActive} onClick={() => void runRepositoryAction("Pull", () => api.pull(path))} title={operationActive ? "Finish or abort the current Git operation first" : undefined}>Pull</button>
++            <button className="ux-primary-button compact" disabled={!path || busy || operationActive} onClick={() => void runRepositoryAction("Push", () => api.push(path))} title={operationActive ? "Finish or abort the current Git operation first" : undefined}><Icon name="upload" />Push</button>
+           </div>
+         </header>
+ 
++        {path && operationActive && (
++          <OperationBanner
++            state={operation}
++            busy={busy}
++            onResolve={() => setView("changes")}
++            onContinue={() => runOperationAction("continue")}
++            onSkip={() => runOperationAction("skip")}
++            onAbort={() => runOperationAction("abort")}
++          />
++        )}
++
+         <section className="ux-content" aria-live="polite">
+           {!path && view !== "cherry" && (
+             <div className="ux-welcome">
+@@ -237,6 +287,7 @@
+               changes={changes}
+               onStage={async (files) => { await api.stage(path, files); await refresh(); }}
+               onUnstage={async (files) => { await api.unstage(path, files); await refresh(); }}
++              operationActive={operationActive}
+               onCommit={async (commitMessage) => { await api.commit(path, commitMessage); await refresh(); }}
+             />
+           )}
+@@ -244,12 +295,13 @@
+           {path && view === "branches" && (
+             <BranchPanel
+               branches={branches}
++              disabled={operationActive}
+               onCheckout={async (branch) => { await api.switchBranch(path, branch); await refresh(); }}
+               onCreate={async (branch) => { await api.createBranch(path, branch); await refresh(); }}
+             />
+           )}
+           {path && (view === "worktrees" || view === "submodules" || view === "stashes" || view === "recovery") && (
+-            <WorkflowPanel section={view} onRun={(request) => api.workflow(path, request)} />
++            <WorkflowPanel section={view} operationLocked={operationActive} onRun={(request) => api.workflow(path, request)} />
+           )}
+           {view === "cherry" && <CherryParityPanel />}
+         </section>
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src/api.ts /mnt/data/gitahead-next-uiux-v3/overlay/next/src/api.ts
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src/api.ts	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src/api.ts	2026-09-14 06:50:50.620679183 +0000
+@@ -0,0 +1,43 @@
++import { invoke } from "@tauri-apps/api/core";
++import type {
++  AuthRequest,
++  BranchRecord,
++  CloneRequest,
++  CommandResult,
++  CommitRecord,
++  FileChange,
++  PullRequestRecord,
++  RepositoryOperationAction,
++  RepositoryOperationState,
++  RepositorySummary,
++  WorkflowRequest,
++  Workspace
++} from "./types";
++
++export const api = {
++  summary: (path: string) => invoke<RepositorySummary>("repository_summary", { path }),
++  history: (path: string, limit = 300) => invoke<CommitRecord[]>("repository_history", { path, limit }),
++  status: (path: string) => invoke<FileChange[]>("repository_status", { path }),
++  branches: (path: string) => invoke<BranchRecord[]>("repository_branches", { path }),
++  operationState: (path: string) => invoke<RepositoryOperationState>("repository_operation_state", { path }),
++  controlOperation: (path: string, action: RepositoryOperationAction) => invoke<CommandResult>("control_repository_operation", { path, action }),
++  stage: (path: string, files: string[]) => invoke<void>("stage_paths", { path, files }),
++  unstage: (path: string, files: string[]) => invoke<void>("unstage_paths", { path, files }),
++  commit: (path: string, message: string) => invoke<string>("create_commit", { path, message }),
++  fetch: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("fetch_repository", { path, auth }),
++  pull: (path: string) => invoke<CommandResult>("pull_repository", { path }),
++  push: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("push_repository", { path, auth }),
++  clone: (request: CloneRequest) => invoke<RepositorySummary>("clone_repository", { request }),
++  switchBranch: (path: string, branch: string) => invoke<void>("switch_branch", { path, branch }),
++  createBranch: (path: string, branch: string) => invoke<void>("create_branch", { path, branch }),
++  workflow: (path: string, request: WorkflowRequest) => invoke<CommandResult>("run_workflow", { path, request }),
++  loadWorkspaces: () => invoke<Workspace[]>("load_workspaces"),
++  saveWorkspaces: (workspaces: Workspace[]) => invoke<void>("save_workspaces", { workspaces }),
++  pullRequests: (
++    provider: string,
++    baseUrl: string,
++    owner: string,
++    repository: string,
++    token: string
++  ) => invoke<PullRequestRecord[]>("list_pull_requests", { provider, baseUrl, owner, repository, token })
++};
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src/components/BranchPanel.tsx /mnt/data/gitahead-next-uiux-v3/overlay/next/src/components/BranchPanel.tsx
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src/components/BranchPanel.tsx	2026-09-14 06:23:52.147250756 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src/components/BranchPanel.tsx	2026-09-14 06:52:03.687551026 +0000
+@@ -7,9 +7,10 @@
+   branches: BranchRecord[];
+   onCheckout: (branch: string) => Promise<void>;
+   onCreate: (branch: string) => Promise<void>;
++  disabled?: boolean;
+ };
+ 
+-export function BranchPanel({ branches, onCheckout, onCreate }: Props) {
++export function BranchPanel({ branches, onCheckout, onCreate, disabled = false }: Props) {
+   const [query, setQuery] = useState("");
+   const [newBranch, setNewBranch] = useState("");
+   const [busyBranch, setBusyBranch] = useState<string | null>(null);
+@@ -37,11 +38,13 @@
+         </label>
+       </header>
+ 
++      {disabled && <div className="ux-inline-warning"><Icon name="warning" /><span>Branch changes are locked while a merge, rebase, cherry-pick, or revert is in progress.</span></div>}
++
+       <section className="ux-create-branch-card">
+         <div><strong>Create branch</strong><span>Creates and checks out a new branch from the current HEAD.</span></div>
+         <div className="ux-inline-form">
+           <input value={newBranch} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewBranch(event.target.value)} placeholder="feature/my-change" aria-label="New branch name" />
+-          <button className="ux-primary-button" disabled={!newBranch.trim() || busyBranch !== null} onClick={async () => {
++          <button className="ux-primary-button" disabled={disabled || !newBranch.trim() || busyBranch !== null} onClick={async () => {
+             const name = newBranch.trim();
+             setBusyBranch(name);
+             try { await onCreate(name); setNewBranch(""); } finally { setBusyBranch(null); }
+@@ -54,7 +57,7 @@
+           <header><strong>Local</strong><span>{local.length}</span></header>
+           <div>
+             {local.map((branch) => (
+-              <button key={branch.name} className={`ux-reference-row${branch.current ? " is-current" : ""}`} onClick={() => !branch.current && checkout(branch.name)} disabled={branch.current || busyBranch !== null}>
++              <button key={branch.name} className={`ux-reference-row${branch.current ? " is-current" : ""}`} onClick={() => !branch.current && checkout(branch.name)} disabled={disabled || branch.current || busyBranch !== null}>
+                 <Icon name="branch" />
+                 <span className="ux-reference-name"><strong>{branch.name}</strong><small>{branch.upstream || "No upstream"}</small></span>
+                 {branch.current ? <span className="ux-current-pill">Current</span> : <code>{busyBranch === branch.name ? "switching" : branch.target.slice(0, 8)}</code>}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src/components/OperationBanner.tsx /mnt/data/gitahead-next-uiux-v3/overlay/next/src/components/OperationBanner.tsx
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src/components/OperationBanner.tsx	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src/components/OperationBanner.tsx	2026-09-14 06:58:58.117956565 +0000
+@@ -0,0 +1,114 @@
++import { useRef, useState } from "react";
++import type { RepositoryOperationState } from "../types";
++import { Icon } from "./Icon";
++
++type Props = {
++  state: RepositoryOperationState;
++  busy: boolean;
++  onResolve: () => void;
++  onContinue: () => Promise<boolean>;
++  onSkip: () => Promise<boolean>;
++  onAbort: () => Promise<boolean>;
++};
++
++const labels: Record<NonNullable<RepositoryOperationState["operation"]>, string> = {
++  merge: "Merge",
++  rebase: "Rebase",
++  cherryPick: "Cherry-pick",
++  revert: "Revert"
++};
++
++export function OperationBanner({ state, busy, onResolve, onContinue, onSkip, onAbort }: Props) {
++  const [confirmAbort, setConfirmAbort] = useState(false);
++  const [pending, setPending] = useState<"continue" | "skip" | "abort" | null>(null);
++  const abortTriggerRef = useRef<HTMLButtonElement>(null);
++
++  if (!state.operation) return null;
++
++  const label = labels[state.operation];
++  const progress = state.step && state.total ? `${state.step} of ${state.total}` : null;
++
++  const closeAbort = () => {
++    setConfirmAbort(false);
++    window.requestAnimationFrame(() => abortTriggerRef.current?.focus());
++  };
++
++  const run = async (kind: "continue" | "skip" | "abort", action: () => Promise<boolean>) => {
++    setPending(kind);
++    try {
++      const succeeded = await action();
++      if (kind === "abort" && succeeded && abortTriggerRef.current) closeAbort();
++    } finally {
++      setPending(null);
++    }
++  };
++
++  return (
++    <section className={`ux-git-operation${state.hasConflicts ? " has-conflicts" : ""}`} aria-label={`${label} in progress`}>
++      <div className="ux-operation-status-icon"><Icon name={state.hasConflicts ? "warning" : "activity"} /></div>
++      <div className="ux-operation-copy">
++        <div className="ux-operation-title-row">
++          <strong>{label} in progress</strong>
++          {progress && <span className="ux-operation-progress">{progress}</span>}
++          {state.currentSubject && <span className="ux-operation-subject" title={state.currentSubject}>{state.currentSubject}</span>}
++        </div>
++        <span>{state.message}</span>
++      </div>
++      <div className="ux-operation-actions" role="toolbar" aria-label={`${label} controls`}>
++        {state.hasConflicts && (
++          <button className="ux-button" disabled={busy || pending !== null} onClick={onResolve}>
++            Resolve {state.conflictCount} conflict{state.conflictCount === 1 ? "" : "s"}
++          </button>
++        )}
++        <button
++          className="ux-primary-button compact"
++          disabled={busy || pending !== null || !state.canContinue}
++          onClick={() => void run("continue", onContinue)}
++        >
++          {pending === "continue" ? "Continuing…" : "Continue"}
++        </button>
++        {state.canSkip && (
++          <button className="ux-button" disabled={busy || pending !== null} onClick={() => void run("skip", onSkip)}>
++            {pending === "skip" ? "Skipping…" : "Skip commit"}
++          </button>
++        )}
++        {state.canAbort && <button ref={abortTriggerRef} className="ux-danger-button" disabled={busy || pending !== null} onClick={() => setConfirmAbort(true)}>Abort…</button>}
++      </div>
++
++      {confirmAbort && (
++        <div className="ux-confirm-backdrop" role="presentation" onMouseDown={closeAbort}>
++          <div
++            className="ux-confirm-dialog"
++            role="alertdialog"
++            aria-modal="true"
++            aria-labelledby="abort-operation-title"
++            aria-describedby="abort-operation-description"
++            onMouseDown={(event) => event.stopPropagation()}
++            onKeyDown={(event) => {
++              if (event.key === "Escape") { event.preventDefault(); closeAbort(); return; }
++              if (event.key !== "Tab") return;
++              const buttons = [...event.currentTarget.querySelectorAll("button:not(:disabled)")] as HTMLButtonElement[];
++              if (!buttons.length) return;
++              const first = buttons[0];
++              const last = buttons[buttons.length - 1];
++              if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
++              else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
++            }}
++          >
++            <div className="ux-confirm-icon"><Icon name="warning" /></div>
++            <div>
++              <h2 id="abort-operation-title">Abort {label.toLowerCase()}?</h2>
++              <p id="abort-operation-description">This asks Git to return the operation to its pre-{label.toLowerCase()} state. Any conflict-resolution edits made as part of this operation may be discarded.</p>
++            </div>
++            <div className="ux-confirm-actions">
++              <button className="ux-button" autoFocus onClick={closeAbort}>Keep working</button>
++              <button className="ux-danger-button solid" disabled={pending !== null} onClick={() => void run("abort", onAbort)}>
++                {pending === "abort" ? "Aborting…" : `Abort ${label.toLowerCase()}`}
++              </button>
++            </div>
++          </div>
++        </div>
++      )}
++    </section>
++  );
++}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src/components/StatusPanel.tsx /mnt/data/gitahead-next-uiux-v3/overlay/next/src/components/StatusPanel.tsx
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src/components/StatusPanel.tsx	2026-09-14 06:23:52.147481039 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src/components/StatusPanel.tsx	2026-09-14 06:53:05.240886423 +0000
+@@ -9,6 +9,7 @@
+   onStage: (paths: string[]) => Promise<void>;
+   onUnstage: (paths: string[]) => Promise<void>;
+   onCommit: (message: string) => Promise<void>;
++  operationActive?: boolean;
+ };
+ 
+ type GroupProps = {
+@@ -42,7 +43,7 @@
+   );
+ }
+ 
+-export function StatusPanel({ changes, onStage, onUnstage, onCommit }: Props) {
++export function StatusPanel({ changes, onStage, onUnstage, onCommit, operationActive = false }: Props) {
+   const [selectedStageable, setSelectedStageable] = useState<Set<string>>(new Set());
+   const [selectedStaged, setSelectedStaged] = useState<Set<string>>(new Set());
+   const [message, setMessage] = useState("");
+@@ -139,7 +140,7 @@
+         </div>
+         <button
+           className="ux-primary-button"
+-          disabled={!message.trim() || !grouped.staged.length || grouped.conflicts.length > 0 || pending !== null}
++          disabled={operationActive || !message.trim() || !grouped.staged.length || grouped.conflicts.length > 0 || pending !== null}
+           onClick={async () => {
+             setPending("commit");
+             try {
+@@ -152,8 +153,9 @@
+         >
+           {pending === "commit" ? "Committing…" : "Commit staged changes"}
+         </button>
+-        {grouped.conflicts.length > 0 && <p className="ux-help-text">Commit is blocked until conflicts are resolved.</p>}
+-        {!grouped.staged.length && !grouped.conflicts.length && <p className="ux-help-text">Stage one or more files to enable commit.</p>}
++        {operationActive && <p className="ux-help-text">Normal commit is locked while a Git operation is in progress. Resolve/stage changes, then use Continue in the operation banner.</p>}
++        {!operationActive && grouped.conflicts.length > 0 && <p className="ux-help-text">Commit is blocked until conflicts are resolved.</p>}
++        {!operationActive && !grouped.staged.length && !grouped.conflicts.length && <p className="ux-help-text">Stage one or more files to enable commit.</p>}
+       </aside>
+     </div>
+   );
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src/components/WorkflowPanel.tsx /mnt/data/gitahead-next-uiux-v3/overlay/next/src/components/WorkflowPanel.tsx
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src/components/WorkflowPanel.tsx	2026-09-14 06:23:52.147507962 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src/components/WorkflowPanel.tsx	2026-09-14 06:53:05.251467764 +0000
+@@ -9,6 +9,7 @@
+ type Props = {
+   section: WorkflowSection;
+   onRun: (request: WorkflowRequest) => Promise<CommandResult>;
++  operationLocked?: boolean;
+ };
+ 
+ type RunOptions = { quiet?: boolean };
+@@ -42,7 +43,7 @@
+   return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+ }
+ 
+-export function WorkflowPanel({ section, onRun }: Props) {
++export function WorkflowPanel({ section, onRun, operationLocked = false }: Props) {
+   const [output, setOutput] = useState("No command has run yet.");
+   const [busy, setBusy] = useState<string | null>(null);
+   const [worktreePath, setWorktreePath] = useState("");
+@@ -82,7 +83,7 @@
+       await run("reflog");
+       return;
+     }
+-    await run("submodule_sync");
++    setOutput("Submodule status is not structured yet. No write operation was run automatically; use Sync only when you explicitly want to update local submodule URLs.");
+   };
+ 
+   useEffect(() => {
+@@ -106,6 +107,10 @@
+           <button className="ux-button" disabled={busy !== null} onClick={() => void refreshSection().catch(() => undefined)}><Icon name="refresh" />Refresh</button>
+         </header>
+ 
++        {operationLocked && (
++          <div className="ux-inline-warning"><Icon name="warning" /><span>Mutating repository tools are locked while the current Git operation is paused. Read-only inspection remains available.</span></div>
++        )}
++
+         {section === "worktrees" && (
+           <div className="ux-workflow-cards">
+             <article className="ux-task-card wide">
+@@ -115,14 +120,14 @@
+                 <label><span>Branch / revision</span><input value={worktreeRef} onChange={(event: ChangeEvent<HTMLInputElement>) => setWorktreeRef(event.target.value)} placeholder="feature/ui-v2" /></label>
+               </div>
+               <div className="ux-card-actions">
+-                <button className="ux-primary-button" disabled={!worktreePath.trim() || !worktreeRef.trim() || busy !== null} onClick={async () => {
++                <button className="ux-primary-button" disabled={operationLocked || !worktreePath.trim() || !worktreeRef.trim() || busy !== null} onClick={async () => {
+                   await run("worktree_add", [worktreePath.trim(), worktreeRef.trim()]);
+                   setWorktreePath("");
+                   setWorktreeRef("");
+                   const result = await run("worktree_list", [], { quiet: false });
+                   setWorktrees(parseWorktrees(result.stdout));
+                 }}>Create worktree</button>
+-                <button className="ux-button" disabled={busy !== null} onClick={() => void run("worktree_prune").catch(() => undefined)}>Prune stale metadata</button>
++                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("worktree_prune").catch(() => undefined)}>Prune stale metadata</button>
+               </div>
+             </article>
+             <article className="ux-task-card wide">
+@@ -150,13 +155,13 @@
+               <span className="ux-card-icon"><Icon name="submodule" /></span>
+               <h3>Update recursively</h3>
+               <p>Initialize missing submodules and update registered submodules to the commits recorded by the parent repository.</p>
+-              <button className="ux-primary-button" disabled={busy !== null} onClick={() => void run("submodule_update").catch(() => undefined)}>Initialize & update</button>
++              <button className="ux-primary-button" disabled={operationLocked || busy !== null} onClick={() => void run("submodule_update").catch(() => undefined)}>Initialize & update</button>
+             </article>
+             <article className="ux-task-card">
+               <span className="ux-card-icon"><Icon name="refresh" /></span>
+               <h3>Synchronize URLs</h3>
+               <p>Apply URL changes from <code>.gitmodules</code> to local submodule configuration, including nested submodules.</p>
+-              <button className="ux-button" disabled={busy !== null} onClick={() => void run("submodule_sync").catch(() => undefined)}>Sync recursively</button>
++              <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("submodule_sync").catch(() => undefined)}>Sync recursively</button>
+             </article>
+             <article className="ux-task-card wide is-muted">
+               <h3>Next backend slice</h3>
+@@ -173,13 +178,13 @@
+               <p>Save tracked and untracked working changes so you can safely change context.</p>
+               <label className="ux-field-stack"><span>Message</span><input value={stashMessage} onChange={(event: ChangeEvent<HTMLInputElement>) => setStashMessage(event.target.value)} placeholder="WIP: describe the context" /></label>
+               <div className="ux-card-actions">
+-                <button className="ux-primary-button" disabled={busy !== null} onClick={async () => {
++                <button className="ux-primary-button" disabled={operationLocked || busy !== null} onClick={async () => {
+                   await run("stash_push", stashMessage.trim() ? [stashMessage.trim()] : []);
+                   setStashMessage("");
+                   const result = await run("stash_list");
+                   setStashes(parseStashes(result.stdout));
+                 }}>Stash changes</button>
+-                <button className="ux-button" disabled={busy !== null} onClick={async () => { await run("stash_pop"); const result = await run("stash_list"); setStashes(parseStashes(result.stdout)); }}>Pop latest</button>
++                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={async () => { await run("stash_pop"); const result = await run("stash_list"); setStashes(parseStashes(result.stdout)); }}>Pop latest</button>
+               </div>
+               <div className="ux-stash-list" aria-label="Stashes">
+                 {stashes.map((stash) => <code key={stash}>{stash}</code>)}
+@@ -207,7 +212,7 @@
+               <span className="ux-card-icon"><Icon name="settings" /></span>
+               <h3>Maintenance</h3>
+               <p>Run Git's configured maintenance tasks for repository housekeeping.</p>
+-              <button className="ux-button" disabled={busy !== null} onClick={() => void run("maintenance").catch(() => undefined)}>Run maintenance</button>
++              <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("maintenance").catch(() => undefined)}>Run maintenance</button>
+             </article>
+             <article className="ux-task-card">
+               <span className="ux-card-icon"><Icon name="layers" /></span>
+@@ -215,8 +220,8 @@
+               <p>Inspect active LFS locks or update/prune local LFS objects.</p>
+               <div className="ux-card-actions wrap">
+                 <button className="ux-button" disabled={busy !== null} onClick={() => void run("lfs_locks").catch(() => undefined)}>Locks</button>
+-                <button className="ux-button" disabled={busy !== null} onClick={() => void run("lfs_pull").catch(() => undefined)}>Pull</button>
+-                <button className="ux-button" disabled={busy !== null} onClick={() => void run("lfs_prune").catch(() => undefined)}>Prune</button>
++                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("lfs_pull").catch(() => undefined)}>Pull</button>
++                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("lfs_prune").catch(() => undefined)}>Prune</button>
+               </div>
+             </article>
+           </div>
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src/types.ts /mnt/data/gitahead-next-uiux-v3/overlay/next/src/types.ts
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src/types.ts	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src/types.ts	2026-09-14 06:50:50.613987179 +0000
+@@ -0,0 +1,96 @@
++export type RepositorySummary = {
++  path: string;
++  name: string;
++  branch: string | null;
++  head: string | null;
++  ahead: number;
++  behind: number;
++  dirty: boolean;
++};
++
++export type CommitRecord = {
++  id: string;
++  parents: string[];
++  authorName: string;
++  authorEmail: string;
++  authoredAt: string;
++  subject: string;
++};
++
++export type FileChange = {
++  path: string;
++  indexStatus: string;
++  worktreeStatus: string;
++  conflicted: boolean;
++};
++
++export type BranchRecord = {
++  name: string;
++  target: string;
++  current: boolean;
++  remote: boolean;
++  upstream: string | null;
++};
++
++export type WorkspaceRepository = {
++  path: string;
++  alias?: string;
++};
++
++export type Workspace = {
++  id: string;
++  name: string;
++  repositories: WorkspaceRepository[];
++};
++
++export type CloneRequest = {
++  url: string;
++  destination: string;
++  username?: string;
++  token?: string;
++};
++
++export type AuthRequest = {
++  username?: string;
++  token?: string;
++};
++
++export type WorkflowRequest = {
++  operation: string;
++  args: string[];
++};
++
++export type CommandResult = {
++  stdout: string;
++  stderr: string;
++  exitCode: number;
++};
++
++export type RepositoryOperationKind = "merge" | "rebase" | "cherryPick" | "revert";
++export type RepositoryOperationAction = "continue" | "skip" | "abort";
++
++export type RepositoryOperationState = {
++  operation: RepositoryOperationKind | null;
++  hasConflicts: boolean;
++  conflictCount: number;
++  canContinue: boolean;
++  canSkip: boolean;
++  canAbort: boolean;
++  currentCommit: string | null;
++  currentSubject: string | null;
++  step: number | null;
++  total: number | null;
++  message: string;
++};
++
++export type PullRequestRecord = {
++  id: string;
++  number: number;
++  title: string;
++  author: string;
++  state: string;
++  sourceBranch: string;
++  targetBranch: string;
++  webUrl: string;
++  updatedAt: string | null;
++};
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src/ux.css /mnt/data/gitahead-next-uiux-v3/overlay/next/src/ux.css
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src/ux.css	2026-09-14 06:23:52.135657413 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src/ux.css	2026-09-14 06:53:40.409093965 +0000
+@@ -1,4 +1,4 @@
+-/* GitAhead Next UX v2
++/* GitAhead Next UX v3
+    Intent: compact cross-platform desktop UI, repository-state first navigation,
+    high information density, explicit focus states, and low visual noise. */
+ 
+@@ -172,7 +172,8 @@
+ .ux-primary-button,
+ .ux-icon-button,
+ .ux-command-button,
+-.ux-sidebar-add {
++.ux-sidebar-add,
++.ux-danger-button {
+   min-height: 28px;
+   border: 1px solid var(--ux-border);
+   border-radius: var(--ux-radius);
+@@ -183,7 +184,8 @@
+ 
+ .ux-button,
+ .ux-primary-button,
+-.ux-command-button {
++.ux-command-button,
++.ux-danger-button {
+   display: inline-flex;
+   align-items: center;
+   justify-content: center;
+@@ -216,6 +218,31 @@
+   padding-inline: 10px;
+ }
+ 
++.ux-danger-button {
++  min-height: 28px;
++  border: 1px solid #7b3941;
++  border-radius: var(--ux-radius);
++  background: var(--ux-danger-bg);
++  color: #ffb7bc;
++  padding: 4px 9px;
++}
++
++.ux-danger-button:hover:not(:disabled) {
++  border-color: #a94a55;
++  background: #51262d;
++}
++
++.ux-danger-button.solid {
++  background: #9b3641;
++  border-color: #bd4c58;
++  color: #fff;
++  font-weight: 600;
++}
++
++.ux-danger-button.solid:hover:not(:disabled) {
++  background: #b5414d;
++}
++
+ .ux-icon-button {
+   width: 28px;
+   height: 28px;
+@@ -483,6 +510,160 @@
+   background: var(--ux-bg-0);
+ }
+ 
++.ux-main.has-operation {
++  grid-template-rows: 46px auto minmax(0, 1fr);
++}
++
++.ux-git-operation {
++  min-width: 0;
++  display: grid;
++  grid-template-columns: 28px minmax(0, 1fr) auto;
++  align-items: center;
++  gap: 10px;
++  padding: 7px 9px;
++  background: #24291f;
++  border-bottom: 1px solid #4a4932;
++}
++
++.ux-git-operation.has-conflicts {
++  background: var(--ux-danger-bg);
++  border-bottom-color: #73353d;
++}
++
++.ux-operation-status-icon {
++  width: 28px;
++  height: 28px;
++  display: grid;
++  place-items: center;
++  border: 1px solid #5a5740;
++  border-radius: var(--ux-radius);
++  color: var(--ux-warning);
++  background: #302f23;
++}
++
++.ux-git-operation.has-conflicts .ux-operation-status-icon {
++  border-color: #774049;
++  color: #ff9fa6;
++  background: #49262c;
++}
++
++.ux-operation-copy {
++  min-width: 0;
++  display: grid;
++  gap: 2px;
++}
++
++.ux-operation-title-row {
++  min-width: 0;
++  display: flex;
++  align-items: center;
++  gap: 7px;
++}
++
++.ux-operation-title-row strong {
++  white-space: nowrap;
++  font-size: 11.5px;
++}
++
++.ux-operation-copy > span {
++  color: var(--ux-text-2);
++  font-size: 10px;
++}
++
++.ux-operation-progress {
++  padding: 1px 5px;
++  border: 1px solid #5a5740;
++  border-radius: 9px;
++  color: #efd18b;
++  font-size: 9.5px;
++  white-space: nowrap;
++}
++
++.ux-operation-subject {
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  color: var(--ux-text-3);
++  font-family: var(--ux-mono);
++  font-size: 10px;
++}
++
++.ux-operation-actions {
++  display: flex;
++  align-items: center;
++  gap: 5px;
++}
++
++.ux-inline-warning {
++  display: flex;
++  align-items: center;
++  gap: 7px;
++  min-height: 34px;
++  padding: 6px 9px;
++  color: #e8c481;
++  background: #332d1f;
++  border-bottom: 1px solid #564a30;
++  font-size: 10.5px;
++}
++
++.ux-inline-warning .ux-icon {
++  width: 14px;
++  height: 14px;
++}
++
++.ux-confirm-backdrop {
++  position: fixed;
++  inset: 0;
++  z-index: 90;
++  display: grid;
++  place-items: center;
++  padding: 24px;
++  background: #0009;
++}
++
++.ux-confirm-dialog {
++  width: min(520px, calc(100vw - 48px));
++  display: grid;
++  grid-template-columns: 38px minmax(0, 1fr);
++  gap: 12px;
++  padding: 16px;
++  background: var(--ux-bg-1);
++  border: 1px solid var(--ux-border-strong);
++  border-radius: 6px;
++  box-shadow: 0 24px 80px #000b;
++}
++
++.ux-confirm-icon {
++  width: 36px;
++  height: 36px;
++  display: grid;
++  place-items: center;
++  border-radius: 50%;
++  color: #ff9fa6;
++  background: var(--ux-danger-bg);
++}
++
++.ux-confirm-dialog h2 {
++  margin: 0 0 5px;
++  font-size: 14px;
++}
++
++.ux-confirm-dialog p {
++  margin: 0;
++  color: var(--ux-text-2);
++  font-size: 11px;
++  line-height: 1.5;
++}
++
++.ux-confirm-actions {
++  grid-column: 1 / -1;
++  display: flex;
++  justify-content: flex-end;
++  gap: 6px;
++  margin-top: 4px;
++}
++
+ .ux-repository-header {
+   min-width: 0;
+   display: grid;
+@@ -1859,3 +2040,8 @@
+   color: var(--ux-text-2);
+   font-size: 10px;
+ }
++
++@media (max-width: 900px) {
++  .ux-git-operation { grid-template-columns: 24px minmax(0, 1fr); }
++  .ux-operation-actions { grid-column: 1 / -1; justify-content: flex-end; }
++}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src-tauri/src/error.rs /mnt/data/gitahead-next-uiux-v3/overlay/next/src-tauri/src/error.rs
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src-tauri/src/error.rs	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src-tauri/src/error.rs	2026-09-14 06:51:41.750519719 +0000
+@@ -0,0 +1,32 @@
++use serde::Serialize;
++use thiserror::Error;
++
++#[derive(Debug, Error)]
++pub enum AppError {
++    #[error("I/O error: {0}")]
++    Io(#[from] std::io::Error),
++    #[error("JSON error: {0}")]
++    Json(#[from] serde_json::Error),
++    #[error("HTTP error: {0}")]
++    Http(#[from] reqwest::Error),
++    #[cfg(target_os = "android")]
++    #[error("Git error: {0}")]
++    Git(#[from] git2::Error),
++    #[error("Git command failed: {0}")]
++    Command(String),
++    #[error("Invalid request: {0}")]
++    Invalid(String),
++    #[error("Unsupported operation: {0}")]
++    Unsupported(String),
++}
++
++impl Serialize for AppError {
++    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
++    where
++        S: serde::Serializer,
++    {
++        serializer.serialize_str(&self.to_string())
++    }
++}
++
++pub type AppResult<T> = Result<T, AppError>;
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src-tauri/src/lib.rs /mnt/data/gitahead-next-uiux-v3/overlay/next/src-tauri/src/lib.rs
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src-tauri/src/lib.rs	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src-tauri/src/lib.rs	2026-09-14 06:51:55.268900283 +0000
+@@ -0,0 +1,92 @@
++mod backend;
++mod error;
++mod models;
++mod operation_state;
++mod provider;
++mod workspace;
++
++use error::AppResult;
++use models::*;
++use tauri::AppHandle;
++#[cfg(target_os = "android")]
++use tauri::Manager;
++
++#[tauri::command]
++fn repository_summary(path: String) -> AppResult<RepositorySummary> { backend::repository_summary(&path) }
++#[tauri::command]
++fn repository_history(path: String, limit: usize) -> AppResult<Vec<CommitRecord>> { backend::repository_history(&path, limit) }
++#[tauri::command]
++fn repository_status(path: String) -> AppResult<Vec<FileChange>> { backend::repository_status(&path) }
++#[tauri::command]
++fn repository_branches(path: String) -> AppResult<Vec<BranchRecord>> { backend::repository_branches(&path) }
++#[tauri::command]
++fn repository_operation_state(path: String) -> AppResult<RepositoryOperationState> { operation_state::repository_operation_state(&path) }
++#[tauri::command]
++fn control_repository_operation(path: String, action: String) -> AppResult<CommandResult> { operation_state::control_repository_operation(&path, &action) }
++#[tauri::command]
++fn stage_paths(path: String, files: Vec<String>) -> AppResult<()> { backend::stage_paths(&path, &files) }
++#[tauri::command]
++fn unstage_paths(path: String, files: Vec<String>) -> AppResult<()> { backend::unstage_paths(&path, &files) }
++#[tauri::command]
++fn create_commit(path: String, message: String) -> AppResult<String> { backend::create_commit(&path, &message) }
++#[tauri::command]
++fn fetch_repository(path: String, auth: AuthRequest) -> AppResult<CommandResult> { backend::fetch_repository(&path, &auth) }
++#[tauri::command]
++fn pull_repository(path: String) -> AppResult<CommandResult> { backend::pull_repository(&path) }
++#[tauri::command]
++fn push_repository(path: String, auth: AuthRequest) -> AppResult<CommandResult> { backend::push_repository(&path, &auth) }
++#[tauri::command]
++fn clone_repository(app: AppHandle, request: CloneRequest) -> AppResult<RepositorySummary> {
++    #[cfg(target_os = "android")]
++    let request = {
++        let mut request = request;
++        let supplied = std::path::Path::new(&request.destination);
++        if !supplied.is_absolute() {
++            let safe_name: String = request.destination.chars()
++                .map(|character| if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') { character } else { '_' })
++                .collect();
++            if safe_name.is_empty() {
++                return Err(error::AppError::Invalid("repository name is empty".into()));
++            }
++            let root = app.path().app_data_dir()
++                .map_err(|error| error::AppError::Invalid(error.to_string()))?
++                .join("repositories");
++            std::fs::create_dir_all(&root)?;
++            request.destination = root.join(safe_name).to_string_lossy().into_owned();
++        }
++        request
++    };
++    #[cfg(not(target_os = "android"))]
++    let _ = app;
++    backend::clone_repository(&request)
++}
++#[tauri::command]
++fn switch_branch(path: String, branch: String) -> AppResult<()> { backend::switch_branch(&path, &branch) }
++#[tauri::command]
++fn create_branch(path: String, branch: String) -> AppResult<()> { backend::create_branch(&path, &branch) }
++#[tauri::command]
++fn run_workflow(path: String, request: WorkflowRequest) -> AppResult<CommandResult> { backend::run_workflow(&path, &request) }
++#[tauri::command]
++fn load_workspaces(app: AppHandle) -> AppResult<Vec<Workspace>> { workspace::load(&app) }
++#[tauri::command]
++fn save_workspaces(app: AppHandle, workspaces: Vec<Workspace>) -> AppResult<()> { workspace::save(&app, &workspaces) }
++#[tauri::command]
++async fn list_pull_requests(provider: String, base_url: String, owner: String, repository: String, token: String) -> AppResult<Vec<PullRequestRecord>> {
++    provider::list_pull_requests(&provider, &base_url, &owner, &repository, &token).await
++}
++
++#[cfg_attr(mobile, tauri::mobile_entry_point)]
++pub fn run() {
++    tauri::Builder::default()
++        .plugin(tauri_plugin_dialog::init())
++        .plugin(tauri_plugin_opener::init())
++        .invoke_handler(tauri::generate_handler![
++            repository_summary, repository_history, repository_status, repository_branches,
++            repository_operation_state, control_repository_operation,
++            stage_paths, unstage_paths, create_commit, fetch_repository, pull_repository,
++            push_repository, clone_repository, switch_branch, create_branch, run_workflow,
++            load_workspaces, save_workspaces, list_pull_requests
++        ])
++        .run(tauri::generate_context!())
++        .expect("failed to run GitAhead Next");
++}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src-tauri/src/models.rs /mnt/data/gitahead-next-uiux-v3/overlay/next/src-tauri/src/models.rs
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src-tauri/src/models.rs	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src-tauri/src/models.rs	2026-09-14 06:51:41.741507996 +0000
+@@ -0,0 +1,119 @@
++use serde::{Deserialize, Serialize};
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RepositorySummary {
++    pub path: String,
++    pub name: String,
++    pub branch: Option<String>,
++    pub head: Option<String>,
++    pub ahead: usize,
++    pub behind: usize,
++    pub dirty: bool,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CommitRecord {
++    pub id: String,
++    pub parents: Vec<String>,
++    pub author_name: String,
++    pub author_email: String,
++    pub authored_at: String,
++    pub subject: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct FileChange {
++    pub path: String,
++    pub index_status: String,
++    pub worktree_status: String,
++    pub conflicted: bool,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct BranchRecord {
++    pub name: String,
++    pub target: String,
++    pub current: bool,
++    pub remote: bool,
++    pub upstream: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, Default)]
++#[serde(rename_all = "camelCase")]
++pub struct AuthRequest {
++    pub username: Option<String>,
++    pub token: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CloneRequest {
++    pub url: String,
++    pub destination: String,
++    pub username: Option<String>,
++    pub token: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct WorkflowRequest {
++    pub operation: String,
++    pub args: Vec<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CommandResult {
++    pub stdout: String,
++    pub stderr: String,
++    pub exit_code: i32,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RepositoryOperationState {
++    pub operation: Option<String>,
++    pub has_conflicts: bool,
++    pub conflict_count: usize,
++    pub can_continue: bool,
++    pub can_skip: bool,
++    pub can_abort: bool,
++    pub current_commit: Option<String>,
++    pub current_subject: Option<String>,
++    pub step: Option<usize>,
++    pub total: Option<usize>,
++    pub message: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct WorkspaceRepository {
++    pub path: String,
++    pub alias: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct Workspace {
++    pub id: String,
++    pub name: String,
++    pub repositories: Vec<WorkspaceRepository>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PullRequestRecord {
++    pub id: String,
++    pub number: u64,
++    pub title: String,
++    pub author: String,
++    pub state: String,
++    pub source_branch: String,
++    pub target_branch: String,
++    pub web_url: String,
++    pub updated_at: Option<String>,
++}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/overlay/next/src-tauri/src/operation_state.rs /mnt/data/gitahead-next-uiux-v3/overlay/next/src-tauri/src/operation_state.rs
+--- /mnt/data/gitahead-next-uiux-v2/overlay/next/src-tauri/src/operation_state.rs	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/overlay/next/src-tauri/src/operation_state.rs	2026-09-14 06:58:00.181492625 +0000
+@@ -0,0 +1,213 @@
++use crate::error::{AppError, AppResult};
++use crate::models::{CommandResult, RepositoryOperationState};
++
++#[cfg(not(target_os = "android"))]
++mod desktop {
++    use std::fs;
++    use std::path::{Path, PathBuf};
++    use std::process::{Command, Output};
++
++    use super::*;
++
++    fn editor_command() -> &'static str {
++        #[cfg(target_os = "windows")]
++        { "cmd /c exit 0" }
++        #[cfg(not(target_os = "windows"))]
++        { "true" }
++    }
++
++    fn run_git(path: &str, args: &[&str]) -> AppResult<Output> {
++        let mut command = Command::new("git");
++        command.arg("-C").arg(path).args(args);
++        command.env("GIT_TERMINAL_PROMPT", "0");
++        command.env("GIT_EDITOR", editor_command());
++        command.env("GIT_SEQUENCE_EDITOR", editor_command());
++        Ok(command.output()?)
++    }
++
++    fn checked_git(path: &str, args: &[&str]) -> AppResult<CommandResult> {
++        let output = run_git(path, args)?;
++        let result = CommandResult {
++            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
++            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
++            exit_code: output.status.code().unwrap_or(-1),
++        };
++        if output.status.success() {
++            Ok(result)
++        } else {
++            Err(AppError::Command(format!("git {}: {}", args.join(" "), result.stderr.trim())))
++        }
++    }
++
++    fn git_dir(path: &str) -> AppResult<PathBuf> {
++        let result = checked_git(path, &["rev-parse", "--absolute-git-dir"])?;
++        Ok(PathBuf::from(result.stdout.trim()))
++    }
++
++    fn read_trimmed(path: impl AsRef<Path>) -> Option<String> {
++        fs::read_to_string(path).ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
++    }
++
++    fn read_number(path: impl AsRef<Path>) -> Option<usize> {
++        read_trimmed(path)?.parse().ok()
++    }
++
++    fn first_line(value: Option<String>) -> Option<String> {
++        value.and_then(|value| value.lines().next().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string))
++    }
++
++    fn ref_value(path: &str, name: &str) -> Option<String> {
++        checked_git(path, &["rev-parse", "--verify", name]).ok().map(|result| result.stdout.trim().to_string()).filter(|value| !value.is_empty())
++    }
++
++    fn subject_for(path: &str, commit: Option<&str>) -> Option<String> {
++        let commit = commit?;
++        checked_git(path, &["show", "-s", "--format=%s", commit]).ok().and_then(|result| first_line(Some(result.stdout)))
++    }
++
++    fn conflict_count(path: &str) -> AppResult<usize> {
++        let result = checked_git(path, &["diff", "--name-only", "--diff-filter=U", "-z"])?;
++        Ok(result.stdout.split('\0').filter(|entry| !entry.is_empty()).count())
++    }
++
++    pub fn repository_operation_state(path: &str) -> AppResult<RepositoryOperationState> {
++        let git_dir = git_dir(path)?;
++        let rebase_merge = git_dir.join("rebase-merge");
++        let rebase_apply = git_dir.join("rebase-apply");
++
++        let (operation, current_commit, current_subject, step, total) = if rebase_merge.is_dir() || rebase_apply.is_dir() {
++            let dir = if rebase_merge.is_dir() { &rebase_merge } else { &rebase_apply };
++            let current = ref_value(path, "REBASE_HEAD")
++                .or_else(|| read_trimmed(dir.join("stopped-sha")))
++                .or_else(|| read_trimmed(dir.join("original-commit")));
++            let subject = subject_for(path, current.as_deref())
++                .or_else(|| first_line(read_trimmed(dir.join("message"))));
++            let (step, total) = if rebase_merge.is_dir() {
++                (read_number(dir.join("msgnum")), read_number(dir.join("end")))
++            } else {
++                (read_number(dir.join("next")), read_number(dir.join("last")))
++            };
++            (Some("rebase".to_string()), current, subject, step, total)
++        } else if git_dir.join("MERGE_HEAD").is_file() {
++            let current = first_line(read_trimmed(git_dir.join("MERGE_HEAD")));
++            let subject = subject_for(path, current.as_deref());
++            (Some("merge".to_string()), current, subject, None, None)
++        } else if git_dir.join("CHERRY_PICK_HEAD").is_file() {
++            let current = first_line(read_trimmed(git_dir.join("CHERRY_PICK_HEAD")));
++            let subject = subject_for(path, current.as_deref());
++            (Some("cherryPick".to_string()), current, subject, None, None)
++        } else if git_dir.join("REVERT_HEAD").is_file() {
++            let current = first_line(read_trimmed(git_dir.join("REVERT_HEAD")));
++            let subject = subject_for(path, current.as_deref());
++            (Some("revert".to_string()), current, subject, None, None)
++        } else {
++            (None, None, None, None, None)
++        };
++
++        let conflicts = conflict_count(path)?;
++        let active = operation.is_some();
++        let skippable = matches!(operation.as_deref(), Some("rebase") | Some("cherryPick") | Some("revert"));
++        let message = if !active {
++            "No merge, rebase, cherry-pick or revert is in progress.".to_string()
++        } else if conflicts > 0 {
++            format!("{conflicts} unresolved conflict{}. Resolve and stage the files before continuing.", if conflicts == 1 { "" } else { "s" })
++        } else if let (Some(step), Some(total)) = (step, total) {
++            format!("Step {step} of {total} is resolved and ready to continue.")
++        } else {
++            "The operation is paused and ready to continue, skip where supported, or abort.".to_string()
++        };
++
++        Ok(RepositoryOperationState {
++            operation,
++            has_conflicts: conflicts > 0,
++            conflict_count: conflicts,
++            can_continue: active && conflicts == 0,
++            can_skip: active && skippable,
++            can_abort: active,
++            current_commit,
++            current_subject,
++            step,
++            total,
++            message,
++        })
++    }
++
++    pub fn control_repository_operation(path: &str, action: &str) -> AppResult<CommandResult> {
++        let state = repository_operation_state(path)?;
++        let operation = state.operation.as_deref().ok_or_else(|| AppError::Invalid("no merge, rebase, cherry-pick or revert is in progress".into()))?;
++
++        if action == "continue" && state.has_conflicts {
++            return Err(AppError::Invalid("resolve and stage all conflicts before continuing".into()));
++        }
++        if action == "skip" && !state.can_skip {
++            return Err(AppError::Invalid(format!("{operation} does not support skip in this workflow")));
++        }
++        if !matches!(action, "continue" | "skip" | "abort") {
++            return Err(AppError::Invalid(format!("unknown operation action: {action}")));
++        }
++
++        let command = match operation {
++            "merge" => "merge",
++            "rebase" => "rebase",
++            "cherryPick" => "cherry-pick",
++            "revert" => "revert",
++            _ => return Err(AppError::Invalid(format!("unsupported repository operation: {operation}"))),
++        };
++        let flag = match action {
++            "continue" => "--continue",
++            "skip" => "--skip",
++            "abort" => "--abort",
++            _ => unreachable!(),
++        };
++        checked_git(path, &[command, flag])
++    }
++}
++
++#[cfg(target_os = "android")]
++mod android {
++    use git2::{Repository, RepositoryState, Status, StatusOptions};
++    use super::*;
++
++    pub fn repository_operation_state(path: &str) -> AppResult<RepositoryOperationState> {
++        let repo = Repository::discover(path)?;
++        let operation = match repo.state() {
++            RepositoryState::Merge => Some("merge"),
++            RepositoryState::Revert | RepositoryState::RevertSequence => Some("revert"),
++            RepositoryState::CherryPick | RepositoryState::CherryPickSequence => Some("cherryPick"),
++            RepositoryState::Rebase | RepositoryState::RebaseInteractive | RepositoryState::RebaseMerge => Some("rebase"),
++            _ => None,
++        }.map(str::to_string);
++
++        let mut options = StatusOptions::new();
++        options.include_untracked(true).recurse_untracked_dirs(true);
++        let conflicts = repo.statuses(Some(&mut options))?.iter().filter(|entry| entry.status().contains(Status::CONFLICTED)).count();
++        let active = operation.is_some();
++
++        Ok(RepositoryOperationState {
++            operation,
++            has_conflicts: conflicts > 0,
++            conflict_count: conflicts,
++            can_continue: false,
++            can_skip: false,
++            can_abort: false,
++            current_commit: None,
++            current_subject: None,
++            step: None,
++            total: None,
++            message: if active {
++                "An operation is in progress. Continue/skip/abort controls are currently desktop-only; use the Changes view to inspect conflicts.".into()
++            } else {
++                "No merge, rebase, cherry-pick or revert is in progress.".into()
++            },
++        })
++    }
++
++    pub fn control_repository_operation(_path: &str, _action: &str) -> AppResult<CommandResult> {
++        Err(AppError::Unsupported("merge/rebase/cherry-pick/revert controls are not implemented on Android yet".into()))
++    }
++}
++
++#[cfg(not(target_os = "android"))]
++pub use desktop::{control_repository_operation, repository_operation_state};
++#[cfg(target_os = "android")]
++pub use android::{control_repository_operation, repository_operation_state};
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src/App.tsx /mnt/data/gitahead-next-uiux-v3/src/App.tsx
+--- /mnt/data/gitahead-next-uiux-v2/src/App.tsx	2026-09-14 06:15:54.613842809 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src/App.tsx	2026-09-14 06:58:20.436569383 +0000
+@@ -1,7 +1,7 @@
+ import { useCallback, useEffect, useMemo, useState } from "react";
+ import { open } from "@tauri-apps/plugin-dialog";
+ import { api } from "./api";
+-import type { BranchRecord, CommitRecord, FileChange, RepositorySummary, Workspace } from "./types";
++import type { BranchRecord, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
+ import { RepositorySidebar, type RepositoryView } from "./components/RepositorySidebar";
+ import { CommitGraph } from "./components/CommitGraph";
+ import { StatusPanel } from "./components/StatusPanel";
+@@ -11,9 +11,24 @@
+ import { CommandPalette, type Command } from "./components/CommandPalette";
+ import { Icon } from "./components/Icon";
+ import { CloneDialog } from "./components/CloneDialog";
++import { OperationBanner } from "./components/OperationBanner";
+ 
+ const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
+ 
++const idleOperation: RepositoryOperationState = {
++  operation: null,
++  hasConflicts: false,
++  conflictCount: 0,
++  canContinue: false,
++  canSkip: false,
++  canAbort: false,
++  currentCommit: null,
++  currentSubject: null,
++  step: null,
++  total: null,
++  message: "No merge, rebase, cherry-pick or revert is in progress."
++};
++
+ export default function App() {
+   const [workspaces, setWorkspaces] = useState<Workspace[]>([emptyWorkspace]);
+   const [path, setPath] = useState("");
+@@ -22,6 +37,7 @@
+   const [selectedCommit, setSelectedCommit] = useState<CommitRecord | null>(null);
+   const [changes, setChanges] = useState<FileChange[]>([]);
+   const [branches, setBranches] = useState<BranchRecord[]>([]);
++  const [operation, setOperation] = useState<RepositoryOperationState>(idleOperation);
+   const [view, setView] = useState<RepositoryView>("history");
+   const [busy, setBusy] = useState(false);
+   const [message, setMessage] = useState("Ready");
+@@ -39,11 +55,12 @@
+     if (!repositoryPath) return;
+     setBusy(true);
+     try {
+-      const [nextSummary, nextCommits, nextChanges, nextBranches] = await Promise.all([
++      const [nextSummary, nextCommits, nextChanges, nextBranches, nextOperation] = await Promise.all([
+         api.summary(repositoryPath),
+         api.history(repositoryPath),
+         api.status(repositoryPath),
+-        api.branches(repositoryPath)
++        api.branches(repositoryPath),
++        api.operationState(repositoryPath)
+       ]);
+       setPath(repositoryPath);
+       setSummary(nextSummary);
+@@ -51,6 +68,7 @@
+       setSelectedCommit((current) => nextCommits.find((commit) => commit.id === current?.id) || nextCommits[0] || null);
+       setChanges(nextChanges);
+       setBranches(nextBranches);
++      setOperation(nextOperation);
+       setMessage(`Refreshed ${nextSummary.name}`);
+     } catch (error) {
+       setMessage(String(error));
+@@ -111,8 +129,27 @@
+     }
+   }, [path, refresh]);
+ 
++  const runOperationAction = useCallback(async (action: RepositoryOperationAction) => {
++    if (!path || !operation.operation) return false;
++    const label = action === "continue" ? "Continue operation" : action === "skip" ? "Skip commit" : "Abort operation";
++    setBusy(true);
++    setMessage(`${label}…`);
++    try {
++      await api.controlOperation(path, action);
++      await refresh(path);
++      setMessage(`${label} completed`);
++      return true;
++    } catch (error) {
++      setMessage(String(error));
++      return false;
++    } finally {
++      setBusy(false);
++    }
++  }, [operation.operation, path, refresh]);
++
+   const conflictCount = changes.filter((change) => change.conflicted).length;
+   const dirtyCount = changes.length;
++  const operationActive = operation.operation !== null;
+ 
+   useEffect(() => {
+     const handler = (event: KeyboardEvent) => {
+@@ -146,8 +183,10 @@
+     { id: "clone", title: "Clone repository", category: "File", keywords: ["remote", "url"], run: () => void cloneRepository() },
+     { id: "refresh", title: "Refresh repository", category: "Repository", shortcut: "F5", disabled: !path, run: () => void refresh() },
+     { id: "fetch", title: "Fetch all remotes", category: "Remote", disabled: !path, run: () => void runRepositoryAction("Fetch", () => api.fetch(path)) },
+-    { id: "pull", title: "Pull current branch (fast-forward only)", category: "Remote", disabled: !path, run: () => void runRepositoryAction("Pull", () => api.pull(path)) },
+-    { id: "push", title: "Push current branch", category: "Remote", disabled: !path, run: () => void runRepositoryAction("Push", () => api.push(path)) },
++    { id: "pull", title: "Pull current branch (fast-forward only)", category: "Remote", disabled: !path || operationActive, run: () => void runRepositoryAction("Pull", () => api.pull(path)) },
++    { id: "push", title: "Push current branch", category: "Remote", disabled: !path || operationActive, run: () => void runRepositoryAction("Push", () => api.push(path)) },
++    { id: "operation-continue", title: "Continue current Git operation", category: "Operation", disabled: !operation.canContinue, run: () => void runOperationAction("continue") },
++    { id: "operation-skip", title: "Skip current commit", category: "Operation", disabled: !operation.canSkip, run: () => void runOperationAction("skip") },
+     { id: "changes", title: "Show working tree", category: "View", shortcut: "Ctrl+1", disabled: !path, run: () => setView("changes") },
+     { id: "history", title: "Show history", category: "View", shortcut: "Ctrl+2", disabled: !path, run: () => setView("history") },
+     { id: "branches", title: "Show branches", category: "View", shortcut: "Ctrl+3", disabled: !path, run: () => setView("branches") },
+@@ -157,7 +196,7 @@
+     { id: "recovery", title: "Open recovery & maintenance", category: "Repository", keywords: ["reflog", "fsck", "lfs"], disabled: !path, run: () => setView("recovery") },
+     { id: "sidebar", title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar", category: "View", shortcut: "Ctrl+B", run: () => setSidebarCollapsed((value) => !value) },
+     { id: "cherry", title: "Open UI workbench", category: "Developer", run: () => setView("cherry") }
+-  ], [path, refresh, runRepositoryAction, sidebarCollapsed]);
++  ], [operation.canContinue, operation.canSkip, operationActive, path, refresh, runOperationAction, runRepositoryAction, sidebarCollapsed]);
+ 
+   const currentBranch = summary?.branch || "Detached HEAD";
+ 
+@@ -199,7 +238,7 @@
+         onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+       />
+ 
+-      <main className="ux-main">
++      <main className={`ux-main${operationActive ? " has-operation" : ""}`}>
+         <header className="ux-repository-header">
+           <div className="ux-branch-context">
+             <span className="ux-branch-icon"><Icon name="branch" /></span>
+@@ -216,11 +255,22 @@
+           <div className="ux-repo-actions" role="toolbar" aria-label="Repository actions">
+             <button className="ux-icon-button" disabled={!path || busy} onClick={() => void refresh()} title="Refresh (F5)" aria-label="Refresh repository"><Icon name="refresh" /></button>
+             <button className="ux-button" disabled={!path || busy} onClick={() => void runRepositoryAction("Fetch", () => api.fetch(path))}><Icon name="download" />Fetch</button>
+-            <button className="ux-button" disabled={!path || busy} onClick={() => void runRepositoryAction("Pull", () => api.pull(path))}>Pull</button>
+-            <button className="ux-primary-button compact" disabled={!path || busy} onClick={() => void runRepositoryAction("Push", () => api.push(path))}><Icon name="upload" />Push</button>
++            <button className="ux-button" disabled={!path || busy || operationActive} onClick={() => void runRepositoryAction("Pull", () => api.pull(path))} title={operationActive ? "Finish or abort the current Git operation first" : undefined}>Pull</button>
++            <button className="ux-primary-button compact" disabled={!path || busy || operationActive} onClick={() => void runRepositoryAction("Push", () => api.push(path))} title={operationActive ? "Finish or abort the current Git operation first" : undefined}><Icon name="upload" />Push</button>
+           </div>
+         </header>
+ 
++        {path && operationActive && (
++          <OperationBanner
++            state={operation}
++            busy={busy}
++            onResolve={() => setView("changes")}
++            onContinue={() => runOperationAction("continue")}
++            onSkip={() => runOperationAction("skip")}
++            onAbort={() => runOperationAction("abort")}
++          />
++        )}
++
+         <section className="ux-content" aria-live="polite">
+           {!path && view !== "cherry" && (
+             <div className="ux-welcome">
+@@ -237,6 +287,7 @@
+               changes={changes}
+               onStage={async (files) => { await api.stage(path, files); await refresh(); }}
+               onUnstage={async (files) => { await api.unstage(path, files); await refresh(); }}
++              operationActive={operationActive}
+               onCommit={async (commitMessage) => { await api.commit(path, commitMessage); await refresh(); }}
+             />
+           )}
+@@ -244,12 +295,13 @@
+           {path && view === "branches" && (
+             <BranchPanel
+               branches={branches}
++              disabled={operationActive}
+               onCheckout={async (branch) => { await api.switchBranch(path, branch); await refresh(); }}
+               onCreate={async (branch) => { await api.createBranch(path, branch); await refresh(); }}
+             />
+           )}
+           {path && (view === "worktrees" || view === "submodules" || view === "stashes" || view === "recovery") && (
+-            <WorkflowPanel section={view} onRun={(request) => api.workflow(path, request)} />
++            <WorkflowPanel section={view} operationLocked={operationActive} onRun={(request) => api.workflow(path, request)} />
+           )}
+           {view === "cherry" && <CherryParityPanel />}
+         </section>
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src/api.ts /mnt/data/gitahead-next-uiux-v3/src/api.ts
+--- /mnt/data/gitahead-next-uiux-v2/src/api.ts	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src/api.ts	2026-09-14 06:50:50.603714656 +0000
+@@ -0,0 +1,43 @@
++import { invoke } from "@tauri-apps/api/core";
++import type {
++  AuthRequest,
++  BranchRecord,
++  CloneRequest,
++  CommandResult,
++  CommitRecord,
++  FileChange,
++  PullRequestRecord,
++  RepositoryOperationAction,
++  RepositoryOperationState,
++  RepositorySummary,
++  WorkflowRequest,
++  Workspace
++} from "./types";
++
++export const api = {
++  summary: (path: string) => invoke<RepositorySummary>("repository_summary", { path }),
++  history: (path: string, limit = 300) => invoke<CommitRecord[]>("repository_history", { path, limit }),
++  status: (path: string) => invoke<FileChange[]>("repository_status", { path }),
++  branches: (path: string) => invoke<BranchRecord[]>("repository_branches", { path }),
++  operationState: (path: string) => invoke<RepositoryOperationState>("repository_operation_state", { path }),
++  controlOperation: (path: string, action: RepositoryOperationAction) => invoke<CommandResult>("control_repository_operation", { path, action }),
++  stage: (path: string, files: string[]) => invoke<void>("stage_paths", { path, files }),
++  unstage: (path: string, files: string[]) => invoke<void>("unstage_paths", { path, files }),
++  commit: (path: string, message: string) => invoke<string>("create_commit", { path, message }),
++  fetch: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("fetch_repository", { path, auth }),
++  pull: (path: string) => invoke<CommandResult>("pull_repository", { path }),
++  push: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("push_repository", { path, auth }),
++  clone: (request: CloneRequest) => invoke<RepositorySummary>("clone_repository", { request }),
++  switchBranch: (path: string, branch: string) => invoke<void>("switch_branch", { path, branch }),
++  createBranch: (path: string, branch: string) => invoke<void>("create_branch", { path, branch }),
++  workflow: (path: string, request: WorkflowRequest) => invoke<CommandResult>("run_workflow", { path, request }),
++  loadWorkspaces: () => invoke<Workspace[]>("load_workspaces"),
++  saveWorkspaces: (workspaces: Workspace[]) => invoke<void>("save_workspaces", { workspaces }),
++  pullRequests: (
++    provider: string,
++    baseUrl: string,
++    owner: string,
++    repository: string,
++    token: string
++  ) => invoke<PullRequestRecord[]>("list_pull_requests", { provider, baseUrl, owner, repository, token })
++};
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src/components/BranchPanel.tsx /mnt/data/gitahead-next-uiux-v3/src/components/BranchPanel.tsx
+--- /mnt/data/gitahead-next-uiux-v2/src/components/BranchPanel.tsx	2026-09-14 06:10:34.043382326 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src/components/BranchPanel.tsx	2026-09-14 06:52:03.483273052 +0000
+@@ -7,9 +7,10 @@
+   branches: BranchRecord[];
+   onCheckout: (branch: string) => Promise<void>;
+   onCreate: (branch: string) => Promise<void>;
++  disabled?: boolean;
+ };
+ 
+-export function BranchPanel({ branches, onCheckout, onCreate }: Props) {
++export function BranchPanel({ branches, onCheckout, onCreate, disabled = false }: Props) {
+   const [query, setQuery] = useState("");
+   const [newBranch, setNewBranch] = useState("");
+   const [busyBranch, setBusyBranch] = useState<string | null>(null);
+@@ -37,11 +38,13 @@
+         </label>
+       </header>
+ 
++      {disabled && <div className="ux-inline-warning"><Icon name="warning" /><span>Branch changes are locked while a merge, rebase, cherry-pick, or revert is in progress.</span></div>}
++
+       <section className="ux-create-branch-card">
+         <div><strong>Create branch</strong><span>Creates and checks out a new branch from the current HEAD.</span></div>
+         <div className="ux-inline-form">
+           <input value={newBranch} onChange={(event: ChangeEvent<HTMLInputElement>) => setNewBranch(event.target.value)} placeholder="feature/my-change" aria-label="New branch name" />
+-          <button className="ux-primary-button" disabled={!newBranch.trim() || busyBranch !== null} onClick={async () => {
++          <button className="ux-primary-button" disabled={disabled || !newBranch.trim() || busyBranch !== null} onClick={async () => {
+             const name = newBranch.trim();
+             setBusyBranch(name);
+             try { await onCreate(name); setNewBranch(""); } finally { setBusyBranch(null); }
+@@ -54,7 +57,7 @@
+           <header><strong>Local</strong><span>{local.length}</span></header>
+           <div>
+             {local.map((branch) => (
+-              <button key={branch.name} className={`ux-reference-row${branch.current ? " is-current" : ""}`} onClick={() => !branch.current && checkout(branch.name)} disabled={branch.current || busyBranch !== null}>
++              <button key={branch.name} className={`ux-reference-row${branch.current ? " is-current" : ""}`} onClick={() => !branch.current && checkout(branch.name)} disabled={disabled || branch.current || busyBranch !== null}>
+                 <Icon name="branch" />
+                 <span className="ux-reference-name"><strong>{branch.name}</strong><small>{branch.upstream || "No upstream"}</small></span>
+                 {branch.current ? <span className="ux-current-pill">Current</span> : <code>{busyBranch === branch.name ? "switching" : branch.target.slice(0, 8)}</code>}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src/components/OperationBanner.tsx /mnt/data/gitahead-next-uiux-v3/src/components/OperationBanner.tsx
+--- /mnt/data/gitahead-next-uiux-v2/src/components/OperationBanner.tsx	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src/components/OperationBanner.tsx	2026-09-14 06:58:58.117802957 +0000
+@@ -0,0 +1,114 @@
++import { useRef, useState } from "react";
++import type { RepositoryOperationState } from "../types";
++import { Icon } from "./Icon";
++
++type Props = {
++  state: RepositoryOperationState;
++  busy: boolean;
++  onResolve: () => void;
++  onContinue: () => Promise<boolean>;
++  onSkip: () => Promise<boolean>;
++  onAbort: () => Promise<boolean>;
++};
++
++const labels: Record<NonNullable<RepositoryOperationState["operation"]>, string> = {
++  merge: "Merge",
++  rebase: "Rebase",
++  cherryPick: "Cherry-pick",
++  revert: "Revert"
++};
++
++export function OperationBanner({ state, busy, onResolve, onContinue, onSkip, onAbort }: Props) {
++  const [confirmAbort, setConfirmAbort] = useState(false);
++  const [pending, setPending] = useState<"continue" | "skip" | "abort" | null>(null);
++  const abortTriggerRef = useRef<HTMLButtonElement>(null);
++
++  if (!state.operation) return null;
++
++  const label = labels[state.operation];
++  const progress = state.step && state.total ? `${state.step} of ${state.total}` : null;
++
++  const closeAbort = () => {
++    setConfirmAbort(false);
++    window.requestAnimationFrame(() => abortTriggerRef.current?.focus());
++  };
++
++  const run = async (kind: "continue" | "skip" | "abort", action: () => Promise<boolean>) => {
++    setPending(kind);
++    try {
++      const succeeded = await action();
++      if (kind === "abort" && succeeded && abortTriggerRef.current) closeAbort();
++    } finally {
++      setPending(null);
++    }
++  };
++
++  return (
++    <section className={`ux-git-operation${state.hasConflicts ? " has-conflicts" : ""}`} aria-label={`${label} in progress`}>
++      <div className="ux-operation-status-icon"><Icon name={state.hasConflicts ? "warning" : "activity"} /></div>
++      <div className="ux-operation-copy">
++        <div className="ux-operation-title-row">
++          <strong>{label} in progress</strong>
++          {progress && <span className="ux-operation-progress">{progress}</span>}
++          {state.currentSubject && <span className="ux-operation-subject" title={state.currentSubject}>{state.currentSubject}</span>}
++        </div>
++        <span>{state.message}</span>
++      </div>
++      <div className="ux-operation-actions" role="toolbar" aria-label={`${label} controls`}>
++        {state.hasConflicts && (
++          <button className="ux-button" disabled={busy || pending !== null} onClick={onResolve}>
++            Resolve {state.conflictCount} conflict{state.conflictCount === 1 ? "" : "s"}
++          </button>
++        )}
++        <button
++          className="ux-primary-button compact"
++          disabled={busy || pending !== null || !state.canContinue}
++          onClick={() => void run("continue", onContinue)}
++        >
++          {pending === "continue" ? "Continuing…" : "Continue"}
++        </button>
++        {state.canSkip && (
++          <button className="ux-button" disabled={busy || pending !== null} onClick={() => void run("skip", onSkip)}>
++            {pending === "skip" ? "Skipping…" : "Skip commit"}
++          </button>
++        )}
++        {state.canAbort && <button ref={abortTriggerRef} className="ux-danger-button" disabled={busy || pending !== null} onClick={() => setConfirmAbort(true)}>Abort…</button>}
++      </div>
++
++      {confirmAbort && (
++        <div className="ux-confirm-backdrop" role="presentation" onMouseDown={closeAbort}>
++          <div
++            className="ux-confirm-dialog"
++            role="alertdialog"
++            aria-modal="true"
++            aria-labelledby="abort-operation-title"
++            aria-describedby="abort-operation-description"
++            onMouseDown={(event) => event.stopPropagation()}
++            onKeyDown={(event) => {
++              if (event.key === "Escape") { event.preventDefault(); closeAbort(); return; }
++              if (event.key !== "Tab") return;
++              const buttons = [...event.currentTarget.querySelectorAll("button:not(:disabled)")] as HTMLButtonElement[];
++              if (!buttons.length) return;
++              const first = buttons[0];
++              const last = buttons[buttons.length - 1];
++              if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
++              else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
++            }}
++          >
++            <div className="ux-confirm-icon"><Icon name="warning" /></div>
++            <div>
++              <h2 id="abort-operation-title">Abort {label.toLowerCase()}?</h2>
++              <p id="abort-operation-description">This asks Git to return the operation to its pre-{label.toLowerCase()} state. Any conflict-resolution edits made as part of this operation may be discarded.</p>
++            </div>
++            <div className="ux-confirm-actions">
++              <button className="ux-button" autoFocus onClick={closeAbort}>Keep working</button>
++              <button className="ux-danger-button solid" disabled={pending !== null} onClick={() => void run("abort", onAbort)}>
++                {pending === "abort" ? "Aborting…" : `Abort ${label.toLowerCase()}`}
++              </button>
++            </div>
++          </div>
++        </div>
++      )}
++    </section>
++  );
++}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src/components/StatusPanel.tsx /mnt/data/gitahead-next-uiux-v3/src/components/StatusPanel.tsx
+--- /mnt/data/gitahead-next-uiux-v2/src/components/StatusPanel.tsx	2026-09-14 06:15:07.373966491 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src/components/StatusPanel.tsx	2026-09-14 06:53:05.027453641 +0000
+@@ -9,6 +9,7 @@
+   onStage: (paths: string[]) => Promise<void>;
+   onUnstage: (paths: string[]) => Promise<void>;
+   onCommit: (message: string) => Promise<void>;
++  operationActive?: boolean;
+ };
+ 
+ type GroupProps = {
+@@ -42,7 +43,7 @@
+   );
+ }
+ 
+-export function StatusPanel({ changes, onStage, onUnstage, onCommit }: Props) {
++export function StatusPanel({ changes, onStage, onUnstage, onCommit, operationActive = false }: Props) {
+   const [selectedStageable, setSelectedStageable] = useState<Set<string>>(new Set());
+   const [selectedStaged, setSelectedStaged] = useState<Set<string>>(new Set());
+   const [message, setMessage] = useState("");
+@@ -139,7 +140,7 @@
+         </div>
+         <button
+           className="ux-primary-button"
+-          disabled={!message.trim() || !grouped.staged.length || grouped.conflicts.length > 0 || pending !== null}
++          disabled={operationActive || !message.trim() || !grouped.staged.length || grouped.conflicts.length > 0 || pending !== null}
+           onClick={async () => {
+             setPending("commit");
+             try {
+@@ -152,8 +153,9 @@
+         >
+           {pending === "commit" ? "Committing…" : "Commit staged changes"}
+         </button>
+-        {grouped.conflicts.length > 0 && <p className="ux-help-text">Commit is blocked until conflicts are resolved.</p>}
+-        {!grouped.staged.length && !grouped.conflicts.length && <p className="ux-help-text">Stage one or more files to enable commit.</p>}
++        {operationActive && <p className="ux-help-text">Normal commit is locked while a Git operation is in progress. Resolve/stage changes, then use Continue in the operation banner.</p>}
++        {!operationActive && grouped.conflicts.length > 0 && <p className="ux-help-text">Commit is blocked until conflicts are resolved.</p>}
++        {!operationActive && !grouped.staged.length && !grouped.conflicts.length && <p className="ux-help-text">Stage one or more files to enable commit.</p>}
+       </aside>
+     </div>
+   );
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src/components/WorkflowPanel.tsx /mnt/data/gitahead-next-uiux-v3/src/components/WorkflowPanel.tsx
+--- /mnt/data/gitahead-next-uiux-v2/src/components/WorkflowPanel.tsx	2026-09-14 06:22:36.381231929 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src/components/WorkflowPanel.tsx	2026-09-14 06:53:05.028339801 +0000
+@@ -9,6 +9,7 @@
+ type Props = {
+   section: WorkflowSection;
+   onRun: (request: WorkflowRequest) => Promise<CommandResult>;
++  operationLocked?: boolean;
+ };
+ 
+ type RunOptions = { quiet?: boolean };
+@@ -42,7 +43,7 @@
+   return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+ }
+ 
+-export function WorkflowPanel({ section, onRun }: Props) {
++export function WorkflowPanel({ section, onRun, operationLocked = false }: Props) {
+   const [output, setOutput] = useState("No command has run yet.");
+   const [busy, setBusy] = useState<string | null>(null);
+   const [worktreePath, setWorktreePath] = useState("");
+@@ -82,7 +83,7 @@
+       await run("reflog");
+       return;
+     }
+-    await run("submodule_sync");
++    setOutput("Submodule status is not structured yet. No write operation was run automatically; use Sync only when you explicitly want to update local submodule URLs.");
+   };
+ 
+   useEffect(() => {
+@@ -106,6 +107,10 @@
+           <button className="ux-button" disabled={busy !== null} onClick={() => void refreshSection().catch(() => undefined)}><Icon name="refresh" />Refresh</button>
+         </header>
+ 
++        {operationLocked && (
++          <div className="ux-inline-warning"><Icon name="warning" /><span>Mutating repository tools are locked while the current Git operation is paused. Read-only inspection remains available.</span></div>
++        )}
++
+         {section === "worktrees" && (
+           <div className="ux-workflow-cards">
+             <article className="ux-task-card wide">
+@@ -115,14 +120,14 @@
+                 <label><span>Branch / revision</span><input value={worktreeRef} onChange={(event: ChangeEvent<HTMLInputElement>) => setWorktreeRef(event.target.value)} placeholder="feature/ui-v2" /></label>
+               </div>
+               <div className="ux-card-actions">
+-                <button className="ux-primary-button" disabled={!worktreePath.trim() || !worktreeRef.trim() || busy !== null} onClick={async () => {
++                <button className="ux-primary-button" disabled={operationLocked || !worktreePath.trim() || !worktreeRef.trim() || busy !== null} onClick={async () => {
+                   await run("worktree_add", [worktreePath.trim(), worktreeRef.trim()]);
+                   setWorktreePath("");
+                   setWorktreeRef("");
+                   const result = await run("worktree_list", [], { quiet: false });
+                   setWorktrees(parseWorktrees(result.stdout));
+                 }}>Create worktree</button>
+-                <button className="ux-button" disabled={busy !== null} onClick={() => void run("worktree_prune").catch(() => undefined)}>Prune stale metadata</button>
++                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("worktree_prune").catch(() => undefined)}>Prune stale metadata</button>
+               </div>
+             </article>
+             <article className="ux-task-card wide">
+@@ -150,13 +155,13 @@
+               <span className="ux-card-icon"><Icon name="submodule" /></span>
+               <h3>Update recursively</h3>
+               <p>Initialize missing submodules and update registered submodules to the commits recorded by the parent repository.</p>
+-              <button className="ux-primary-button" disabled={busy !== null} onClick={() => void run("submodule_update").catch(() => undefined)}>Initialize & update</button>
++              <button className="ux-primary-button" disabled={operationLocked || busy !== null} onClick={() => void run("submodule_update").catch(() => undefined)}>Initialize & update</button>
+             </article>
+             <article className="ux-task-card">
+               <span className="ux-card-icon"><Icon name="refresh" /></span>
+               <h3>Synchronize URLs</h3>
+               <p>Apply URL changes from <code>.gitmodules</code> to local submodule configuration, including nested submodules.</p>
+-              <button className="ux-button" disabled={busy !== null} onClick={() => void run("submodule_sync").catch(() => undefined)}>Sync recursively</button>
++              <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("submodule_sync").catch(() => undefined)}>Sync recursively</button>
+             </article>
+             <article className="ux-task-card wide is-muted">
+               <h3>Next backend slice</h3>
+@@ -173,13 +178,13 @@
+               <p>Save tracked and untracked working changes so you can safely change context.</p>
+               <label className="ux-field-stack"><span>Message</span><input value={stashMessage} onChange={(event: ChangeEvent<HTMLInputElement>) => setStashMessage(event.target.value)} placeholder="WIP: describe the context" /></label>
+               <div className="ux-card-actions">
+-                <button className="ux-primary-button" disabled={busy !== null} onClick={async () => {
++                <button className="ux-primary-button" disabled={operationLocked || busy !== null} onClick={async () => {
+                   await run("stash_push", stashMessage.trim() ? [stashMessage.trim()] : []);
+                   setStashMessage("");
+                   const result = await run("stash_list");
+                   setStashes(parseStashes(result.stdout));
+                 }}>Stash changes</button>
+-                <button className="ux-button" disabled={busy !== null} onClick={async () => { await run("stash_pop"); const result = await run("stash_list"); setStashes(parseStashes(result.stdout)); }}>Pop latest</button>
++                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={async () => { await run("stash_pop"); const result = await run("stash_list"); setStashes(parseStashes(result.stdout)); }}>Pop latest</button>
+               </div>
+               <div className="ux-stash-list" aria-label="Stashes">
+                 {stashes.map((stash) => <code key={stash}>{stash}</code>)}
+@@ -207,7 +212,7 @@
+               <span className="ux-card-icon"><Icon name="settings" /></span>
+               <h3>Maintenance</h3>
+               <p>Run Git's configured maintenance tasks for repository housekeeping.</p>
+-              <button className="ux-button" disabled={busy !== null} onClick={() => void run("maintenance").catch(() => undefined)}>Run maintenance</button>
++              <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("maintenance").catch(() => undefined)}>Run maintenance</button>
+             </article>
+             <article className="ux-task-card">
+               <span className="ux-card-icon"><Icon name="layers" /></span>
+@@ -215,8 +220,8 @@
+               <p>Inspect active LFS locks or update/prune local LFS objects.</p>
+               <div className="ux-card-actions wrap">
+                 <button className="ux-button" disabled={busy !== null} onClick={() => void run("lfs_locks").catch(() => undefined)}>Locks</button>
+-                <button className="ux-button" disabled={busy !== null} onClick={() => void run("lfs_pull").catch(() => undefined)}>Pull</button>
+-                <button className="ux-button" disabled={busy !== null} onClick={() => void run("lfs_prune").catch(() => undefined)}>Prune</button>
++                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("lfs_pull").catch(() => undefined)}>Pull</button>
++                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("lfs_prune").catch(() => undefined)}>Prune</button>
+               </div>
+             </article>
+           </div>
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src/types.ts /mnt/data/gitahead-next-uiux-v3/src/types.ts
+--- /mnt/data/gitahead-next-uiux-v2/src/types.ts	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src/types.ts	2026-09-14 06:50:50.595714675 +0000
+@@ -0,0 +1,96 @@
++export type RepositorySummary = {
++  path: string;
++  name: string;
++  branch: string | null;
++  head: string | null;
++  ahead: number;
++  behind: number;
++  dirty: boolean;
++};
++
++export type CommitRecord = {
++  id: string;
++  parents: string[];
++  authorName: string;
++  authorEmail: string;
++  authoredAt: string;
++  subject: string;
++};
++
++export type FileChange = {
++  path: string;
++  indexStatus: string;
++  worktreeStatus: string;
++  conflicted: boolean;
++};
++
++export type BranchRecord = {
++  name: string;
++  target: string;
++  current: boolean;
++  remote: boolean;
++  upstream: string | null;
++};
++
++export type WorkspaceRepository = {
++  path: string;
++  alias?: string;
++};
++
++export type Workspace = {
++  id: string;
++  name: string;
++  repositories: WorkspaceRepository[];
++};
++
++export type CloneRequest = {
++  url: string;
++  destination: string;
++  username?: string;
++  token?: string;
++};
++
++export type AuthRequest = {
++  username?: string;
++  token?: string;
++};
++
++export type WorkflowRequest = {
++  operation: string;
++  args: string[];
++};
++
++export type CommandResult = {
++  stdout: string;
++  stderr: string;
++  exitCode: number;
++};
++
++export type RepositoryOperationKind = "merge" | "rebase" | "cherryPick" | "revert";
++export type RepositoryOperationAction = "continue" | "skip" | "abort";
++
++export type RepositoryOperationState = {
++  operation: RepositoryOperationKind | null;
++  hasConflicts: boolean;
++  conflictCount: number;
++  canContinue: boolean;
++  canSkip: boolean;
++  canAbort: boolean;
++  currentCommit: string | null;
++  currentSubject: string | null;
++  step: number | null;
++  total: number | null;
++  message: string;
++};
++
++export type PullRequestRecord = {
++  id: string;
++  number: number;
++  title: string;
++  author: string;
++  state: string;
++  sourceBranch: string;
++  targetBranch: string;
++  webUrl: string;
++  updatedAt: string | null;
++};
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src/ux.css /mnt/data/gitahead-next-uiux-v3/src/ux.css
+--- /mnt/data/gitahead-next-uiux-v2/src/ux.css	2026-09-14 06:23:27.011507107 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src/ux.css	2026-09-14 06:53:40.223917184 +0000
+@@ -1,4 +1,4 @@
+-/* GitAhead Next UX v2
++/* GitAhead Next UX v3
+    Intent: compact cross-platform desktop UI, repository-state first navigation,
+    high information density, explicit focus states, and low visual noise. */
+ 
+@@ -172,7 +172,8 @@
+ .ux-primary-button,
+ .ux-icon-button,
+ .ux-command-button,
+-.ux-sidebar-add {
++.ux-sidebar-add,
++.ux-danger-button {
+   min-height: 28px;
+   border: 1px solid var(--ux-border);
+   border-radius: var(--ux-radius);
+@@ -183,7 +184,8 @@
+ 
+ .ux-button,
+ .ux-primary-button,
+-.ux-command-button {
++.ux-command-button,
++.ux-danger-button {
+   display: inline-flex;
+   align-items: center;
+   justify-content: center;
+@@ -216,6 +218,31 @@
+   padding-inline: 10px;
+ }
+ 
++.ux-danger-button {
++  min-height: 28px;
++  border: 1px solid #7b3941;
++  border-radius: var(--ux-radius);
++  background: var(--ux-danger-bg);
++  color: #ffb7bc;
++  padding: 4px 9px;
++}
++
++.ux-danger-button:hover:not(:disabled) {
++  border-color: #a94a55;
++  background: #51262d;
++}
++
++.ux-danger-button.solid {
++  background: #9b3641;
++  border-color: #bd4c58;
++  color: #fff;
++  font-weight: 600;
++}
++
++.ux-danger-button.solid:hover:not(:disabled) {
++  background: #b5414d;
++}
++
+ .ux-icon-button {
+   width: 28px;
+   height: 28px;
+@@ -483,6 +510,160 @@
+   background: var(--ux-bg-0);
+ }
+ 
++.ux-main.has-operation {
++  grid-template-rows: 46px auto minmax(0, 1fr);
++}
++
++.ux-git-operation {
++  min-width: 0;
++  display: grid;
++  grid-template-columns: 28px minmax(0, 1fr) auto;
++  align-items: center;
++  gap: 10px;
++  padding: 7px 9px;
++  background: #24291f;
++  border-bottom: 1px solid #4a4932;
++}
++
++.ux-git-operation.has-conflicts {
++  background: var(--ux-danger-bg);
++  border-bottom-color: #73353d;
++}
++
++.ux-operation-status-icon {
++  width: 28px;
++  height: 28px;
++  display: grid;
++  place-items: center;
++  border: 1px solid #5a5740;
++  border-radius: var(--ux-radius);
++  color: var(--ux-warning);
++  background: #302f23;
++}
++
++.ux-git-operation.has-conflicts .ux-operation-status-icon {
++  border-color: #774049;
++  color: #ff9fa6;
++  background: #49262c;
++}
++
++.ux-operation-copy {
++  min-width: 0;
++  display: grid;
++  gap: 2px;
++}
++
++.ux-operation-title-row {
++  min-width: 0;
++  display: flex;
++  align-items: center;
++  gap: 7px;
++}
++
++.ux-operation-title-row strong {
++  white-space: nowrap;
++  font-size: 11.5px;
++}
++
++.ux-operation-copy > span {
++  color: var(--ux-text-2);
++  font-size: 10px;
++}
++
++.ux-operation-progress {
++  padding: 1px 5px;
++  border: 1px solid #5a5740;
++  border-radius: 9px;
++  color: #efd18b;
++  font-size: 9.5px;
++  white-space: nowrap;
++}
++
++.ux-operation-subject {
++  min-width: 0;
++  overflow: hidden;
++  text-overflow: ellipsis;
++  white-space: nowrap;
++  color: var(--ux-text-3);
++  font-family: var(--ux-mono);
++  font-size: 10px;
++}
++
++.ux-operation-actions {
++  display: flex;
++  align-items: center;
++  gap: 5px;
++}
++
++.ux-inline-warning {
++  display: flex;
++  align-items: center;
++  gap: 7px;
++  min-height: 34px;
++  padding: 6px 9px;
++  color: #e8c481;
++  background: #332d1f;
++  border-bottom: 1px solid #564a30;
++  font-size: 10.5px;
++}
++
++.ux-inline-warning .ux-icon {
++  width: 14px;
++  height: 14px;
++}
++
++.ux-confirm-backdrop {
++  position: fixed;
++  inset: 0;
++  z-index: 90;
++  display: grid;
++  place-items: center;
++  padding: 24px;
++  background: #0009;
++}
++
++.ux-confirm-dialog {
++  width: min(520px, calc(100vw - 48px));
++  display: grid;
++  grid-template-columns: 38px minmax(0, 1fr);
++  gap: 12px;
++  padding: 16px;
++  background: var(--ux-bg-1);
++  border: 1px solid var(--ux-border-strong);
++  border-radius: 6px;
++  box-shadow: 0 24px 80px #000b;
++}
++
++.ux-confirm-icon {
++  width: 36px;
++  height: 36px;
++  display: grid;
++  place-items: center;
++  border-radius: 50%;
++  color: #ff9fa6;
++  background: var(--ux-danger-bg);
++}
++
++.ux-confirm-dialog h2 {
++  margin: 0 0 5px;
++  font-size: 14px;
++}
++
++.ux-confirm-dialog p {
++  margin: 0;
++  color: var(--ux-text-2);
++  font-size: 11px;
++  line-height: 1.5;
++}
++
++.ux-confirm-actions {
++  grid-column: 1 / -1;
++  display: flex;
++  justify-content: flex-end;
++  gap: 6px;
++  margin-top: 4px;
++}
++
+ .ux-repository-header {
+   min-width: 0;
+   display: grid;
+@@ -1859,3 +2040,8 @@
+   color: var(--ux-text-2);
+   font-size: 10px;
+ }
++
++@media (max-width: 900px) {
++  .ux-git-operation { grid-template-columns: 24px minmax(0, 1fr); }
++  .ux-operation-actions { grid-column: 1 / -1; justify-content: flex-end; }
++}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src-tauri/src/error.rs /mnt/data/gitahead-next-uiux-v3/src-tauri/src/error.rs
+--- /mnt/data/gitahead-next-uiux-v2/src-tauri/src/error.rs	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src-tauri/src/error.rs	2026-09-14 06:51:41.719600772 +0000
+@@ -0,0 +1,32 @@
++use serde::Serialize;
++use thiserror::Error;
++
++#[derive(Debug, Error)]
++pub enum AppError {
++    #[error("I/O error: {0}")]
++    Io(#[from] std::io::Error),
++    #[error("JSON error: {0}")]
++    Json(#[from] serde_json::Error),
++    #[error("HTTP error: {0}")]
++    Http(#[from] reqwest::Error),
++    #[cfg(target_os = "android")]
++    #[error("Git error: {0}")]
++    Git(#[from] git2::Error),
++    #[error("Git command failed: {0}")]
++    Command(String),
++    #[error("Invalid request: {0}")]
++    Invalid(String),
++    #[error("Unsupported operation: {0}")]
++    Unsupported(String),
++}
++
++impl Serialize for AppError {
++    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
++    where
++        S: serde::Serializer,
++    {
++        serializer.serialize_str(&self.to_string())
++    }
++}
++
++pub type AppResult<T> = Result<T, AppError>;
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src-tauri/src/lib.rs /mnt/data/gitahead-next-uiux-v3/src-tauri/src/lib.rs
+--- /mnt/data/gitahead-next-uiux-v2/src-tauri/src/lib.rs	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src-tauri/src/lib.rs	2026-09-14 06:51:55.259570337 +0000
+@@ -0,0 +1,92 @@
++mod backend;
++mod error;
++mod models;
++mod operation_state;
++mod provider;
++mod workspace;
++
++use error::AppResult;
++use models::*;
++use tauri::AppHandle;
++#[cfg(target_os = "android")]
++use tauri::Manager;
++
++#[tauri::command]
++fn repository_summary(path: String) -> AppResult<RepositorySummary> { backend::repository_summary(&path) }
++#[tauri::command]
++fn repository_history(path: String, limit: usize) -> AppResult<Vec<CommitRecord>> { backend::repository_history(&path, limit) }
++#[tauri::command]
++fn repository_status(path: String) -> AppResult<Vec<FileChange>> { backend::repository_status(&path) }
++#[tauri::command]
++fn repository_branches(path: String) -> AppResult<Vec<BranchRecord>> { backend::repository_branches(&path) }
++#[tauri::command]
++fn repository_operation_state(path: String) -> AppResult<RepositoryOperationState> { operation_state::repository_operation_state(&path) }
++#[tauri::command]
++fn control_repository_operation(path: String, action: String) -> AppResult<CommandResult> { operation_state::control_repository_operation(&path, &action) }
++#[tauri::command]
++fn stage_paths(path: String, files: Vec<String>) -> AppResult<()> { backend::stage_paths(&path, &files) }
++#[tauri::command]
++fn unstage_paths(path: String, files: Vec<String>) -> AppResult<()> { backend::unstage_paths(&path, &files) }
++#[tauri::command]
++fn create_commit(path: String, message: String) -> AppResult<String> { backend::create_commit(&path, &message) }
++#[tauri::command]
++fn fetch_repository(path: String, auth: AuthRequest) -> AppResult<CommandResult> { backend::fetch_repository(&path, &auth) }
++#[tauri::command]
++fn pull_repository(path: String) -> AppResult<CommandResult> { backend::pull_repository(&path) }
++#[tauri::command]
++fn push_repository(path: String, auth: AuthRequest) -> AppResult<CommandResult> { backend::push_repository(&path, &auth) }
++#[tauri::command]
++fn clone_repository(app: AppHandle, request: CloneRequest) -> AppResult<RepositorySummary> {
++    #[cfg(target_os = "android")]
++    let request = {
++        let mut request = request;
++        let supplied = std::path::Path::new(&request.destination);
++        if !supplied.is_absolute() {
++            let safe_name: String = request.destination.chars()
++                .map(|character| if character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.') { character } else { '_' })
++                .collect();
++            if safe_name.is_empty() {
++                return Err(error::AppError::Invalid("repository name is empty".into()));
++            }
++            let root = app.path().app_data_dir()
++                .map_err(|error| error::AppError::Invalid(error.to_string()))?
++                .join("repositories");
++            std::fs::create_dir_all(&root)?;
++            request.destination = root.join(safe_name).to_string_lossy().into_owned();
++        }
++        request
++    };
++    #[cfg(not(target_os = "android"))]
++    let _ = app;
++    backend::clone_repository(&request)
++}
++#[tauri::command]
++fn switch_branch(path: String, branch: String) -> AppResult<()> { backend::switch_branch(&path, &branch) }
++#[tauri::command]
++fn create_branch(path: String, branch: String) -> AppResult<()> { backend::create_branch(&path, &branch) }
++#[tauri::command]
++fn run_workflow(path: String, request: WorkflowRequest) -> AppResult<CommandResult> { backend::run_workflow(&path, &request) }
++#[tauri::command]
++fn load_workspaces(app: AppHandle) -> AppResult<Vec<Workspace>> { workspace::load(&app) }
++#[tauri::command]
++fn save_workspaces(app: AppHandle, workspaces: Vec<Workspace>) -> AppResult<()> { workspace::save(&app, &workspaces) }
++#[tauri::command]
++async fn list_pull_requests(provider: String, base_url: String, owner: String, repository: String, token: String) -> AppResult<Vec<PullRequestRecord>> {
++    provider::list_pull_requests(&provider, &base_url, &owner, &repository, &token).await
++}
++
++#[cfg_attr(mobile, tauri::mobile_entry_point)]
++pub fn run() {
++    tauri::Builder::default()
++        .plugin(tauri_plugin_dialog::init())
++        .plugin(tauri_plugin_opener::init())
++        .invoke_handler(tauri::generate_handler![
++            repository_summary, repository_history, repository_status, repository_branches,
++            repository_operation_state, control_repository_operation,
++            stage_paths, unstage_paths, create_commit, fetch_repository, pull_repository,
++            push_repository, clone_repository, switch_branch, create_branch, run_workflow,
++            load_workspaces, save_workspaces, list_pull_requests
++        ])
++        .run(tauri::generate_context!())
++        .expect("failed to run GitAhead Next");
++}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src-tauri/src/models.rs /mnt/data/gitahead-next-uiux-v3/src-tauri/src/models.rs
+--- /mnt/data/gitahead-next-uiux-v2/src-tauri/src/models.rs	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src-tauri/src/models.rs	2026-09-14 06:51:41.711600791 +0000
+@@ -0,0 +1,119 @@
++use serde::{Deserialize, Serialize};
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RepositorySummary {
++    pub path: String,
++    pub name: String,
++    pub branch: Option<String>,
++    pub head: Option<String>,
++    pub ahead: usize,
++    pub behind: usize,
++    pub dirty: bool,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CommitRecord {
++    pub id: String,
++    pub parents: Vec<String>,
++    pub author_name: String,
++    pub author_email: String,
++    pub authored_at: String,
++    pub subject: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct FileChange {
++    pub path: String,
++    pub index_status: String,
++    pub worktree_status: String,
++    pub conflicted: bool,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct BranchRecord {
++    pub name: String,
++    pub target: String,
++    pub current: bool,
++    pub remote: bool,
++    pub upstream: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize, Default)]
++#[serde(rename_all = "camelCase")]
++pub struct AuthRequest {
++    pub username: Option<String>,
++    pub token: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CloneRequest {
++    pub url: String,
++    pub destination: String,
++    pub username: Option<String>,
++    pub token: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct WorkflowRequest {
++    pub operation: String,
++    pub args: Vec<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct CommandResult {
++    pub stdout: String,
++    pub stderr: String,
++    pub exit_code: i32,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct RepositoryOperationState {
++    pub operation: Option<String>,
++    pub has_conflicts: bool,
++    pub conflict_count: usize,
++    pub can_continue: bool,
++    pub can_skip: bool,
++    pub can_abort: bool,
++    pub current_commit: Option<String>,
++    pub current_subject: Option<String>,
++    pub step: Option<usize>,
++    pub total: Option<usize>,
++    pub message: String,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct WorkspaceRepository {
++    pub path: String,
++    pub alias: Option<String>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct Workspace {
++    pub id: String,
++    pub name: String,
++    pub repositories: Vec<WorkspaceRepository>,
++}
++
++#[derive(Debug, Clone, Serialize, Deserialize)]
++#[serde(rename_all = "camelCase")]
++pub struct PullRequestRecord {
++    pub id: String,
++    pub number: u64,
++    pub title: String,
++    pub author: String,
++    pub state: String,
++    pub source_branch: String,
++    pub target_branch: String,
++    pub web_url: String,
++    pub updated_at: Option<String>,
++}
+diff -ruN /mnt/data/gitahead-next-uiux-v2/src-tauri/src/operation_state.rs /mnt/data/gitahead-next-uiux-v3/src-tauri/src/operation_state.rs
+--- /mnt/data/gitahead-next-uiux-v2/src-tauri/src/operation_state.rs	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/src-tauri/src/operation_state.rs	2026-09-14 06:58:00.181322184 +0000
+@@ -0,0 +1,213 @@
++use crate::error::{AppError, AppResult};
++use crate::models::{CommandResult, RepositoryOperationState};
++
++#[cfg(not(target_os = "android"))]
++mod desktop {
++    use std::fs;
++    use std::path::{Path, PathBuf};
++    use std::process::{Command, Output};
++
++    use super::*;
++
++    fn editor_command() -> &'static str {
++        #[cfg(target_os = "windows")]
++        { "cmd /c exit 0" }
++        #[cfg(not(target_os = "windows"))]
++        { "true" }
++    }
++
++    fn run_git(path: &str, args: &[&str]) -> AppResult<Output> {
++        let mut command = Command::new("git");
++        command.arg("-C").arg(path).args(args);
++        command.env("GIT_TERMINAL_PROMPT", "0");
++        command.env("GIT_EDITOR", editor_command());
++        command.env("GIT_SEQUENCE_EDITOR", editor_command());
++        Ok(command.output()?)
++    }
++
++    fn checked_git(path: &str, args: &[&str]) -> AppResult<CommandResult> {
++        let output = run_git(path, args)?;
++        let result = CommandResult {
++            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
++            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
++            exit_code: output.status.code().unwrap_or(-1),
++        };
++        if output.status.success() {
++            Ok(result)
++        } else {
++            Err(AppError::Command(format!("git {}: {}", args.join(" "), result.stderr.trim())))
++        }
++    }
++
++    fn git_dir(path: &str) -> AppResult<PathBuf> {
++        let result = checked_git(path, &["rev-parse", "--absolute-git-dir"])?;
++        Ok(PathBuf::from(result.stdout.trim()))
++    }
++
++    fn read_trimmed(path: impl AsRef<Path>) -> Option<String> {
++        fs::read_to_string(path).ok().map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
++    }
++
++    fn read_number(path: impl AsRef<Path>) -> Option<usize> {
++        read_trimmed(path)?.parse().ok()
++    }
++
++    fn first_line(value: Option<String>) -> Option<String> {
++        value.and_then(|value| value.lines().next().map(str::trim).filter(|line| !line.is_empty()).map(str::to_string))
++    }
++
++    fn ref_value(path: &str, name: &str) -> Option<String> {
++        checked_git(path, &["rev-parse", "--verify", name]).ok().map(|result| result.stdout.trim().to_string()).filter(|value| !value.is_empty())
++    }
++
++    fn subject_for(path: &str, commit: Option<&str>) -> Option<String> {
++        let commit = commit?;
++        checked_git(path, &["show", "-s", "--format=%s", commit]).ok().and_then(|result| first_line(Some(result.stdout)))
++    }
++
++    fn conflict_count(path: &str) -> AppResult<usize> {
++        let result = checked_git(path, &["diff", "--name-only", "--diff-filter=U", "-z"])?;
++        Ok(result.stdout.split('\0').filter(|entry| !entry.is_empty()).count())
++    }
++
++    pub fn repository_operation_state(path: &str) -> AppResult<RepositoryOperationState> {
++        let git_dir = git_dir(path)?;
++        let rebase_merge = git_dir.join("rebase-merge");
++        let rebase_apply = git_dir.join("rebase-apply");
++
++        let (operation, current_commit, current_subject, step, total) = if rebase_merge.is_dir() || rebase_apply.is_dir() {
++            let dir = if rebase_merge.is_dir() { &rebase_merge } else { &rebase_apply };
++            let current = ref_value(path, "REBASE_HEAD")
++                .or_else(|| read_trimmed(dir.join("stopped-sha")))
++                .or_else(|| read_trimmed(dir.join("original-commit")));
++            let subject = subject_for(path, current.as_deref())
++                .or_else(|| first_line(read_trimmed(dir.join("message"))));
++            let (step, total) = if rebase_merge.is_dir() {
++                (read_number(dir.join("msgnum")), read_number(dir.join("end")))
++            } else {
++                (read_number(dir.join("next")), read_number(dir.join("last")))
++            };
++            (Some("rebase".to_string()), current, subject, step, total)
++        } else if git_dir.join("MERGE_HEAD").is_file() {
++            let current = first_line(read_trimmed(git_dir.join("MERGE_HEAD")));
++            let subject = subject_for(path, current.as_deref());
++            (Some("merge".to_string()), current, subject, None, None)
++        } else if git_dir.join("CHERRY_PICK_HEAD").is_file() {
++            let current = first_line(read_trimmed(git_dir.join("CHERRY_PICK_HEAD")));
++            let subject = subject_for(path, current.as_deref());
++            (Some("cherryPick".to_string()), current, subject, None, None)
++        } else if git_dir.join("REVERT_HEAD").is_file() {
++            let current = first_line(read_trimmed(git_dir.join("REVERT_HEAD")));
++            let subject = subject_for(path, current.as_deref());
++            (Some("revert".to_string()), current, subject, None, None)
++        } else {
++            (None, None, None, None, None)
++        };
++
++        let conflicts = conflict_count(path)?;
++        let active = operation.is_some();
++        let skippable = matches!(operation.as_deref(), Some("rebase") | Some("cherryPick") | Some("revert"));
++        let message = if !active {
++            "No merge, rebase, cherry-pick or revert is in progress.".to_string()
++        } else if conflicts > 0 {
++            format!("{conflicts} unresolved conflict{}. Resolve and stage the files before continuing.", if conflicts == 1 { "" } else { "s" })
++        } else if let (Some(step), Some(total)) = (step, total) {
++            format!("Step {step} of {total} is resolved and ready to continue.")
++        } else {
++            "The operation is paused and ready to continue, skip where supported, or abort.".to_string()
++        };
++
++        Ok(RepositoryOperationState {
++            operation,
++            has_conflicts: conflicts > 0,
++            conflict_count: conflicts,
++            can_continue: active && conflicts == 0,
++            can_skip: active && skippable,
++            can_abort: active,
++            current_commit,
++            current_subject,
++            step,
++            total,
++            message,
++        })
++    }
++
++    pub fn control_repository_operation(path: &str, action: &str) -> AppResult<CommandResult> {
++        let state = repository_operation_state(path)?;
++        let operation = state.operation.as_deref().ok_or_else(|| AppError::Invalid("no merge, rebase, cherry-pick or revert is in progress".into()))?;
++
++        if action == "continue" && state.has_conflicts {
++            return Err(AppError::Invalid("resolve and stage all conflicts before continuing".into()));
++        }
++        if action == "skip" && !state.can_skip {
++            return Err(AppError::Invalid(format!("{operation} does not support skip in this workflow")));
++        }
++        if !matches!(action, "continue" | "skip" | "abort") {
++            return Err(AppError::Invalid(format!("unknown operation action: {action}")));
++        }
++
++        let command = match operation {
++            "merge" => "merge",
++            "rebase" => "rebase",
++            "cherryPick" => "cherry-pick",
++            "revert" => "revert",
++            _ => return Err(AppError::Invalid(format!("unsupported repository operation: {operation}"))),
++        };
++        let flag = match action {
++            "continue" => "--continue",
++            "skip" => "--skip",
++            "abort" => "--abort",
++            _ => unreachable!(),
++        };
++        checked_git(path, &[command, flag])
++    }
++}
++
++#[cfg(target_os = "android")]
++mod android {
++    use git2::{Repository, RepositoryState, Status, StatusOptions};
++    use super::*;
++
++    pub fn repository_operation_state(path: &str) -> AppResult<RepositoryOperationState> {
++        let repo = Repository::discover(path)?;
++        let operation = match repo.state() {
++            RepositoryState::Merge => Some("merge"),
++            RepositoryState::Revert | RepositoryState::RevertSequence => Some("revert"),
++            RepositoryState::CherryPick | RepositoryState::CherryPickSequence => Some("cherryPick"),
++            RepositoryState::Rebase | RepositoryState::RebaseInteractive | RepositoryState::RebaseMerge => Some("rebase"),
++            _ => None,
++        }.map(str::to_string);
++
++        let mut options = StatusOptions::new();
++        options.include_untracked(true).recurse_untracked_dirs(true);
++        let conflicts = repo.statuses(Some(&mut options))?.iter().filter(|entry| entry.status().contains(Status::CONFLICTED)).count();
++        let active = operation.is_some();
++
++        Ok(RepositoryOperationState {
++            operation,
++            has_conflicts: conflicts > 0,
++            conflict_count: conflicts,
++            can_continue: false,
++            can_skip: false,
++            can_abort: false,
++            current_commit: None,
++            current_subject: None,
++            step: None,
++            total: None,
++            message: if active {
++                "An operation is in progress. Continue/skip/abort controls are currently desktop-only; use the Changes view to inspect conflicts.".into()
++            } else {
++                "No merge, rebase, cherry-pick or revert is in progress.".into()
++            },
++        })
++    }
++
++    pub fn control_repository_operation(_path: &str, _action: &str) -> AppResult<CommandResult> {
++        Err(AppError::Unsupported("merge/rebase/cherry-pick/revert controls are not implemented on Android yet".into()))
++    }
++}
++
++#[cfg(not(target_os = "android"))]
++pub use desktop::{control_repository_operation, repository_operation_state};
++#[cfg(target_os = "android")]
++pub use android::{control_repository_operation, repository_operation_state};
+diff -ruN /mnt/data/gitahead-next-uiux-v2/tests/git-operation-state-smoke.sh /mnt/data/gitahead-next-uiux-v3/tests/git-operation-state-smoke.sh
+--- /mnt/data/gitahead-next-uiux-v2/tests/git-operation-state-smoke.sh	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/tests/git-operation-state-smoke.sh	2026-09-14 07:00:22.405523142 +0000
+@@ -0,0 +1,99 @@
++#!/usr/bin/env bash
++set -euo pipefail
++
++ROOT=$(mktemp -d)
++trap 'rm -rf "$ROOT"' EXIT
++cd "$ROOT"
++
++git init -q
++git config user.email test@example.com
++git config user.name "GitAhead UX Smoke"
++
++# Merge conflict -> resolve -> continue.
++echo base > conflict.txt
++git add conflict.txt
++git commit -qm base
++git branch feature
++echo main > conflict.txt
++git commit -qam main-change
++git checkout -q feature
++echo feature > conflict.txt
++git commit -qam feature-change
++git checkout -q master
++if git merge feature >/dev/null 2>&1; then
++  echo "FAIL: merge unexpectedly completed without conflict" >&2
++  exit 1
++fi
++GITDIR=$(git rev-parse --absolute-git-dir)
++test -f "$GITDIR/MERGE_HEAD"
++test "$(git diff --name-only --diff-filter=U | wc -l)" -eq 1
++printf 'merged\n' > conflict.txt
++git add conflict.txt
++GIT_EDITOR=true git merge --continue >/dev/null
++test ! -f "$GITDIR/MERGE_HEAD"
++echo "PASS merge detect/conflict/continue"
++
++# Rebase conflict -> skip.
++echo base > rebase.txt
++git add rebase.txt
++git commit -qm rebase-base
++git checkout -qb topic
++echo topic > rebase.txt
++git commit -qam topic-change
++git checkout -q master
++echo master > rebase.txt
++git commit -qam master-change
++git checkout -q topic
++if git rebase master >/dev/null 2>&1; then
++  echo "FAIL: rebase unexpectedly completed without conflict" >&2
++  exit 1
++fi
++GITDIR=$(git rev-parse --absolute-git-dir)
++test -d "$GITDIR/rebase-merge" -o -d "$GITDIR/rebase-apply"
++test "$(git diff --name-only --diff-filter=U | wc -l)" -eq 1
++GIT_EDITOR=true git rebase --skip >/dev/null
++test ! -d "$GITDIR/rebase-merge" -a ! -d "$GITDIR/rebase-apply"
++echo "PASS rebase detect/conflict/skip"
++
++# Cherry-pick conflict -> abort.
++git checkout -q master
++echo base > cherry.txt
++git add cherry.txt
++git commit -qm cherry-base
++git checkout -qb cherry-source
++echo source > cherry.txt
++git commit -qam cherry-source-change
++CHERRY_COMMIT=$(git rev-parse HEAD)
++git checkout -q master
++echo target > cherry.txt
++git commit -qam cherry-target-change
++if git cherry-pick "$CHERRY_COMMIT" >/dev/null 2>&1; then
++  echo "FAIL: cherry-pick unexpectedly completed without conflict" >&2
++  exit 1
++fi
++GITDIR=$(git rev-parse --absolute-git-dir)
++test -f "$GITDIR/CHERRY_PICK_HEAD"
++test "$(git diff --name-only --diff-filter=U | wc -l)" -eq 1
++git cherry-pick --abort >/dev/null
++test ! -f "$GITDIR/CHERRY_PICK_HEAD"
++echo "PASS cherry-pick detect/conflict/abort"
++
++# Revert conflict -> abort.
++echo base > revert.txt
++git add revert.txt
++git commit -qm revert-base
++echo first > revert.txt
++git commit -qam revert-first
++REVERT_TARGET=$(git rev-parse HEAD)
++echo later > revert.txt
++git commit -qam revert-later
++if GIT_EDITOR=true git revert "$REVERT_TARGET" >/dev/null 2>&1; then
++  echo "FAIL: revert unexpectedly completed without conflict" >&2
++  exit 1
++fi
++GITDIR=$(git rev-parse --absolute-git-dir)
++test -f "$GITDIR/REVERT_HEAD"
++test "$(git diff --name-only --diff-filter=U | wc -l)" -eq 1
++git revert --abort >/dev/null
++test ! -f "$GITDIR/REVERT_HEAD"
++echo "PASS revert detect/conflict/abort"
+Binary files /mnt/data/gitahead-next-uiux-v2/visual/operation-state-workspace.png and /mnt/data/gitahead-next-uiux-v3/visual/operation-state-workspace.png differ
+diff -ruN /mnt/data/gitahead-next-uiux-v2/visual/operation-state-workspace.svg /mnt/data/gitahead-next-uiux-v3/visual/operation-state-workspace.svg
+--- /mnt/data/gitahead-next-uiux-v2/visual/operation-state-workspace.svg	1970-01-01 00:00:00.000000000 +0000
++++ /mnt/data/gitahead-next-uiux-v3/visual/operation-state-workspace.svg	2026-09-14 06:57:18.762145947 +0000
+@@ -0,0 +1,56 @@
++<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
++  <rect width="1440" height="900" fill="#111318"/>
++  <rect x="0" y="0" width="1440" height="42" fill="#171a20"/>
++  <line x1="0" y1="42" x2="1440" y2="42" stroke="#333944"/>
++  <rect x="10" y="10" width="21" height="21" rx="4" fill="#2f79cf"/><text x="20.5" y="25" fill="#fff" font-family="Segoe UI,Arial" font-size="11" font-weight="700" text-anchor="middle">G</text>
++  <text x="40" y="26" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="12" font-weight="650">GitAhead</text>
++  <rect x="97" y="12" width="32" height="17" rx="3" fill="#171a20" stroke="#333944"/><text x="113" y="24" fill="#8993a1" font-family="Segoe UI,Arial" font-size="8" text-anchor="middle">NEXT</text>
++  <text x="150" y="25" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="12" font-weight="600">gitahead</text><text x="225" y="25" fill="#8993a1" font-family="Segoe UI,Arial" font-size="10">C:\GIT_\gitahead</text>
++  <rect x="1110" y="7" width="58" height="28" rx="4" fill="#1e2229" stroke="#333944"/><text x="1139" y="25" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="11" text-anchor="middle">Open</text>
++  <rect x="1174" y="7" width="58" height="28" rx="4" fill="#1e2229" stroke="#333944"/><text x="1203" y="25" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="11" text-anchor="middle">Clone</text>
++  <rect x="1238" y="7" width="192" height="28" rx="4" fill="#1e2229" stroke="#333944"/><text x="1334" y="25" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="10.5" text-anchor="middle">Commands   Ctrl+Shift+P</text>
++
++  <rect x="0" y="42" width="252" height="835" fill="#171a20"/><line x1="252" y1="42" x2="252" y2="877" stroke="#333944"/>
++  <text x="13" y="67" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="11" font-weight="600">Repositories</text>
++  <text x="12" y="101" fill="#8993a1" font-family="Segoe UI,Arial" font-size="9" font-weight="650">LOCAL REPOSITORIES</text>
++  <rect x="6" y="109" width="240" height="39" rx="4" fill="#1d3b60" stroke="#315a86"/><rect x="13" y="117" width="24" height="24" rx="3" fill="#316da9"/><text x="25" y="133" fill="#fff" font-family="Segoe UI,Arial" font-size="10" font-weight="700" text-anchor="middle">G</text><text x="45" y="126" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="11.5" font-weight="600">gitahead</text><text x="45" y="140" fill="#8993a1" font-family="Segoe UI,Arial" font-size="9.5">C:\GIT_\gitahead</text>
++  <line x1="0" y1="185" x2="252" y2="185" stroke="#333944"/>
++  <text x="13" y="210" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="11" font-weight="600">gitahead</text><text x="13" y="226" fill="#8993a1" font-family="Segoe UI,Arial" font-size="10">feature/rebase-ui *</text>
++  <rect x="6" y="241" width="240" height="30" rx="4" fill="#3b2025" stroke="#7c3740"/><text x="18" y="260" fill="#ff6b73" font-family="Segoe UI,Arial" font-size="11" font-weight="700">!</text><text x="40" y="260" fill="#ffb5ba" font-family="Segoe UI,Arial" font-size="11">Conflicts</text><rect x="214" y="247" width="24" height="18" rx="9" fill="#6b2a31"/><text x="226" y="260" fill="#ffd9dc" font-family="Segoe UI,Arial" font-size="10" text-anchor="middle">2</text>
++  <text x="40" y="293" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="11">History</text><text x="40" y="325" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="11">Branches</text><text x="40" y="357" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="11">Worktrees</text><text x="40" y="389" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="11">Submodules</text><text x="40" y="421" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="11">Stashes</text><text x="40" y="453" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="11">Recovery &amp; tools</text>
++
++  <rect x="252" y="42" width="1188" height="46" fill="#171a20"/><line x1="252" y1="88" x2="1440" y2="88" stroke="#333944"/>
++  <rect x="262" y="51" width="28" height="28" rx="4" fill="#1e2229" stroke="#333944"/><text x="276" y="70" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="12" text-anchor="middle">Y</text>
++  <text x="300" y="59" fill="#8993a1" font-family="Segoe UI,Arial" font-size="8">CURRENT BRANCH</text><text x="300" y="75" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="11" font-weight="600">feature/rebase-ui</text>
++  <rect x="435" y="55" width="70" height="20" rx="10" fill="#3d3422"/><text x="470" y="69" fill="#f5cb7f" font-family="Segoe UI,Arial" font-size="10" text-anchor="middle">8 changed</text>
++  <rect x="512" y="55" width="92" height="20" rx="10" fill="#3b2025" stroke="#79343d"/><text x="558" y="69" fill="#ffb5ba" font-family="Segoe UI,Arial" font-size="10" text-anchor="middle">!  2 conflicts</text>
++  <rect x="1167" y="51" width="65" height="28" rx="4" fill="#1e2229" stroke="#333944"/><text x="1199" y="69" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="11" text-anchor="middle">Fetch</text>
++  <rect x="1238" y="51" width="56" height="28" rx="4" fill="#1e2229" stroke="#333944" opacity=".5"/><text x="1266" y="69" fill="#8993a1" font-family="Segoe UI,Arial" font-size="11" text-anchor="middle">Pull</text>
++  <rect x="1300" y="51" width="78" height="28" rx="4" fill="#1e2229" stroke="#333944" opacity=".5"/><text x="1339" y="69" fill="#8993a1" font-family="Segoe UI,Arial" font-size="11" text-anchor="middle">Push</text>
++
++  <rect x="252" y="88" width="1188" height="60" fill="#3b2025"/><line x1="252" y1="148" x2="1440" y2="148" stroke="#73353d"/>
++  <rect x="262" y="104" width="28" height="28" rx="4" fill="#49262c" stroke="#774049"/><text x="276" y="123" fill="#ff9fa6" font-family="Segoe UI,Arial" font-size="13" font-weight="700" text-anchor="middle">!</text>
++  <text x="301" y="109" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="11.5" font-weight="650">Rebase in progress</text><rect x="408" y="97" width="45" height="18" rx="9" fill="#3b2025" stroke="#5a5740"/><text x="430.5" y="110" fill="#efd18b" font-family="Segoe UI,Arial" font-size="9.5" text-anchor="middle">3 of 7</text><text x="464" y="110" fill="#8993a1" font-family="Consolas,monospace" font-size="10">Refactor repository workspace</text>
++  <text x="301" y="130" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="10">2 unresolved conflicts. Resolve and stage the files before continuing.</text>
++  <rect x="978" y="104" width="112" height="28" rx="4" fill="#1e2229" stroke="#333944"/><text x="1034" y="122" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="10.5" text-anchor="middle">Resolve 2 conflicts</text>
++  <rect x="1096" y="104" width="75" height="28" rx="4" fill="#2f79cf" stroke="#3b81d2" opacity=".45"/><text x="1133.5" y="122" fill="#b7c3d0" font-family="Segoe UI,Arial" font-size="10.5" text-anchor="middle">Continue</text>
++  <rect x="1177" y="104" width="86" height="28" rx="4" fill="#1e2229" stroke="#333944"/><text x="1220" y="122" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="10.5" text-anchor="middle">Skip commit</text>
++  <rect x="1269" y="104" width="75" height="28" rx="4" fill="#3b2025" stroke="#7b3941"/><text x="1306.5" y="122" fill="#ffb7bc" font-family="Segoe UI,Arial" font-size="10.5" text-anchor="middle">Abort…</text>
++
++  <rect x="252" y="148" width="822" height="729" fill="#111318"/><rect x="1080" y="148" width="360" height="729" fill="#171a20"/><rect x="1074" y="148" width="6" height="729" fill="#111318" stroke="#333944"/>
++  <rect x="252" y="148" width="822" height="45" fill="#171a20"/><line x1="252" y1="193" x2="1074" y2="193" stroke="#333944"/><text x="262" y="168" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="13" font-weight="650">Resolve changes</text><text x="262" y="184" fill="#8993a1" font-family="Segoe UI,Arial" font-size="9.5">8 changed files</text>
++  <rect x="865" y="156" width="100" height="28" rx="4" fill="#1e2229" stroke="#333944"/><text x="915" y="174" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="10.5" text-anchor="middle">Stage selected</text><rect x="971" y="156" width="92" height="28" rx="4" fill="#1e2229" stroke="#333944"/><text x="1017" y="174" fill="#66707d" font-family="Segoe UI,Arial" font-size="10.5" text-anchor="middle">Unstage</text>
++
++  <rect x="252" y="193" width="822" height="47" fill="#3b2025"/><text x="265" y="213" fill="#ffb6bb" font-family="Segoe UI,Arial" font-size="13" font-weight="700">!</text><text x="287" y="211" fill="#ffb6bb" font-family="Segoe UI,Arial" font-size="10.5" font-weight="600">2 unresolved conflicts</text><text x="287" y="227" fill="#dc979d" font-family="Segoe UI,Arial" font-size="9.5">Resolve each file, then stage it to mark the result resolved.</text>
++  <rect x="252" y="240" width="822" height="42" fill="#2f1f23"/><text x="262" y="258" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="10.5" font-weight="600">Conflicts</text><text x="262" y="273" fill="#8993a1" font-family="Segoe UI,Arial" font-size="8.8">Resolve before continuing the Git operation</text>
++  <rect x="252" y="282" width="822" height="30" fill="#111318"/><rect x="263" y="291" width="12" height="12" rx="2" fill="#111318" stroke="#454d5a"/><text x="286" y="302" fill="#8993a1" font-family="Consolas,monospace" font-size="9.5">UU</text><text x="322" y="302" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="10">next/src/App.tsx</text><rect x="1004" y="288" width="58" height="18" rx="9" fill="#5a2830"/><text x="1033" y="301" fill="#ffb1b7" font-family="Segoe UI,Arial" font-size="9" text-anchor="middle">Conflict</text>
++  <rect x="252" y="312" width="822" height="30" fill="#111318"/><rect x="263" y="321" width="12" height="12" rx="2" fill="#111318" stroke="#454d5a"/><text x="286" y="332" fill="#8993a1" font-family="Consolas,monospace" font-size="9.5">UU</text><text x="322" y="332" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="10">next/src-tauri/src/operation_state.rs</text><rect x="1004" y="318" width="58" height="18" rx="9" fill="#5a2830"/><text x="1033" y="331" fill="#ffb1b7" font-family="Segoe UI,Arial" font-size="9" text-anchor="middle">Conflict</text>
++  <rect x="252" y="342" width="822" height="42" fill="#1e2229"/><text x="262" y="360" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="10.5" font-weight="600">Staged</text><text x="262" y="375" fill="#8993a1" font-family="Segoe UI,Arial" font-size="8.8">Included in the operation result</text>
++  <rect x="252" y="384" width="822" height="30" fill="#111318"/><text x="286" y="404" fill="#8993a1" font-family="Consolas,monospace" font-size="9.5">M </text><text x="322" y="404" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="10">next/src/ux.css</text>
++  <rect x="252" y="414" width="822" height="42" fill="#1e2229"/><text x="262" y="432" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="10.5" font-weight="600">Unstaged</text><text x="262" y="447" fill="#8993a1" font-family="Segoe UI,Arial" font-size="8.8">Working directory changes</text>
++  <rect x="252" y="456" width="822" height="30" fill="#111318"/><text x="286" y="476" fill="#8993a1" font-family="Consolas,monospace" font-size="9.5"> M</text><text x="322" y="476" fill="#b8c0cc" font-family="Segoe UI,Arial" font-size="10">next/src/components/OperationBanner.tsx</text>
++
++  <text x="1094" y="170" fill="#8993a1" font-family="Segoe UI,Arial" font-size="8.5" font-weight="650">NEXT COMMIT</text><text x="1094" y="194" fill="#e8ebf0" font-family="Segoe UI,Arial" font-size="14" font-weight="600">Normal commit locked</text><text x="1094" y="224" fill="#8993a1" font-family="Segoe UI,Arial" font-size="9.5">Commit message</text><rect x="1094" y="235" width="332" height="240" rx="4" fill="#111318" stroke="#333944" opacity=".7"/><rect x="1094" y="492" width="332" height="30" rx="4" fill="#171a20" stroke="#333944" opacity=".5"/><text x="1260" y="512" fill="#66707d" font-family="Segoe UI,Arial" font-size="10" text-anchor="middle">Commit staged changes</text><text x="1094" y="545" fill="#e8c481" font-family="Segoe UI,Arial" font-size="9.5">Normal commit is locked during rebase.</text><text x="1094" y="561" fill="#8993a1" font-family="Segoe UI,Arial" font-size="9.5">Resolve/stage files, then use Continue above.</text>
++
++  <rect x="0" y="877" width="1440" height="23" fill="#0d0f13"/><line x1="0" y1="877" x2="1440" y2="877" stroke="#333944"/><text x="9" y="892" fill="#8993a1" font-family="Segoe UI,Arial" font-size="9.5">Rebase paused · resolve 2 conflicts before Continue</text><text x="1430" y="892" fill="#8993a1" font-family="Segoe UI,Arial" font-size="9.5" text-anchor="end">operation state protected</text>
++</svg>

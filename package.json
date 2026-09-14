@@ -1,0 +1,34 @@
+{
+  "name": "gitahead-next",
+  "private": true,
+  "version": "0.5.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build --ci",
+    "android:init": "tauri android init --ci",
+    "android:dev": "tauri android dev",
+    "android:build": "tauri android build --apk --aab --target aarch64 x86_64 --ci",
+    "test:markers": "node tests/conflict-markers.test.mjs",
+    "test:git": "bash tests/git-operation-state-smoke.sh && bash tests/conflict-center-smoke.sh && bash tests/rebase-planner-smoke.sh && bash tests/git-intelligence-smoke.sh"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-opener": "^2.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0"
+  }
+}
