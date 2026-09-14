@@ -1,16 +1,16 @@
-# GitAhead Next UI/UX Deep Research and Refactor Specification
+# Chrono Next UI/UX Deep Research and Refactor Specification
 
 ## Executive summary
 
-GitAhead Next already has the right architectural premise for a modern replacement: the Qt-free application is a sibling implementation in `next/`, built with Rust, Tauri 2, React, TypeScript and plain CSS. The problem is not the technology. The problem is that the first UI slice carries forward too much of the old desktop chrome while also layering web-style navigation on top of it.
+Chrono Next already has the right architectural premise for a modern replacement: the Qt-free application is a sibling implementation in `next/`, built with Rust, Tauri 2, React, TypeScript and plain CSS. The problem is not the technology. The problem is that the first UI slice carries forward too much of the old desktop chrome while also layering web-style navigation on top of it.
 
 The current `next/src/App.tsx` exposes a faux menu bar, a window strip, a legacy toolbar, a repository sidebar, and then another repository toolbar containing view tabs and actions. The result is repeated navigation, repeated refresh/action affordances, weak information hierarchy, and unnecessary vertical chrome. The refactor should instead treat **repository state as navigation**: Working Tree / Conflicts, History, Branches, Worktrees, Submodules, Stashes, and Recovery are the durable places a user moves between. Remote actions belong to a compact repository command bar. Detail surfaces belong in resizable inspectors.
 
 The strongest pattern across GitKraken, SmartGit, TortoiseGit and native desktop HIGs is a persistent multi-pane workspace: a navigation/reference pane, a primary work surface, and a contextual detail/commit pane. GitKraken explicitly uses Left Panel + Commit Graph + Commit Panel and lets users resize/collapse the areas; its graph columns can also be reordered and their widths are saved per repository.[1] Apple’s desktop split-view guidance similarly calls out adjacent panes with draggable dividers and persistent selection.[10]
 
-The second major conclusion is that **Git operations must be stateful UX, not fire-and-forget commands**. SmartGit leaves the repository in a conflicted merge/rebase/cherry-pick/revert state and offers resolve, continue, or abort.[4] Git itself defines rebase conflicts as a paused operation with `--continue`, `--skip`, and `--abort` paths.[14] GitAhead Next should therefore grow an operation-state model and persistent operation banner before implementing a polished rebase or conflict center.
+The second major conclusion is that **Git operations must be stateful UX, not fire-and-forget commands**. SmartGit leaves the repository in a conflicted merge/rebase/cherry-pick/revert state and offers resolve, continue, or abort.[4] Git itself defines rebase conflicts as a paused operation with `--continue`, `--skip`, and `--abort` paths.[14] Chrono Next should therefore grow an operation-state model and persistent operation banner before implementing a polished rebase or conflict center.
 
-The third conclusion is that advanced repository structures must be first class. GitKraken exposes worktrees in its left panel and supports create, switch, remove, lock and unlock.[2] TortoiseGit’s Worktrees dialog lists the main and linked worktrees and makes lock/unlock/removal explicit.[7] The Qt-free GitAhead backend already exposes worktree, submodule, stash, reflog, LFS and maintenance commands, but the existing UI reduces them to generic workflow buttons and terminal output. The refactor promotes these into dedicated repository destinations and parses worktree/stash output into visible state.
+The third conclusion is that advanced repository structures must be first class. GitKraken exposes worktrees in its left panel and supports create, switch, remove, lock and unlock.[2] TortoiseGit’s Worktrees dialog lists the main and linked worktrees and makes lock/unlock/removal explicit.[7] The Qt-free Chrono backend already exposes worktree, submodule, stash, reflog, LFS and maintenance commands, but the existing UI reduces them to generic workflow buttons and terminal output. The refactor promotes these into dedicated repository destinations and parses worktree/stash output into visible state.
 
 This implementation pass therefore replaces the stacked chrome with a compact repository-centered shell; adds first-class navigation; splits working changes into Conflicts / Staged / Unstaged; makes commit enablement state-safe; adds a keyboard-operable command palette; adds resizable desktop panes; replaces browser prompts with a clone task dialog; provides a real branch manager; and turns worktrees/stashes into structured surfaces. A full conflict solver, operation controller, true DAG renderer, on-demand diffs, and structured submodule model remain the next backend/UI slices.
 
@@ -156,10 +156,10 @@ This can produce incorrect file rows in the UI. The backend should either implem
 
 ## 3. Competitive benchmark
 
-| Product / guidance | High-value pattern | What GitAhead Next should adopt | What not to copy literally |
+| Product / guidance | High-value pattern | What Chrono Next should adopt | What not to copy literally |
 |---|---|---|---|
 | GitKraken Desktop | Left Panel + Commit Graph + Commit Panel; panes and sections are resizable; graph columns configurable and saved per repository.[1] | Stable 3-area mental model; persistent repo references/state; resizable inspector; per-repo layout persistence later | Brand-specific visual styling and proprietary collaboration surfaces |
-| GitKraken Worktrees | Worktrees visible from left panel; create/switch/remove/lock/unlock; full path discoverable.[2] | First-class worktree destination, lock state, safe destructive flow | Agent-session-specific UX unless GitAhead adds agents |
+| GitKraken Worktrees | Worktrees visible from left panel; create/switch/remove/lock/unlock; full path discoverable.[2] | First-class worktree destination, lock state, safe destructive flow | Agent-session-specific UX unless Chrono adds agents |
 | GitKraken Interactive Rebase | Pick/Reword/Squash/Drop and keyboard shortcuts.[3] | Rebase planner with explicit per-commit actions and preview | Starting with drag/drop only; keyboard/buttons must remain available |
 | SmartGit | Separate Working Tree / Log mental models; configurable perspectives.[19] | Strong Local Changes vs History separation; save pane layout/perspective | Multiple top-level windows as a default requirement |
 | SmartGit merge/rebase | Operation pauses on conflict; resolve/continue/abort.[4][20] | Persistent operation banner/controller | Hiding operation state in transient notifications |
@@ -604,7 +604,7 @@ The application should be fully operable without a mouse for high-frequency Git 
 
 ### Interactive tabular content
 
-W3C’s Grid pattern makes clear that a true ARIA grid requires managed cell focus and directional navigation.[21] GitAhead should therefore avoid casually assigning `role="grid"` to ordinary lists. Use semantic tables for read-mostly data or implement a complete grid interaction model when editing/reordering becomes necessary.
+W3C’s Grid pattern makes clear that a true ARIA grid requires managed cell focus and directional navigation.[21] Chrono should therefore avoid casually assigning `role="grid"` to ordinary lists. Use semantic tables for read-mostly data or implement a complete grid interaction model when editing/reordering becomes necessary.
 
 ### Focus
 
@@ -783,16 +783,16 @@ Metadata is lower contrast than primary content but conflict/warning states alwa
 13. Git documentation, **git-worktree — Porcelain Format**. https://git-scm.com/docs/git-worktree/2.52.0
 14. Git documentation, **git-rebase**. https://git-scm.com/docs/git-rebase.html
 15. SmartGit, **Repositories, Directories and Files** (staging states). https://docs.syntevo.com/SmartGit/Latest/Manual/GUI/Repository/Repositories-Directories-and-Files
-16. GitAhead repository, **NO_QT_VARIANT.md**. https://github.com/xsession/gitahead/blob/master/NO_QT_VARIANT.md
-17. GitAhead repository, **next/README.md**. https://github.com/xsession/gitahead/blob/master/next/README.md
-18. GitAhead repository, **next/src-tauri/src/backend/cli.rs**. https://github.com/xsession/gitahead/blob/master/next/src-tauri/src/backend/cli.rs
+16. Chrono repository, **NO_QT_VARIANT.md**. https://github.com/xsession/chrono/blob/master/NO_QT_VARIANT.md
+17. Chrono repository, **next/README.md**. https://github.com/xsession/chrono/blob/master/next/README.md
+18. Chrono repository, **next/src-tauri/src/backend/cli.rs**. https://github.com/xsession/chrono/blob/master/next/src-tauri/src/backend/cli.rs
 19. SmartGit, **Main Windows**. https://docs.syntevo.com/SmartGit/Latest/Manual/GUI/Main-Windows
 20. SmartGit, **Rebase**. https://docs.syntevo.com/SmartGit/Latest/Manual/GUI/Branch/Rebase
 21. W3C WAI-ARIA Authoring Practices Guide, **Grid Pattern**. https://www.w3.org/WAI/ARIA/apg/patterns/grid/
 22. Apple Human Interface Guidelines, **Sidebars**. https://developer.apple.com/design/human-interface-guidelines/sidebars
-23. GitAhead repository, **next/src/App.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/App.tsx
-24. GitAhead repository, **next/src/components/StatusPanel.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/components/StatusPanel.tsx
-25. GitAhead repository, **next/src/components/CommitGraph.tsx**. https://github.com/xsession/gitahead/blob/master/next/src/components/CommitGraph.tsx
+23. Chrono repository, **next/src/App.tsx**. https://github.com/xsession/chrono/blob/master/next/src/App.tsx
+24. Chrono repository, **next/src/components/StatusPanel.tsx**. https://github.com/xsession/chrono/blob/master/next/src/components/StatusPanel.tsx
+25. Chrono repository, **next/src/components/CommitGraph.tsx**. https://github.com/xsession/chrono/blob/master/next/src/components/CommitGraph.tsx
 
 ---
 
@@ -867,9 +867,9 @@ Git's low-level conflict documentation explicitly describes extracting stage 1/2
 
 ### Safe side selection
 
-`git checkout-index --stage=<n>` is specifically documented for copying a named unmerged stage into the working tree. GitAhead uses stage 2 or 3 for regular files, binary files and symlinks, then stages the path to clear the unmerged entries.
+`git checkout-index --stage=<n>` is specifically documented for copying a named unmerged stage into the working tree. Chrono uses stage 2 or 3 for regular files, binary files and symlinks, then stages the path to clear the unmerged entries.
 
-Submodule conflicts are different: mode `160000` is a gitlink, not text. For those paths GitAhead displays commit IDs and uses `git update-index --cacheinfo` to write the selected commit directly into the resolved stage-0 index entry.
+Submodule conflicts are different: mode `160000` is a gitlink, not text. For those paths Chrono displays commit IDs and uses `git update-index --cacheinfo` to write the selected commit directly into the resolved stage-0 index entry.
 
 ### Operation-aware labels
 
@@ -930,7 +930,7 @@ The new `RebasePlanner` turns rebase into a plan-first workflow instead of a gen
 
 ## Git Intelligence workbench
 
-A new repository view brings high-value GitLens-style insight workflows into GitAhead without adopting IDE-only assumptions:
+A new repository view brings high-value GitLens-style insight workflows into Chrono without adopting IDE-only assumptions:
 
 - rich commit query grammar;
 - common-base reference comparison;

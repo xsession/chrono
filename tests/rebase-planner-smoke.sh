@@ -5,8 +5,8 @@ root=$(mktemp -d)
 trap 'rm -rf "$root"' EXIT
 repo="$root/repo"
 git init -q -b main "$repo"
-git -C "$repo" config user.name "GitAhead Test"
-git -C "$repo" config user.email "gitahead@example.test"
+git -C "$repo" config user.name "Chrono Test"
+git -C "$repo" config user.email "chrono@example.test"
 echo base > "$repo/base.txt"
 git -C "$repo" add base.txt
 git -C "$repo" commit -qm "base"
@@ -34,10 +34,10 @@ drop $D D commit
 PLAN
 cat > "$editor" <<'SH'
 #!/bin/sh
-cat "$GITAHEAD_REBASE_TODO" > "$1"
+cat "$CHRONO_REBASE_TODO" > "$1"
 SH
 chmod +x "$editor"
-GITAHEAD_REBASE_TODO="$todo" GIT_SEQUENCE_EDITOR="sh '$editor'" GIT_EDITOR=true git -C "$repo" rebase -i --update-refs --onto "$base" "$base" >/dev/null
+CHRONO_REBASE_TODO="$todo" GIT_SEQUENCE_EDITOR="sh '$editor'" GIT_EDITOR=true git -C "$repo" rebase -i --update-refs --onto "$base" "$base" >/dev/null
 
 count=$(git -C "$repo" rev-list --count "$base"..HEAD)
 [[ "$count" == "2" ]] || { echo "FAIL expected 2 rewritten commits, got $count"; exit 1; }
@@ -61,7 +61,7 @@ edit $E E commit
 pick $F F commit
 PLAN
 set +e
-GITAHEAD_REBASE_TODO="$todo" GIT_SEQUENCE_EDITOR="sh '$editor'" GIT_EDITOR=true git -C "$repo" rebase -i --onto "$base" "$base" >/dev/null 2>&1
+CHRONO_REBASE_TODO="$todo" GIT_SEQUENCE_EDITOR="sh '$editor'" GIT_EDITOR=true git -C "$repo" rebase -i --onto "$base" "$base" >/dev/null 2>&1
 status=$?
 set -e
 # Git may return zero for an intentional edit stop on some versions; state on disk is authoritative.

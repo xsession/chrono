@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-export GIT_AUTHOR_NAME='GitAhead Test'
-export GIT_AUTHOR_EMAIL='gitahead@example.test'
+export GIT_AUTHOR_NAME='Chrono Test'
+export GIT_AUTHOR_EMAIL='chrono@example.test'
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
 export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 

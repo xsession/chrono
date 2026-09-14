@@ -12,7 +12,7 @@ export function CherryParityPanel() {
   const [dockPreset, setDockPreset] = useState<DockPreset>("inspector-right");
   const [enabled, setEnabled] = useState(() => new Set(cherryFeatures.map((feature) => feature.id)));
   const [markdown, setMarkdown] = useState("# UI workbench\n- Runtime widgets\n- **Theme** preview\n- `debug` state");
-  const [script, setScript] = useState("print GitAhead Next UI workbench\ndraw 32 34 120 52 #2A82DA");
+  const [script, setScript] = useState("print Chrono Next UI workbench\ndraw 32 34 120 52 #2A82DA");
   const [scriptLog, setScriptLog] = useState<string[]>(["Workbench ready"]);
   const [shape, setShape] = useState({ x: 32, y: 34, w: 120, h: 52, color: "#2A82DA" });
   const [pointer, setPointer] = useState("0, 0");

@@ -1,4 +1,4 @@
-GitAhead Next v5 standalone full-repository packaging validation
+Chrono Next v5 standalone full-repository packaging validation
 
 PASS JSON configuration parsing
 PASS shell smoke-test syntax

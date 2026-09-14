@@ -1,8 +1,8 @@
-# GitAhead Next UI/UX Refactor — v4 Conflict Center
+# Chrono Next UI/UX Refactor — v4 Conflict Center
 
 ## Scope
 
-This package continues the Qt-free `next/` GitAhead modernization. The v4 slice implements the next P0 workflow from the prior operation-state work: a real three-way Conflict Center backed by Git's unmerged index entries.
+This package continues the Qt-free `next/` Chrono modernization. The v4 slice implements the next P0 workflow from the prior operation-state work: a real three-way Conflict Center backed by Git's unmerged index entries.
 
 The legacy Qt application remains untouched.
 
@@ -77,7 +77,7 @@ The submodule working tree is not forcibly switched because doing so could disca
 
 ### External resolver support
 
-Binary / large / special conflicts expose `Stage working copy & next`, allowing a user to resolve the item with an external editor/mergetool and then stage the result in GitAhead.
+Binary / large / special conflicts expose `Stage working copy & next`, allowing a user to resolve the item with an external editor/mergetool and then stage the result in Chrono.
 
 ## Frontend Conflict Center
 

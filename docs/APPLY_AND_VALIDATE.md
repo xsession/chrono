@@ -1,13 +1,13 @@
-# Apply and Validate GitAhead Next UI/UX v5
+# Apply and Validate Chrono Next UI/UX v5
 
 ## Apply the overlay
 
 The `overlay/next/` directory mirrors files that belong under the repository's `next/` directory.
 
-From a GitAhead checkout:
+From a Chrono checkout:
 
 ```bash
-cp -a /path/to/gitahead-next-uiux-v5/overlay/next/. next/
+cp -a /path/to/chrono-next-uiux-v5/overlay/next/. next/
 ```
 
 Or apply `docs/v4-to-v5.patch` on top of the v4 overlay/source state.

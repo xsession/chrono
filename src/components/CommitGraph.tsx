@@ -25,7 +25,7 @@ export function CommitGraph({ repositoryPath, commits, selected, onSelect }: Pro
   const [stats, setStats] = useState<Map<string, HistoryChangeStat>>(new Map());
   const [details, setDetails] = useState<CommitDetails | null>(null);
   const [worktrees, setWorktrees] = useState<WorktreeSummary[]>([]);
-  const [showChanges, setShowChanges] = useState(() => localStorage.getItem("gitahead.history.changes") !== "off");
+  const [showChanges, setShowChanges] = useState(() => localStorage.getItem("chrono.history.changes") !== "off");
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -66,7 +66,7 @@ export function CommitGraph({ repositoryPath, commits, selected, onSelect }: Pro
         <header className="ux-view-toolbar">
           <div><h2>History</h2><span>{commits.length} commits loaded</span></div>
           <div className="ux-history-toolbar-actions">
-            <label className="ux-check-row"><input type="checkbox" checked={showChanges} onChange={(event) => { setShowChanges(event.target.checked); localStorage.setItem("gitahead.history.changes", event.target.checked ? "on" : "off"); }} />Changes</label>
+            <label className="ux-check-row"><input type="checkbox" checked={showChanges} onChange={(event) => { setShowChanges(event.target.checked); localStorage.setItem("chrono.history.changes", event.target.checked ? "on" : "off"); }} />Changes</label>
             <label className="ux-search-field"><Icon name="search" /><input value={query} onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)} placeholder="Filter loaded commits" aria-label="Filter loaded commits" /></label>
           </div>
         </header>

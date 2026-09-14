@@ -42,7 +42,7 @@ export function GitIntelligencePanel({ repositoryPath, branches, onOpenCommit }:
   const [searchResults, setSearchResults] = useState<CommitRecord[]>([]);
   const [pins, setPins] = useState<string[]>(() => {
     try {
-      const parsed: unknown = JSON.parse(localStorage.getItem("gitahead.searchPins") || "[]");
+      const parsed: unknown = JSON.parse(localStorage.getItem("chrono.searchPins") || "[]");
       return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(0, 12) : [];
     } catch { return []; }
   });
@@ -136,7 +136,7 @@ export function GitIntelligencePanel({ repositoryPath, branches, onOpenCommit }:
     if (!normalized) return;
     const next = [normalized, ...pins.filter((item) => item !== normalized)].slice(0, 12);
     setPins(next);
-    localStorage.setItem("gitahead.searchPins", JSON.stringify(next));
+    localStorage.setItem("chrono.searchPins", JSON.stringify(next));
   };
 
   const tabs: Array<{ id: Tab; label: string; icon: "search" | "compare" | "file" | "eye" | "users" }> = [

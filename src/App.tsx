@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import type { BranchRecord, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
 import { RepositorySidebar, type RepositoryView } from "./components/RepositorySidebar";
@@ -17,6 +16,17 @@ import { RebasePlanner } from "./components/RebasePlanner";
 import { GitIntelligencePanel } from "./components/GitIntelligencePanel";
 
 const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
+
+// The browser cannot open native directory pickers; ask for a repository path
+// via prompt() instead of the Tauri dialog the desktop build used.
+const promptRepositoryPath = (title: string, initial = ""): Promise<string | null> =>
+  new Promise((resolve) => {
+    const value = window.prompt(
+      `${title}\nEnter an absolute path to a Git repository on the machine running the Chrono server:`,
+      initial,
+    );
+    resolve(value ? value.trim() : null);
+  });
 
 const idleOperation: RepositoryOperationState = {
   operation: null,
@@ -91,8 +101,8 @@ export default function App() {
   };
 
   const openRepository = async () => {
-    const selected = await open({ directory: true, multiple: false, title: "Open Git repository" });
-    if (typeof selected === "string") {
+    const selected = await promptRepositoryPath("Open Git repository");
+    if (selected) {
       await rememberRepository(selected);
       await refresh(selected);
     }
@@ -215,7 +225,7 @@ export default function App() {
       <header className="ux-topbar">
         <div className="ux-brand-lockup">
           <img src="/rsrc/icon_32x32.png" alt="" />
-          <span>GitAhead</span>
+          <span>Chrono</span>
           <small>Next</small>
         </div>
 
@@ -286,7 +296,7 @@ export default function App() {
             <div className="ux-welcome">
               <div className="ux-welcome-mark"><Icon name="repository" /></div>
               <h1>Open a repository</h1>
-              <p>GitAhead keeps history, working changes, branches, worktrees and recovery tools in one repository-centered workspace.</p>
+              <p>Chrono keeps history, working changes, branches, worktrees and recovery tools in one repository-centered workspace.</p>
               <div><button className="ux-primary-button" onClick={openRepository}>Open repository</button><button className="ux-button" onClick={cloneRepository}>Clone from URL</button></div>
               <span><kbd>Ctrl⇧P</kbd> opens the command palette anywhere.</span>
             </div>

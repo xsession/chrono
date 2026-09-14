@@ -1,4 +1,4 @@
-# GitAhead Next UI/UX v5 — Implementation Notes
+# Chrono Next UI/UX v5 — Implementation Notes
 
 ## Scope completed
 

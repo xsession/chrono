@@ -1,30 +1,25 @@
 {
-  "name": "gitahead-next",
+  "name": "chrono-next",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
-    "tauri": "tauri",
-    "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build --ci",
-    "android:init": "tauri android init --ci",
-    "android:dev": "tauri android dev",
-    "android:build": "tauri android build --apk --aab --target aarch64 x86_64 --ci",
+    "dev": "node server/dev.mjs",
+    "vite:dev": "vite --host 0.0.0.0",
+    "server": "node --experimental-strip-types server/index.ts",
+    "build": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server/tsconfig.json",
+    "start": "npm run server",
     "test:markers": "node tests/conflict-markers.test.mjs",
-    "test:git": "bash tests/git-operation-state-smoke.sh && bash tests/conflict-center-smoke.sh && bash tests/rebase-planner-smoke.sh && bash tests/git-intelligence-smoke.sh"
+    "test:git": "bash tests/git-operation-state-smoke.sh && bash tests/conflict-center-smoke.sh && bash tests/rebase-planner-smoke.sh && bash tests/git-intelligence-smoke.sh",
+    "test:api": "node --experimental-strip-types tests/api-smoke.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-dialog": "^2.0.0",
-    "@tauri-apps/plugin-opener": "^2.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^22.20.2",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",

@@ -1,4 +1,4 @@
-GitAhead Next UI/UX v5 validation
+Chrono Next UI/UX v5 validation
 =================================
 
 Toolchain:
@@ -9,12 +9,19 @@ cargo: unavailable
 rustc: unavailable
 
 Behavior smoke suites:
-Rebasing (1/6)Rebasing (2/6)Executing: git commit --amend -m 'C renamed'
-Rebasing (3/6)Rebasing (4/6)Rebasing (5/6)Rebasing (6/6)Successfully rebased and updated refs/heads/feature.
+Rebasing (1/6)
+Rebasing (2/6)
+Executing: git commit --amend -m 'C renamed'
+Rebasing (3/6)
+Rebasing (4/6)
+Rebasing (5/6)
+Rebasing (6/6)
+Successfully rebased and updated refs/heads/feature.
 Updated the following refs with --update-refs:
 	refs/heads/marker
 PASS reorder/reword/squash/drop/update-refs
-Rebasing (2/2)Successfully rebased and updated refs/heads/edit-case.
+Rebasing (2/2)
+Successfully rebased and updated refs/heads/edit-case.
 PASS edit/pause/continue
 PASS interactive rebase planner smoke suite
 PASS rich commit search primitives

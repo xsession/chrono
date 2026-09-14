@@ -7,7 +7,7 @@ cd "$ROOT"
 
 git init -q
 git config user.email test@example.com
-git config user.name "GitAhead UX Smoke"
+git config user.name "Chrono UX Smoke"
 
 # Merge conflict -> resolve -> continue.
 echo base > conflict.txt

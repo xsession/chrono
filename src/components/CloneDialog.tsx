@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, MouseEvent } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { Icon } from "./Icon";
+
+// Browser fallback for the native "select a directory" picker: ask for the
+// destination path directly (it must exist or be creatable on the server host).
+const promptCloneDestination = (initial: string): Promise<string | null> =>
+  new Promise((resolve) => {
+    const value = window.prompt("Clone destination", initial);
+    resolve(value ? value.trim() : null);
+  });
 
 type Props = {
   openDialog: boolean;
@@ -25,8 +32,8 @@ export function CloneDialog({ openDialog, busy, onClose, onClone }: Props) {
   if (!openDialog) return null;
 
   const browse = async () => {
-    const selected = await open({ directory: true, multiple: false, title: "Select clone destination" });
-    if (typeof selected === "string") setDestination(selected);
+    const selected = await promptCloneDestination(destination);
+    if (selected) setDestination(selected);
   };
 
   const submit = async (event: FormEvent) => {

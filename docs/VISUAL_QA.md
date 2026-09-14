@@ -1,4 +1,4 @@
-# GitAhead Next UI/UX v5 — Visual QA
+# Chrono Next UI/UX v5 — Visual QA
 
 ## Reviewed states
 
