@@ -20,6 +20,11 @@
   --ux-danger-bg: #3b2025;
   --ux-warning: #f0b85a;
   --ux-success: #65c88a;
+  --ux-graph-0: #4f9cf9;
+  --ux-graph-1: #70c58f;
+  --ux-graph-2: #d88ae6;
+  --ux-graph-3: #e1a667;
+  --ux-graph-4: #67c4cd;
   --ux-focus: #80b9ff;
   --ux-row: 30px;
   --ux-radius: 4px;
@@ -901,9 +906,9 @@ body {
 
 .ux-commit-grid-header,
 .ux-commit-row {
-  min-width: 690px;
+  min-width: 660px;
   display: grid;
-  grid-template-columns: 54px minmax(250px, 1fr) minmax(105px, .28fr) 118px 74px;
+  grid-template-columns: 96px minmax(220px, 1fr) minmax(100px, .28fr) 118px 132px;
   align-items: center;
 }
 
@@ -967,34 +972,112 @@ body {
   font-size: 10px;
 }
 
+.ux-commit-rows .ux-commit-row {
+  height: 38px;
+}
+
+/* Real commit graph (src/graph.ts): one SVG per row, lane width 19px. */
+.ux-graph-cell {
+  position: relative;
+  display: block;
+  flex: none;
+  min-width: 0;
+  overflow: visible;
+}
+
+.ux-graph-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.ux-graph-line {
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.ux-graph-line--muted { opacity: 0.5; }
+.ux-graph-line--dashed { stroke-width: 1.5; stroke-dasharray: 4 4; opacity: 0.5; }
+
+.ux-graph-node {
+  fill: var(--ux-bg-2);
+  stroke-width: 2;
+}
+
+.ux-graph-node--merge { fill: var(--ux-bg-1); stroke-width: 1.5; }
+
+.ux-commit-row:hover .ux-graph-node { fill: var(--ux-accent); }
+.ux-commit-row.is-selected .ux-graph-node { fill: var(--ux-accent); }
+
+/* Subject column: text first (truncates), then inline ref pills so they
+   never sit on top of a lane line. */
 .ux-commit-subject {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
   color: var(--ux-text);
   font-weight: 500;
 }
 
-.ux-graph-cell {
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 3px;
-  position: relative;
+.ux-commit-subject-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.ux-graph-node {
-  width: 9px;
-  height: 9px;
-  border: 2px solid #111318;
-  border-radius: 50%;
+.ux-graph-chip {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.6;
+  color: var(--ux-text-2);
+  background: var(--ux-bg-1);
+  border: 1px solid var(--ux-border);
+  border-radius: 5px;
+  padding: 0 5px;
+}
+
+.ux-graph-chip--head {
+  color: #fff;
   background: var(--ux-accent);
-  box-shadow: 0 0 0 1px #4f9cf9;
+  border-color: transparent;
 }
 
-.ux-graph-node.lane-1 { background: #70c58f; box-shadow: 0 0 0 1px #70c58f; }
-.ux-graph-node.lane-2 { background: #d88ae6; box-shadow: 0 0 0 1px #d88ae6; }
-.ux-graph-node.lane-3 { background: #e1a667; box-shadow: 0 0 0 1px #e1a667; }
-.ux-graph-node.lane-4 { background: #67c4cd; box-shadow: 0 0 0 1px #67c4cd; }
-.ux-graph-cell small { color: var(--ux-text-3); font-size: 9px; }
+.ux-graph-chip--current {
+  color: #fff;
+  background: var(--ux-text-2);
+  border-color: transparent;
+}
+
+.ux-graph-chip--muted {
+  color: var(--ux-text-3);
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.ux-elided-row {
+  cursor: default;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.ux-elided-row:hover { background: transparent; }
+
+.ux-elided-label {
+  font-size: 11px;
+  color: var(--ux-text-3);
+  font-style: italic;
+  align-self: center;
+}
 
 .ux-inspector {
   min-width: 0;
@@ -2737,7 +2820,7 @@ button.ux-reference-row:hover:not(:disabled) {
 .ux-wip-item small { color: #949ca9; font-size: 9px; }
 
 .ux-commit-grid.show-changes .ux-commit-grid-header,
-.ux-commit-grid.show-changes .ux-commit-row { grid-template-columns: 58px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px; }
+.ux-commit-grid.show-changes .ux-commit-row { grid-template-columns: 96px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px; }
 .ux-change-cell { display: inline-flex !important; align-items: center; gap: 5px; font-size: 10px; }
 .ux-change-cell small { color: #89929f; }
 .ux-commit-file-list { display: grid; border: 1px solid #34363d; }

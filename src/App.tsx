@@ -330,7 +330,7 @@ export default function App() {
               onCommit={async (commitMessage) => { await api.commit(path, commitMessage); await refresh(); }}
             />
           )}
-          {path && view === "history" && <CommitGraph repositoryPath={path} commits={commits} selected={selectedCommit} onSelect={setSelectedCommit} />}
+          {path && view === "history" && <CommitGraph repositoryPath={path} commits={commits} branches={branches} headSha={summary?.head ?? undefined} selected={selectedCommit} onSelect={setSelectedCommit} />}
           {path && view === "branches" && (
             <BranchPanel
               branches={branches}

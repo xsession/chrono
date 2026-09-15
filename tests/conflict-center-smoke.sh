@@ -111,7 +111,10 @@ cmp -s "$repo/data.bin" <(printf 'A\0incoming\n')
 printf 'PASS binary incoming-side resolution\n'
 
 # 6. Symlink conflict can use checkout-index side selection and preserve symlink mode.
-if command -v readlink >/dev/null 2>&1; then
+#    Requires a shell + filesystem that support symlinks (Windows: Developer Mode).
+_probe="$(mktemp -d)"
+if command -v readlink >/dev/null 2>&1 && ln -s target "$_probe/link" 2>/dev/null; then
+  rm -rf "$_probe"
   repo="$(new_repo symlink)"
   ln -s base-target "$repo/link"
   git -C "$repo" add link && git -C "$repo" commit -qm base
@@ -126,6 +129,9 @@ if command -v readlink >/dev/null 2>&1; then
   git -C "$repo" add -A -- link
   assert_resolved "$repo"
   printf 'PASS symlink current-side resolution\n'
+else
+  rm -rf "$_probe"
+  printf 'SKIP symlink scenario (no symlink support)\n'
 fi
 
 

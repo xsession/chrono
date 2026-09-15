@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
-import type { CommitDetails, CommitRecord, HistoryChangeStat, WorktreeSummary } from "../types";
+import type { BranchRecord, CommitDetails, CommitRecord, HistoryChangeStat, WorktreeSummary } from "../types";
 import { api } from "../api";
+import { graphWidth, laneX, layoutGraph, ROW_H } from "../graph";
+import type { GraphRowData } from "../graph";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
 
 type Props = {
   repositoryPath: string;
   commits: CommitRecord[];
+  branches: BranchRecord[];
+  headSha?: string;
   selected: CommitRecord | null;
   onSelect: (commit: CommitRecord) => void;
 };
@@ -19,7 +23,39 @@ function formatDate(value: string): string {
   }).format(date);
 }
 
-export function CommitGraph({ repositoryPath, commits, selected, onSelect }: Props) {
+type DisplayItem =
+  | { kind: "commit"; item: GraphRowData }
+  | { kind: "elided"; key: number; count: number; throughLanes: number[] };
+
+/** SVG of one commit row: arriving lines (top), pass-through lines, and
+ *  lines leaving toward parents (bottom), plus the commit/merge node.
+ *  Branch/HEAD labels live in the subject column so they can never
+ *  occlude a lane line. */
+function RowGraph({ item, laneCount, isHead }: { item: GraphRowData; laneCount: number; isHead: boolean }) {
+  const width = graphWidth(laneCount);
+  const y = ROW_H / 2;
+  return (
+    <svg className="ux-graph-svg" width={width} height={ROW_H} viewBox={`0 0 ${width} ${ROW_H}`} aria-hidden="true">
+      {item.through.map((seg, index) => (
+        <line key={`t${index}`} className="ux-graph-line" style={{ stroke: seg.color }} x1={laneX(seg.lane)} y1={0} x2={laneX(seg.lane)} y2={ROW_H} />
+      ))}
+      {item.top.map((seg, index) => (
+        <line key={`top${index}`} className="ux-graph-line" style={{ stroke: seg.color }} x1={laneX(seg.from)} y1={0} x2={laneX(seg.to)} y2={y} />
+      ))}
+      {item.bottom.map((seg, index) => (
+        <line key={`b${index}`} className="ux-graph-line" style={{ stroke: seg.color }} x1={laneX(seg.from)} y1={y} x2={laneX(seg.to)} y2={ROW_H} />
+      ))}
+      {item.isMerge
+        ? <>
+            <circle cx={laneX(item.lane)} cy={y} r={7.5} className="ux-graph-node ux-graph-node--merge" style={{ stroke: item.color }} />
+            {isHead && <circle cx={laneX(item.lane)} cy={y} r={3} style={{ fill: "var(--ux-accent)" }} />}
+          </>
+        : <circle cx={laneX(item.lane)} cy={y} r={5} className="ux-graph-node" style={{ stroke: item.color }} />}
+    </svg>
+  );
+}
+
+export function CommitGraph({ repositoryPath, commits, branches, headSha, selected, onSelect }: Props) {
   const [query, setQuery] = useState("");
   const [inspectorWidth, setInspectorWidth] = useState(380);
   const [stats, setStats] = useState<Map<string, HistoryChangeStat>>(new Map());
@@ -33,6 +69,32 @@ export function CommitGraph({ repositoryPath, commits, selected, onSelect }: Pro
     return commits.filter((commit) => [commit.subject, commit.authorName, commit.authorEmail, commit.id]
       .some((value) => value.toLowerCase().includes(needle)));
   }, [commits, query]);
+
+  // Layout over all loaded commits so topology stays stable while filtering;
+  // hidden rows are collapsed into dashed separators showing live lanes.
+  const layout = useMemo(() => layoutGraph(commits), [commits]);
+  const laneCount = layout.laneCount;
+  const graphWidthPx = graphWidth(laneCount);
+
+  const display = useMemo(() => {
+    const visible = new Set(filtered.map((commit) => commit.id));
+    const items: DisplayItem[] = [];
+    let previousVis = -1;
+    for (const item of layout.items) {
+      if (!visible.has(item.commit.id)) continue;
+      if (previousVis >= 0 && item.visRow > previousVis + 1) {
+        // Union of lanes still carrying lines through the hidden rows.
+        const lanes = new Set<number>();
+        for (let hidden = previousVis + 1; hidden < item.visRow; hidden += 1) {
+          for (const lane of layout.visThrough[hidden] ?? []) lanes.add(lane);
+        }
+        items.push({ kind: "elided", key: previousVis, count: item.visRow - previousVis - 1, throughLanes: [...lanes] });
+      }
+      items.push({ kind: "commit", item });
+      previousVis = item.visRow;
+    }
+    return items;
+  }, [layout, filtered]);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +121,9 @@ export function CommitGraph({ repositoryPath, commits, selected, onSelect }: Pro
   }, [repositoryPath, commits]);
 
   const wip = worktrees.filter((worktree) => worktree.dirtyCount > 0 || worktree.conflictCount > 0);
+  const gridTemplate = showChanges
+    ? `96px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px`
+    : `96px minmax(220px, 1fr) minmax(100px, .28fr) 118px 132px`;
 
   return (
     <div className="ux-history-view" style={{ gridTemplateColumns: `minmax(560px, 1fr) 6px ${inspectorWidth}px` }}>
@@ -77,20 +142,52 @@ export function CommitGraph({ repositoryPath, commits, selected, onSelect }: Pro
         </div>}
 
         <div className={`ux-commit-grid${showChanges ? " show-changes" : ""}`} aria-label="Commit history list">
-          <div className="ux-commit-grid-header" aria-hidden="true"><span>Graph</span><span>Commit</span><span>Author</span><span>Date</span>{showChanges && <span>Changes</span>}<span>SHA</span></div>
-          <div className="ux-commit-rows">
-            {filtered.map((commit, index) => {
+          <div className="ux-commit-grid-header" style={{ gridTemplateColumns: gridTemplate }} aria-hidden="true"><span>Graph</span><span>Commit</span><span>Author</span><span>Date</span>{showChanges && <span>Changes</span>}<span>SHA</span></div>
+          <div className="ux-commit-rows" style={{ gridTemplateColumns: gridTemplate }}>
+            {display.map((entry, displayIndex) => {
+              if (entry.kind === "elided") {
+                return (
+                  <div key={`elided-${displayIndex}`} className="ux-commit-row ux-elided-row" aria-hidden="true">
+                    <span className="ux-graph-cell" style={{ width: graphWidthPx }}>
+                      <svg className="ux-graph-svg" width={graphWidthPx} height={ROW_H} viewBox={`0 0 ${graphWidthPx} ${ROW_H}`}>
+                        {entry.throughLanes.map((lane) => (
+                          <line key={lane} className="ux-graph-line ux-graph-line--dashed" x1={laneX(lane)} y1={0} x2={laneX(lane)} y2={ROW_H} style={{ stroke: "var(--ux-text-3)" }} />
+                        ))}
+                        {entry.throughLanes.length === 0 && <line className="ux-graph-line ux-graph-line--dashed" x1={0} y1={ROW_H / 2} x2={graphWidthPx} y2={ROW_H / 2} style={{ stroke: "var(--ux-text-3)" }} />}
+                      </svg>
+                    </span>
+                    <span className="ux-elided-label">{entry.count} more commit{entry.count === 1 ? "" : "s"} hidden by filter</span>
+                    <span /><span />
+                    {showChanges && <span />}
+                    <code />
+                  </div>
+                );
+              }
+              const { item } = entry;
+              const commit = item.commit;
               const isSelected = selected?.id === commit.id;
-              const mergeParents = Math.max(0, commit.parents.length - 1);
+              const isHead = headSha === commit.id;
+              const branchChips = branches.filter((branch) => branch.target === commit.id);
               const stat = stats.get(commit.id);
-              return <button key={commit.id} className={`ux-commit-row${isSelected ? " is-selected" : ""}`} onClick={() => onSelect(commit)} aria-pressed={isSelected}>
-                <span className="ux-graph-cell" aria-label={mergeParents ? `${commit.parents.length} parents` : "Commit"}><i className={`ux-graph-node lane-${index % 5}`} />{mergeParents > 0 && <small>+{mergeParents}</small>}</span>
-                <span className="ux-commit-subject">{commit.subject}</span><span>{commit.authorName}</span><span>{formatDate(commit.authoredAt)}</span>
-                {showChanges && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} files, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}
-                <code>{commit.id.slice(0, 8)}</code>
-              </button>;
+              return (
+                <button key={commit.id} className={`ux-commit-row${isSelected ? " is-selected" : ""}`} onClick={() => onSelect(commit)} aria-pressed={isSelected}>
+                  <span className="ux-graph-cell" style={{ width: graphWidthPx }} aria-label={item.isMerge ? `${commit.parents.length} parents` : "Commit"}>
+                    <RowGraph item={item} laneCount={laneCount} isHead={isHead} />
+                  </span>
+                  <span className="ux-commit-subject">
+                    <span className="ux-commit-subject-text">{commit.subject}</span>
+                    {isHead && <span className="ux-graph-chip ux-graph-chip--head" title="HEAD">HEAD</span>}
+                    {branchChips.map((branch) => (
+                      <span key={branch.name} className={branch.current ? "ux-graph-chip ux-graph-chip--current" : "ux-graph-chip"} title={`branch ${branch.name}`}>{branch.name}</span>
+                    ))}
+                  </span>
+                  <span>{commit.authorName}</span><span>{formatDate(commit.authoredAt)}</span>
+                  {showChanges && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} files, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}
+                  <code>{commit.id.slice(0, 8)}</code>
+                </button>
+              );
             })}
-            {!filtered.length && <div className="ux-empty-state">No loaded commits match “{query}”. Use Git Intelligence for full-history file, patch and range search.</div>}
+            {!display.length && <div className="ux-empty-state">No loaded commits match “{query}”. Use Git Intelligence for full-history file, patch and range search.</div>}
           </div>
         </div>
       </section>
