@@ -3,7 +3,7 @@
   "description": "Cross-platform Git client with desktop and Android companion applications",
   "author": "CodeLayer",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

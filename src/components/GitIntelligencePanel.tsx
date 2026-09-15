@@ -17,6 +17,19 @@ function formatDate(value: string | number) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
+/** GitLens-style blame age heat: green (fresh) → yellow → purple (old) over
+ *  ~3 years. authoredAt is unix seconds. */
+function heatColor(authoredAt: number): string {
+  const ageDays = (Date.now() / 1000 - authoredAt) / 86400;
+  const t = Math.min(1, Math.max(0, ageDays / (365 * 3)));
+  // 0 -> #16a34a (green) 0.5 -> #d97706 (amber) 1 -> #7c3aed (purple)
+  const stops: [number, number, number][] = [[22, 163, 74], [217, 119, 6], [124, 58, 237]];
+  const [a, b] = t < 0.5 ? [0, 1] : [1, 2];
+  const f = (t < 0.5 ? t * 2 : (t - 0.5) * 2);
+  const rgb = stops[a].map((v, i) => Math.round(v + (stops[b][i] - v) * f));
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.22)`;
+}
+
 function CommitList({ commits, empty, onOpenCommit }: { commits: CommitRecord[]; empty: string; onOpenCommit?: (commit: CommitRecord) => void }) {
   if (!commits.length) return <div className="ux-empty-state">{empty}</div>;
   return <div className="ux-intel-commit-list">{commits.map((commit) => (
@@ -65,6 +78,7 @@ export function GitIntelligencePanel({ repositoryPath, branches, onOpenCommit }:
   const [blamePath, setBlamePath] = useState("");
   const [blameRevision, setBlameRevision] = useState("");
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
+  const [heatmap, setHeatmap] = useState(true);
   const [blame, setBlame] = useState<BlameResult | null>(null);
 
   const [contributors, setContributors] = useState<ContributorRecord[]>([]);
@@ -217,11 +231,12 @@ export function GitIntelligencePanel({ repositoryPath, branches, onOpenCommit }:
             <label className="grow"><span>Repository-relative file</span><input value={blamePath} onChange={(event) => setBlamePath(event.target.value)} placeholder="src/App.tsx" /></label>
             <label><span>Revision</span><input value={blameRevision} onChange={(event) => setBlameRevision(event.target.value)} placeholder="working tree" /></label>
             <label className="ux-check-row"><input type="checkbox" checked={ignoreWhitespace} onChange={(event) => setIgnoreWhitespace(event.target.checked)} />Ignore whitespace</label>
+            <label className="ux-check-row"><input type="checkbox" checked={heatmap} onChange={(event) => setHeatmap(event.target.checked)} />Age heatmap (green=new → purple=old)</label>
             <button className="ux-primary-button" disabled={busy || !blamePath.trim()} onClick={() => void loadBlame()}>Blame</button>
           </div>
-          {blame ? <div className="ux-blame-table" role="table" aria-label={`Blame for ${blame.file}`}>
+          {blame ? <div className={`ux-blame-table${heatmap ? " is-heatmap" : ""}`} role="table" aria-label={`Blame for ${blame.file}`}>
             <div className="ux-blame-row is-header" role="row"><span>Line</span><span>Commit</span><span>Author</span><span>Date</span><span>Content</span></div>
-            {blame.lines.map((line) => <div className="ux-blame-row" role="row" key={`${line.lineNumber}-${line.commit}`} title={line.summary}><code>{line.lineNumber}</code><code>{line.commit.slice(0, 8)}</code><span>{line.author}</span><span>{formatDate(line.authoredAt)}</span><pre>{line.content}</pre></div>)}
+            {blame.lines.map((line) => <div className="ux-blame-row" role="row" key={`${line.lineNumber}-${line.commit}`} style={heatmap ? { backgroundColor: heatColor(line.authoredAt) } : undefined} title={line.summary}><code>{line.lineNumber}</code><code>{line.commit.slice(0, 8)}</code><span>{line.author}</span><span>{formatDate(line.authoredAt)}</span><pre>{line.content}</pre></div>)}
             {blame.truncated && <div className="ux-inline-warning is-info"><Icon name="activity" /><span>Blame output is truncated for UI performance.</span></div>}
           </div> : <div className="ux-empty-state">Load blame to see the commit, author and age of every line. This is repository data only; it does not annotate an external code editor.</div>}
         </>}

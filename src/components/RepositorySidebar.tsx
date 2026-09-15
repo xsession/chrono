@@ -8,6 +8,7 @@ export type RepositoryView =
   | "branches"
   | "rebase"
   | "insights"
+  | "repo"
   | "worktrees"
   | "submodules"
   | "stashes"
@@ -58,6 +59,7 @@ export function RepositorySidebar({
     { id: "branches", label: "Branches", icon: "branch" },
     { id: "rebase", label: "Interactive rebase", icon: "layers" },
     { id: "insights", label: "Git Intelligence", icon: "compare" },
+    { id: "repo", label: "Repo browser", icon: "repository" },
     { id: "worktrees", label: "Worktrees", icon: "worktree" },
     { id: "submodules", label: "Submodules", icon: "submodule" },
     { id: "stashes", label: "Stashes", icon: "stash" },

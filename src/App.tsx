@@ -6,6 +6,7 @@ import { RepositorySidebar, type RepositoryView } from "./components/RepositoryS
 import { CommitGraph } from "./components/CommitGraph";
 import { StatusPanel } from "./components/StatusPanel";
 import { BranchPanel } from "./components/BranchPanel";
+import { RepoBrowser } from "./components/RepoBrowser";
 import { WorkflowPanel } from "./components/WorkflowPanel";
 import { CherryParityPanel } from "./components/CherryParityPanel";
 import { CommandPalette, type Command } from "./components/CommandPalette";
@@ -323,6 +324,7 @@ export default function App() {
           {path && view === "changes" && (
             <StatusPanel
               changes={changes}
+              repositoryPath={path}
               onStage={async (files) => { await api.stage(path, files); await refresh(); }}
               onUnstage={async (files) => { await api.unstage(path, files); await refresh(); }}
               operationActive={operationActive}
@@ -334,9 +336,13 @@ export default function App() {
           {path && view === "branches" && (
             <BranchPanel
               branches={branches}
+              repositoryPath={path}
+              headSha={summary?.head ?? undefined}
               disabled={operationActive}
               onCheckout={async (branch) => { await api.switchBranch(path, branch); await refresh(); }}
               onCreate={async (branch) => { await api.createBranch(path, branch); await refresh(); }}
+              onDelete={async (branch, force) => { const result = await api.deleteBranch(path, branch, force); await refresh(); return result; }}
+              onNotify={(message) => setMessage(message)}
             />
           )}
           {path && view === "rebase" && (
@@ -345,8 +351,19 @@ export default function App() {
           {path && view === "insights" && (
             <GitIntelligencePanel repositoryPath={path} branches={branches} onOpenCommit={(commit) => { setSelectedCommit(commit); setView("history"); }} />
           )}
+          {path && view === "repo" && (
+            <RepoBrowser
+              repositoryPath={path}
+              branches={branches.filter((branch) => !branch.remote).map((branch) => branch.name)}
+              onExport={async (revision, destination) => {
+                const result = await api.exportRevision(path, revision, destination);
+                await refresh();
+                return [result.stdout, result.stderr].filter(Boolean).join("\n").trim() || `Exported ${revision} to ${destination}.`;
+              }}
+            />
+          )}
           {path && (view === "worktrees" || view === "submodules" || view === "stashes" || view === "recovery") && (
-            <WorkflowPanel section={view} operationLocked={operationActive} onRun={(request) => api.workflow(path, request)} />
+            <WorkflowPanel section={view} repositoryPath={path} operationLocked={operationActive} onRun={(request) => api.workflow(path, request)} />
           )}
           {view === "cherry" && <CherryParityPanel />}
         </section>

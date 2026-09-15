@@ -240,6 +240,19 @@ async function run() {
   assert(details.subject === "main change", "commit details parse subject");
   assert(Array.isArray(details.files) && details.files.some((file) => file.path === "base.txt"), "commit details include files");
 
+  const modifiedDiff = await api("commit_file_diff", { path: ROOT, commit: history[1].id, file: "base.txt" });
+  assert(modifiedDiff.status === "modified", `commit_file_diff reports modified (got ${modifiedDiff.status})`);
+  assert(modifiedDiff.additions === 1 && modifiedDiff.deletions === 1, "commit_file_diff counts add/del lines");
+  assert(modifiedDiff.binary === false && modifiedDiff.hunks.length === 1, "commit_file_diff returns one hunk");
+  const hunkTexts = modifiedDiff.hunks[0].lines.map((line) => line.kind + ":" + line.text);
+  assert(hunkTexts.includes("del:base") && hunkTexts.includes("add:main"), "commit_file_diff hunk lines parse");
+  assert(modifiedDiff.hunks[0].lines.every((line) => line.number === null || Number.isInteger(line.number)), "commit_file_diff line numbers");
+
+  const addedDiff = await api("commit_file_diff", { path: ROOT, commit: history[2].id, file: "base.txt" });
+  assert(addedDiff.status === "added" && addedDiff.additions === 1 && addedDiff.deletions === 0, "commit_file_diff reports root commit file as added");
+  const badDiff = await apiError("commit_file_diff", { path: ROOT, commit: history[1].id, file: "-malicious" });
+  assert(badDiff.length > 0, "commit_file_diff rejects path-like revisions");
+
   const stats = await api("history_change_stats", { path: ROOT, limit: 50 });
   const mergeSha = git(["log", "--merges", "-1", "--format=%H"]);
   assert(stats.length >= 3, "history stats cover commits");

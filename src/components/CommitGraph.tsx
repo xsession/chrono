@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import type { ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { BranchRecord, CommitDetails, CommitRecord, HistoryChangeStat, WorktreeSummary } from "../types";
 import { api } from "../api";
 import { graphWidth, laneX, layoutGraph, ROW_H } from "../graph";
 import type { GraphRowData } from "../graph";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
+import { CommitDiffView } from "./CommitDiffView";
 
 type Props = {
   repositoryPath: string;
@@ -60,8 +61,11 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   const [inspectorWidth, setInspectorWidth] = useState(380);
   const [stats, setStats] = useState<Map<string, HistoryChangeStat>>(new Map());
   const [details, setDetails] = useState<CommitDetails | null>(null);
+  const [diffFile, setDiffFile] = useState<string | null>(null);
   const [worktrees, setWorktrees] = useState<WorktreeSummary[]>([]);
   const [showChanges, setShowChanges] = useState(() => localStorage.getItem("chrono.history.changes") !== "off");
+  const [graphColWidthOverride, setGraphColWidthOverride] = useState<number>(() => Number.parseInt(localStorage.getItem("chrono.history.graphWidth") ?? "0", 10) || 0);
+  const graphDrag = useRef<number | null>(null);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -75,6 +79,36 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   const layout = useMemo(() => layoutGraph(commits), [commits]);
   const laneCount = layout.laneCount;
   const graphWidthPx = graphWidth(laneCount);
+
+  // The graph column is at least as wide as the graph itself (so lanes never
+  // clip into the commit text) and the user can widen it for breathing room.
+  const graphColWidth = Math.max(graphWidthPx, graphColWidthOverride);
+
+  const applyGraphWidth = (width: number) => {
+    const clamped = Math.min(600, Math.max(graphWidthPx, Math.round(width)));
+    setGraphColWidthOverride(clamped);
+    localStorage.setItem("chrono.history.graphWidth", String(clamped));
+  };
+  const startGraphResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    event.stopPropagation();
+    graphDrag.current = event.clientX;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const moveGraphResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (graphDrag.current === null) return;
+    applyGraphWidth(graphColWidth + (event.clientX - graphDrag.current));
+    graphDrag.current = event.clientX;
+  };
+  const stopGraphResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
+    if (graphDrag.current !== null && event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    graphDrag.current = null;
+  };
+  const keyGraphResize = (event: ReactKeyboardEvent<HTMLSpanElement>) => {
+    if (event.key === "ArrowLeft") { event.preventDefault(); applyGraphWidth(graphColWidth - 12); }
+    else if (event.key === "ArrowRight") { event.preventDefault(); applyGraphWidth(graphColWidth + 12); }
+  };
 
   const display = useMemo(() => {
     const visible = new Set(filtered.map((commit) => commit.id));
@@ -109,6 +143,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     let cancelled = false;
     if (!repositoryPath || !selected) { setDetails(null); return; }
     setDetails(null);
+    setDiffFile(null);
     api.commitDetails(repositoryPath, selected.id).then((value) => { if (!cancelled) setDetails(value); }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [repositoryPath, selected]);
@@ -122,8 +157,8 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
 
   const wip = worktrees.filter((worktree) => worktree.dirtyCount > 0 || worktree.conflictCount > 0);
   const gridTemplate = showChanges
-    ? `96px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px`
-    : `96px minmax(220px, 1fr) minmax(100px, .28fr) 118px 132px`;
+    ? `${graphColWidth}px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px`
+    : `${graphColWidth}px minmax(220px, 1fr) minmax(100px, .28fr) 118px 132px`;
 
   return (
     <div className="ux-history-view" style={{ gridTemplateColumns: `minmax(560px, 1fr) 6px ${inspectorWidth}px` }}>
@@ -148,7 +183,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               if (entry.kind === "elided") {
                 return (
                   <div key={`elided-${displayIndex}`} className="ux-commit-row ux-elided-row" aria-hidden="true">
-                    <span className="ux-graph-cell" style={{ width: graphWidthPx }}>
+                    <span className="ux-graph-cell" style={{ width: graphColWidth }}>
                       <svg className="ux-graph-svg" width={graphWidthPx} height={ROW_H} viewBox={`0 0 ${graphWidthPx} ${ROW_H}`}>
                         {entry.throughLanes.map((lane) => (
                           <line key={lane} className="ux-graph-line ux-graph-line--dashed" x1={laneX(lane)} y1={0} x2={laneX(lane)} y2={ROW_H} style={{ stroke: "var(--ux-text-3)" }} />
@@ -171,8 +206,22 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               const stat = stats.get(commit.id);
               return (
                 <button key={commit.id} className={`ux-commit-row${isSelected ? " is-selected" : ""}`} onClick={() => onSelect(commit)} aria-pressed={isSelected}>
-                  <span className="ux-graph-cell" style={{ width: graphWidthPx }} aria-label={item.isMerge ? `${commit.parents.length} parents` : "Commit"}>
+                  <span className="ux-graph-cell" style={{ width: graphColWidth }} aria-label={item.isMerge ? `${commit.parents.length} parents` : "Commit"}>
                     <RowGraph item={item} laneCount={laneCount} isHead={isHead} />
+                    <span
+                      className="ux-graph-resize"
+                      title="Drag to resize the graph column (or use ←/→)"
+                      role="separator"
+                      aria-orientation="vertical"
+                      aria-label="Resize graph column"
+                      tabIndex={0}
+                      onClick={(event) => event.stopPropagation()}
+                      onPointerDown={startGraphResize}
+                      onPointerMove={moveGraphResize}
+                      onPointerUp={stopGraphResize}
+                      onPointerCancel={stopGraphResize}
+                      onKeyDown={keyGraphResize}
+                    />
                   </span>
                   <span className="ux-commit-subject">
                     <span className="ux-commit-subject-text">{commit.subject}</span>
@@ -200,7 +249,23 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
           <dl className="ux-metadata-list"><dt>Commit</dt><dd><code>{selected.id}</code></dd><dt>Author</dt><dd>{selected.authorName}<small>{selected.authorEmail}</small></dd><dt>Date</dt><dd>{formatDate(selected.authoredAt)}</dd><dt>Parents</dt><dd>{selected.parents.length ? selected.parents.map((parent) => <code key={parent}>{parent.slice(0, 10)}</code>) : "Root commit"}</dd></dl>
           <section className="ux-inspector-section">
             <div className="ux-section-title"><strong>Changes</strong><span>{details ? `${details.files.length} files · +${details.additions} −${details.deletions}` : "Loading…"}</span></div>
-            {details ? <div className="ux-commit-file-list">{details.files.map((file, index) => <div key={`${file.path}-${index}`}><span title={file.path}>{file.path}</span>{file.binary ? <small>binary</small> : <small><b>+{file.additions ?? 0}</b><i>−{file.deletions ?? 0}</i></small>}</div>)}</div> : <div className="ux-empty-state compact">Loading commit details…</div>}
+            {details ? (
+              <>
+                <div className="ux-commit-file-list">{details.files.map((file, index) => {
+                  const isDiffOpen = diffFile === file.path;
+                  return (
+                    <button key={`${file.path}-${index}`} type="button" className={`ux-commit-file-row${isDiffOpen ? " is-open" : ""}`} title={`${file.path} — click to ${isDiffOpen ? "close" : "view"} diff`} onClick={() => setDiffFile(isDiffOpen ? null : file.path)} aria-expanded={isDiffOpen}>
+                      <span title={file.path}>{file.path}</span>
+                      {file.binary ? <small>binary</small> : <small><b>+{file.additions ?? 0}</b><i>−{file.deletions ?? 0}</i></small>}
+                    </button>
+                  );
+                })}</div>
+                {diffFile && details.files.some((file) => file.path === diffFile) && (() => {
+                  const file = details.files.find((candidate) => candidate.path === diffFile)!;
+                  return <CommitDiffView repositoryPath={repositoryPath} commit={selected.id} file={file.path} additions={file.additions} deletions={file.deletions} binary={file.binary} onClose={() => setDiffFile(null)} />;
+                })()}
+              </>
+            ) : <div className="ux-empty-state compact">Loading commit details…</div>}
           </section>
           {details?.body && details.body.trim() !== details.subject.trim() && <section className="ux-inspector-section"><div className="ux-section-title"><strong>Message</strong></div><pre className="ux-commit-body">{details.body}</pre></section>}
         </> : <div className="ux-empty-state">Select a commit to inspect it.</div>}

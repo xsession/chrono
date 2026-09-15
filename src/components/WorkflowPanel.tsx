@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { CommandResult, WorkflowRequest } from "../types";
+import { api } from "../api";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
 
@@ -8,6 +9,7 @@ export type WorkflowSection = "worktrees" | "submodules" | "stashes" | "recovery
 
 type Props = {
   section: WorkflowSection;
+  repositoryPath: string;
   onRun: (request: WorkflowRequest) => Promise<CommandResult>;
   operationLocked?: boolean;
 };
@@ -43,7 +45,17 @@ function parseStashes(output: string): string[] {
   return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
-export function WorkflowPanel({ section, onRun, operationLocked = false }: Props) {
+/** Unicode-safe base64 (btoa throws on non-ASCII patch content). */
+function b64encode(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+export function WorkflowPanel({ section, repositoryPath, onRun, operationLocked = false }: Props) {
   const [output, setOutput] = useState("No command has run yet.");
   const [busy, setBusy] = useState<string | null>(null);
   const [worktreePath, setWorktreePath] = useState("");
@@ -52,6 +64,11 @@ export function WorkflowPanel({ section, onRun, operationLocked = false }: Props
   const [outputWidth, setOutputWidth] = useState(360);
   const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
   const [stashes, setStashes] = useState<string[]>([]);
+  const [patchFrom, setPatchFrom] = useState("HEAD");
+  const [patchTo, setPatchTo] = useState("");
+  const [patchDest, setPatchDest] = useState("");
+  const [applyPatchData, setApplyPatchData] = useState("");
+  const [applyPatchDir, setApplyPatchDir] = useState("");
 
   const run = async (operation: string, args: string[] = [], options: RunOptions = {}) => {
     setBusy(operation);
@@ -63,6 +80,19 @@ export function WorkflowPanel({ section, onRun, operationLocked = false }: Props
     } catch (error) {
       setOutput(String(error));
       throw error;
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Direct repo endpoints (not part of the generic workflow operation set).
+  const runDirect = async (label: string, work: () => Promise<string>) => {
+    setBusy(label);
+    setOutput(`${label}…`);
+    try {
+      setOutput(await work());
+    } catch (error) {
+      setOutput(String(error));
     } finally {
       setBusy(null);
     }
@@ -201,6 +231,40 @@ export function WorkflowPanel({ section, onRun, operationLocked = false }: Props
               <h3>Reflog</h3>
               <p>Inspect recent HEAD movements when a branch or commit appears to be lost.</p>
               <button className="ux-button" disabled={busy !== null} onClick={() => void run("reflog").catch(() => undefined)}>Refresh reflog</button>
+            </article>
+            <article className="ux-task-card">
+              <span className="ux-card-icon"><Icon name="changes" /></span>
+              <h3>Clean untracked</h3>
+              <p>TortoiseGit "Clean up": preview or delete untracked files. The dry run lists what would be removed without touching anything.</p>
+              <div className="ux-card-actions wrap">
+                <button className="ux-button" disabled={busy !== null} onClick={() => void runDirect("Dry-run clean", async () => (await api.cleanUntracked(repositoryPath, true)).stdout || "Nothing to clean.")}>Dry run (list only)</button>
+                <button className="ux-danger-button" disabled={operationLocked || busy !== null} onClick={() => { if (window.confirm("Delete all untracked files in this repository? This cannot be undone.")) void runDirect("Clean untracked", async () => (await api.cleanUntracked(repositoryPath, false)).stdout || "Untracked files removed."); }}>Clean (delete)</button>
+              </div>
+            </article>
+            <article className="ux-task-card wide">
+              <span className="ux-card-icon"><Icon name="compare" /></span>
+              <h3>Create patch</h3>
+              <p>TortoiseGit "Create patch": write the diff of a revision or range to a file. Leave "to" empty to diff one revision against its parent.</p>
+              <div className="ux-form-grid three">
+                <label><span>From</span><input value={patchFrom} onChange={(event: ChangeEvent<HTMLInputElement>) => setPatchFrom(event.target.value)} placeholder="HEAD" /></label>
+                <label><span>To (optional)</span><input value={patchTo} onChange={(event: ChangeEvent<HTMLInputElement>) => setPatchTo(event.target.value)} placeholder="main" /></label>
+                <label><span>Destination file</span><input value={patchDest} onChange={(event: ChangeEvent<HTMLInputElement>) => setPatchDest(event.target.value)} placeholder="C:/exports/change.patch" /></label>
+              </div>
+              <div className="ux-card-actions">
+                <button className="ux-primary-button" disabled={operationLocked || busy !== null || !patchDest.trim()} onClick={() => void runDirect("Create patch", async () => api.savePatch(repositoryPath, patchFrom.trim(), patchTo.trim(), patchDest.trim()))}>Save patch file</button>
+              </div>
+            </article>
+            <article className="ux-task-card wide">
+              <span className="ux-card-icon"><Icon name="upload" /></span>
+              <h3>Apply patch</h3>
+              <p>Apply a .patch/.diff to the working tree (falls back to a 3-way apply; conflicts are staged for the Conflict Center).</p>
+              <div className="ux-form-grid two">
+                <label><span>Patch contents</span><textarea rows={4} value={applyPatchData} onChange={(event) => setApplyPatchData(event.target.value)} placeholder="Paste the patch file contents here" /></label>
+                <label><span>Destination dir (optional)</span><input value={applyPatchDir} onChange={(event) => setApplyPatchDir(event.target.value)} placeholder="repository root" /></label>
+              </div>
+              <div className="ux-card-actions">
+                <button className="ux-primary-button" disabled={operationLocked || busy !== null || !applyPatchData.trim()} onClick={() => void runDirect("Apply patch", async () => (await api.applyPatch(repositoryPath, b64encode(applyPatchData), applyPatchDir.trim())).stdout || "Patch applied.")}>Apply to working tree</button>
+              </div>
             </article>
             <article className="ux-task-card">
               <span className="ux-card-icon"><Icon name="activity" /></span>

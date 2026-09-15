@@ -9,6 +9,14 @@ import type {
   ConflictResolutionResult,
   CommitRecord,
   FileChange,
+  CommitFileDiff,
+  TagRecord,
+  WorkingTreeDiff,
+  RevisionDiff,
+  TreeEntry,
+  FileAtRevision,
+  PatchExport,
+  ActivityDay,
   PullRequestRecord,
   BlameResult,
   CommitDetails,
@@ -79,6 +87,29 @@ export const api = {
   searchCommits: (path: string, query: string, limit = 200) =>
     invoke<CommitSearchResult>("search_commits", { path, query, limit }),
   commitDetails: (path: string, commit: string) => invoke<CommitDetails>("commit_details", { path, commit }),
+  commitFileDiff: (path: string, commit: string, file: string) =>
+    invoke<CommitFileDiff>("commit_file_diff", { path, commit, file }),
+  listTags: (path: string) => invoke<TagRecord[]>("list_tags", { path }),
+  createTag: (path: string, name: string, revision: string, message: string) =>
+    invoke<CommandResult>("create_tag", { path, name, revision, message }),
+  deleteTag: (path: string, name: string) => invoke<CommandResult>("delete_tag", { path, name }),
+  mergeBranch: (path: string, branch: string, strategy: "no-ff" | "squash" | "ff-only") =>
+    invoke<CommandResult>("merge_branch", { path, branch, strategy }),
+  workingTreeDiff: (path: string, file: string) => invoke<WorkingTreeDiff>("working_tree_diff", { path, file }),
+  cleanUntracked: (path: string, dryRun: boolean) => invoke<CommandResult>("clean_untracked", { path, dryRun }),
+  listTree: (path: string, revision: string, dirPath: string) =>
+    invoke<TreeEntry[]>("list_tree", { path, revision, dir: dirPath }),
+  fileAtRevision: (path: string, revision: string, filePath: string) =>
+    invoke<FileAtRevision>("file_at_revision", { path, revision, dir: filePath }),
+  exportRevision: (path: string, revision: string, destination: string) =>
+    invoke<CommandResult>("export_revision", { path, revision, destination }),
+  createPatch: (path: string, from: string, to: string) => invoke<PatchExport>("create_patch", { path, from, to }),
+  savePatch: (path: string, from: string, to: string, destination: string) =>
+    invoke<string>("save_patch", { path, from, to, destination }),
+  applyPatch: (path: string, data: string, dir: string) => invoke<CommandResult>("apply_patch", { path, data, dir }),
+  commitActivity: (path: string, days: number) => invoke<ActivityDay[]>("commit_activity", { path, days }),
+  diffRevisions: (path: string, from: string, to: string, file: string) =>
+    invoke<RevisionDiff>("diff_revisions", { path, from, to, file }),
   historyStats: (path: string, limit = 300) => invoke<HistoryChangeStat[]>("history_change_stats", { path, limit }),
   compareRefs: (path: string, left: string, right: string, limit = 100) =>
     invoke<RefComparison>("compare_refs", { path, left, right, limit }),
@@ -102,6 +133,8 @@ export const api = {
   clone: (request: CloneRequest) => invoke<RepositorySummary>("clone_repository", request),
   switchBranch: (path: string, branch: string) => invoke<void>("switch_branch", { path, branch }),
   createBranch: (path: string, branch: string) => invoke<void>("create_branch", { path, branch }),
+  deleteBranch: (path: string, branch: string, force: boolean) =>
+    invoke<string>("delete_branch", { path, branch, force }),
   workflow: (path: string, request: WorkflowRequest) => invoke<CommandResult>("run_workflow", { path, ...request }),
   loadWorkspaces: () => invoke<Workspace[]>("load_workspaces", {}),
   saveWorkspaces: (workspaces: Workspace[]) => invoke<void>("save_workspaces", { workspaces }),

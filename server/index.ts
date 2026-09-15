@@ -17,6 +17,7 @@ import * as insights from "./src/insights.ts";
 import * as operationState from "./src/operationState.ts";
 import * as rebasePlanner from "./src/rebasePlanner.ts";
 import { listPullRequests } from "./src/provider.ts";
+import * as repo from "./src/repo.ts";
 import { loadWorkspaces, saveWorkspaces, type Workspace } from "./src/workspaces.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -137,6 +138,8 @@ const routes: Record<string, Handler> = {
       limit: num(body.limit ?? 200, "limit"),
     }),
   commit_details: (body) => insights.commitDetails(bodyPath(body), str(body.commit, "commit")),
+  commit_file_diff: (body) =>
+    insights.commitFileDiff(bodyPath(body), str(body.commit, "commit"), str(body.file, "file")),
   history_change_stats: (body) =>
     insights.historyChangeStats(bodyPath(body), num(body.limit ?? 300, "limit")),
   compare_refs: (body) =>
@@ -173,6 +176,31 @@ const routes: Record<string, Handler> = {
     insights.contributors(bodyPath(body), num(body.maxCommits ?? 20000, "maxCommits")),
   worktree_summaries: (body) => insights.worktreeSummaries(bodyPath(body)),
 
+  list_tags: (body) => repo.listTags(bodyPath(body)),
+  create_tag: (body) =>
+    repo.createTag(bodyPath(body), str(body.name, "name"), str(body.revision, "revision"), typeof body.message === "string" ? body.message : ""),
+  delete_tag: (body) => repo.deleteTag(bodyPath(body), str(body.name, "name")),
+  merge_branch: (body) =>
+    repo.mergeBranch(bodyPath(body), str(body.branch, "branch"), (body.strategy === "ff-only" ? "ff-only" : body.strategy === "squash" ? "squash" : "no-ff")),
+  working_tree_diff: (body) => repo.workingTreeDiff(bodyPath(body), str(body.file, "file")),
+  clean_untracked: (body) => repo.cleanUntracked(bodyPath(body), bool(body.dryRun ?? false, "dryRun")),
+  list_tree: (body) =>
+    repo.listTree(bodyPath(body), str(body.revision, "revision"), typeof body.dir === "string" ? body.dir : ""),
+  file_at_revision: (body) =>
+    repo.fileAtRevision(bodyPath(body), str(body.revision, "revision"), str(body.dir, "dir")),
+  export_revision: (body) =>
+    repo.exportRevision(bodyPath(body), str(body.revision, "revision"), str(body.destination, "destination")),
+  create_patch: (body) =>
+    repo.createPatch(bodyPath(body), str(body.from, "from"), typeof body.to === "string" ? body.to : ""),
+  save_patch: (body) =>
+    repo.savePatch(bodyPath(body), str(body.from, "from"), typeof body.to === "string" ? body.to : "", str(body.destination, "destination")),
+  apply_patch: (body) =>
+    repo.applyPatch(bodyPath(body), str(body.data, "data"), typeof body.dir === "string" ? body.dir : ""),
+  commit_activity: (body) =>
+    repo.commitActivity(bodyPath(body), num(body.days ?? 365, "days"), num(body.maxCommits ?? 200000, "maxCommits")),
+  diff_revisions: (body) =>
+    repo.diffRevisions(bodyPath(body), str(body.from, "from"), str(body.to, "to"), str(body.file, "file")),
+
   repository_operation_state: (body) => operationState.repositoryOperationState(bodyPath(body)),
   control_repository_operation: (body) =>
     operationState.controlRepositoryOperation(
@@ -203,6 +231,8 @@ const routes: Record<string, Handler> = {
     }),
   switch_branch: (body) => backend.switchBranch(bodyPath(body), str(body.branch, "branch")),
   create_branch: (body) => backend.createBranch(bodyPath(body), str(body.branch, "branch")),
+  delete_branch: (body) =>
+    repo.deleteBranch(bodyPath(body), str(body.branch, "branch"), body.force === true),
   run_workflow: (body) =>
     backend.runWorkflow(bodyPath(body), {
       operation: str(body.operation, "operation"),

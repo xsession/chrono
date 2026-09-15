@@ -202,6 +202,30 @@ export type CommitFileChange = {
   binary: boolean;
 };
 
+export type CommitDiffLine = {
+  kind: "add" | "del" | "ctx";
+  number: number | null;
+  text: string;
+};
+
+export type CommitDiffHunk = {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  header: string;
+  lines: CommitDiffLine[];
+};
+
+export type CommitFileDiff = {
+  path: string;
+  status: string;
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  hunks: CommitDiffHunk[];
+};
+
 export type CommitDetails = {
   id: string;
   parents: string[];
@@ -213,6 +237,59 @@ export type CommitDetails = {
   additions: number;
   deletions: number;
   files: CommitFileChange[];
+};
+
+export type TagRecord = {
+  name: string;
+  target: string;
+  annotated: boolean;
+  tagger: string;
+  date: string;
+  message: string;
+};
+
+export type WorkingTreeDiff = {
+  path: string;
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  status: string;
+  hunks: CommitDiffHunk[];
+};
+
+export type RevisionDiff = {
+  path: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  hunks: CommitDiffHunk[];
+};
+
+export type TreeEntry = {
+  name: string;
+  path: string;
+  type: "tree" | "blob";
+  mode: string;
+  size: number | null;
+};
+
+export type FileAtRevision = {
+  path: string;
+  content: string;
+  truncated: boolean;
+  size: number;
+  binary: boolean;
+};
+
+export type PatchExport = {
+  name: string;
+  size: number;
+  base64: string;
+};
+
+export type ActivityDay = {
+  date: string;
+  count: number;
 };
 
 export type HistoryChangeStat = {

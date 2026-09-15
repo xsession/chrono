@@ -3,9 +3,11 @@ import type { ChangeEvent, Dispatch, SetStateAction } from "react";
 import type { FileChange } from "../types";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
+import { WorkingDiffView } from "./WorkingDiffView";
 
 type Props = {
   changes: FileChange[];
+  repositoryPath: string;
   onStage: (paths: string[]) => Promise<void>;
   onUnstage: (paths: string[]) => Promise<void>;
   onCommit: (message: string) => Promise<void>;
@@ -19,10 +21,12 @@ type GroupProps = {
   items: FileChange[];
   selected: Set<string>;
   onToggle: (path: string) => void;
+  diffPath: string | null;
+  onDiff: (path: string) => void;
   tone?: "danger" | "normal";
 };
 
-function ChangeGroup({ title, hint, items, selected, onToggle, tone = "normal" }: GroupProps) {
+function ChangeGroup({ title, hint, items, selected, onToggle, diffPath, onDiff, tone = "normal" }: GroupProps) {
   if (!items.length) return null;
   return (
     <section className={`ux-change-group ${tone === "danger" ? "is-danger" : ""}`}>
@@ -32,24 +36,36 @@ function ChangeGroup({ title, hint, items, selected, onToggle, tone = "normal" }
       </header>
       <div className="ux-change-list">
         {items.map((change) => (
-          <label key={`${title}-${change.path}`} className="ux-change-row">
-            <input type="checkbox" checked={selected.has(change.path)} onChange={() => onToggle(change.path)} />
-            <span className="ux-status-code" aria-label={`Git status ${change.indexStatus}${change.worktreeStatus}`}>{change.indexStatus}{change.worktreeStatus}</span>
-            <span className="ux-change-path" title={change.path}>{change.path}</span>
+          <div key={`${title}-${change.path}`} className={`ux-change-row${diffPath === change.path ? " is-diffing" : ""}`}>
+            <label className="ux-change-row-label" title={`Toggle ${change.path}`}>
+              <input type="checkbox" checked={selected.has(change.path)} onChange={() => onToggle(change.path)} />
+              <span className="ux-status-code" aria-label={`Git status ${change.indexStatus}${change.worktreeStatus}`}>{change.indexStatus}{change.worktreeStatus}</span>
+              <span className="ux-change-path" title={change.path}>{change.path}</span>
+            </label>
             {change.conflicted && <span className="ux-critical-label">Conflict</span>}
-          </label>
+            <button
+              type="button"
+              className="ux-change-diff-toggle"
+              title={diffPath === change.path ? "Hide diff" : `Diff ${change.path}`}
+              aria-label={`Diff ${change.path}`}
+              onClick={() => onDiff(change.path)}
+            >
+              <Icon name="compare" />{diffPath === change.path ? "Hide" : "Diff"}
+            </button>
+          </div>
         ))}
       </div>
     </section>
   );
 }
 
-export function StatusPanel({ changes, onStage, onUnstage, onCommit, operationActive = false, onResolveConflicts }: Props) {
+export function StatusPanel({ changes, repositoryPath, onStage, onUnstage, onCommit, operationActive = false, onResolveConflicts }: Props) {
   const [selectedStageable, setSelectedStageable] = useState<Set<string>>(new Set());
   const [selectedStaged, setSelectedStaged] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<"stage" | "unstage" | "commit" | null>(null);
   const [commitWidth, setCommitWidth] = useState(350);
+  const [diffFile, setDiffFile] = useState<string | null>(null);
 
   const grouped = useMemo(() => {
     const conflicts = changes.filter((change) => change.conflicted);
@@ -106,9 +122,9 @@ export function StatusPanel({ changes, onStage, onUnstage, onCommit, operationAc
         )}
 
         <div className="ux-change-groups">
-          <ChangeGroup title="Conflicts" hint="Resolve before continuing the Git operation" items={grouped.conflicts} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} tone="danger" />
-          <ChangeGroup title="Staged" hint="Included in the next commit" items={grouped.staged} selected={selectedStaged} onToggle={(path) => toggleIn(setSelectedStaged, path)} />
-          <ChangeGroup title="Unstaged" hint="Working directory changes" items={grouped.unstaged} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} />
+          <ChangeGroup title="Conflicts" hint="Resolve before continuing the Git operation" items={grouped.conflicts} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} diffPath={diffFile} onDiff={setDiffFile} tone="danger" />
+          <ChangeGroup title="Staged" hint="Included in the next commit" items={grouped.staged} selected={selectedStaged} onToggle={(path) => toggleIn(setSelectedStaged, path)} diffPath={diffFile} onDiff={setDiffFile} />
+          <ChangeGroup title="Unstaged" hint="Working directory changes" items={grouped.unstaged} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} diffPath={diffFile} onDiff={setDiffFile} />
           {!changes.length && (
             <div className="ux-empty-state large">
               <Icon name="changes" />
@@ -117,6 +133,8 @@ export function StatusPanel({ changes, onStage, onUnstage, onCommit, operationAc
             </div>
           )}
         </div>
+
+        {diffFile && <WorkingDiffView repositoryPath={repositoryPath} file={diffFile} onClose={() => setDiffFile(null)} />}
       </section>
 
       <SplitHandle

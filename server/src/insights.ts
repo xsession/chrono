@@ -256,6 +256,114 @@ export async function commitDetails(inputPath: string, commit: string): Promise<
   };
 }
 
+export interface CommitDiffLine {
+  kind: "add" | "del" | "ctx";
+  number: number | null;
+  text: string;
+}
+
+export interface CommitDiffHunk {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  header: string;
+  lines: CommitDiffLine[];
+}
+
+export interface CommitFileDiff {
+  path: string;
+  status: string;
+  binary: boolean;
+  additions: number;
+  deletions: number;
+  hunks: CommitDiffHunk[];
+}
+
+const MAX_DIFF_LINES = 4000;
+
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/** Per-file diff of one commit against its first parent (root commits diff
+ *  against the empty tree). Binary files and oversized diffs report counts
+ *  only, with empty hunks. */
+export async function commitFileDiff(inputPath: string, commit: string, filePath: string): Promise<CommitFileDiff> {
+  const revision = safeRevision(commit);
+  const file = filePath.trim();
+  if (file.length === 0 || file.startsWith("-") || file.includes("\0")) {
+    throw invalidError("invalid file path");
+  }
+
+  // First parent is the base; a root commit diffs against the empty tree.
+  const parentsField = (await checkedStdout(inputPath, ["show", "-s", "--format=%P", revision])).trim();
+  const parents = parentsField.split(/\s+/).filter((value) => value.length > 0);
+  const base = parents[0] ?? EMPTY_TREE;
+  const diffBase = ["--no-renames", base, revision, "--", file];
+
+  // Counts + binary flag.
+  const numstatLine = (await checkedStdout(inputPath, ["diff", "--numstat", ...diffBase])).split(/\r?\n/).find((line) => line.length) ?? "";
+  const [addRaw, delRaw] = numstatLine.split("\t");
+  const binary = addRaw === "-" || delRaw === "-";
+  const additions = binary ? 0 : Number.parseInt(addRaw, 10) || 0;
+  const deletions = binary ? 0 : Number.parseInt(delRaw, 10) || 0;
+
+  // Status letter (A/M/D/T). Falls back to "modified" if git reports nothing
+  // (e.g. a rename recorded under a combined "old => new" path in the list).
+  const statusLine = (await checkedStdout(inputPath, ["diff", "--name-status", ...diffBase])).split(/\r?\n/).find((line) => line.length)?.trim() ?? "";
+  const letter = statusLine.charAt(0).toUpperCase();
+  const status = letter === "A" ? "added" : letter === "D" ? "deleted" : letter === "T" ? "typechange" : "modified";
+
+  if (binary || additions === 0 && deletions === 0) {
+    return { path: file, status, binary, additions, deletions, hunks: [] };
+  }
+
+  const raw = await checkedStdout(inputPath, ["diff", "--unified=3", ...diffBase]);
+  const hunks = parseUnifiedHunks(raw);
+  return { path: file, status, binary: false, additions, deletions, hunks };
+}
+
+export function parseUnifiedHunks(raw: string): CommitDiffHunk[] {
+  const hunks: CommitDiffHunk[] = [];
+  let current: CommitDiffHunk | null = null;
+  let oldLine = 0;
+  let newLine = 0;
+  let counted = 0;
+  for (const line of raw.split("\n")) {
+    const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@\s*(.*)$/.exec(line);
+    if (header) {
+      current = {
+        oldStart: Number.parseInt(header[1], 10),
+        oldLines: header[2] === undefined ? 1 : Number.parseInt(header[2], 10),
+        newStart: Number.parseInt(header[3], 10),
+        newLines: header[4] === undefined ? 1 : Number.parseInt(header[4], 10),
+        header: header[5] || "",
+        lines: [],
+      };
+      oldLine = current.oldStart;
+      newLine = current.newStart;
+      hunks.push(current);
+      continue;
+    }
+    if (!current) continue; // file headers / index / mode lines
+    if (counted >= MAX_DIFF_LINES) continue;
+    if (line.startsWith("+")) {
+      current.lines.push({ kind: "add", number: newLine, text: line.slice(1) });
+      newLine += 1;
+    } else if (line.startsWith("-")) {
+      current.lines.push({ kind: "del", number: oldLine, text: line.slice(1) });
+      oldLine += 1;
+    } else if (line.startsWith("\\")) {
+      current.lines.push({ kind: "ctx", number: null, text: line.slice(1) }); // "\ No newline at end of file"
+    } else {
+      current.lines.push({ kind: "ctx", number: oldLine, text: line.slice(1) });
+      oldLine += 1;
+      newLine += 1;
+    }
+    counted += 1;
+  }
+  return hunks;
+}
+
 export async function historyChangeStats(inputPath: string, limit: number): Promise<HistoryChangeStat[]> {
   const clamped = Math.min(Math.max(limit, 1), 1000);
   const output = await checkedStdout(inputPath, [
