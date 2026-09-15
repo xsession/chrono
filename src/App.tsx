@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "./api";
+import { api, getApiConnection, saveApiConnection } from "./api";
+import { Capacitor } from "@capacitor/core";
 import type { BranchRecord, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
 import { RepositorySidebar, type RepositoryView } from "./components/RepositorySidebar";
 import { CommitGraph } from "./components/CommitGraph";
@@ -20,7 +21,7 @@ const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", rep
 // The browser cannot open native directory pickers; ask for a repository path
 // via prompt() instead of the Tauri dialog the desktop build used.
 const promptRepositoryPath = (title: string, initial = ""): Promise<string | null> =>
-  new Promise((resolve) => {
+  window.chronoDesktop?.pickDirectory() ?? new Promise((resolve) => {
     const value = window.prompt(
       `${title}\nEnter an absolute path to a Git repository on the machine running the Chrono server:`,
       initial,
@@ -43,6 +44,8 @@ const idleOperation: RepositoryOperationState = {
 };
 
 export default function App() {
+  const nativeMobile = Capacitor.isNativePlatform();
+  const [connectionOpen, setConnectionOpen] = useState(nativeMobile && !getApiConnection().url);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([emptyWorkspace]);
   const [path, setPath] = useState("");
   const [summary, setSummary] = useState<RepositorySummary | null>(null);
@@ -221,7 +224,15 @@ export default function App() {
   const currentBranch = summary?.branch || "Detached HEAD";
 
   return (
-    <div className={`ux-app${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+    <div className={`ux-app${sidebarCollapsed ? " sidebar-collapsed" : ""}${nativeMobile ? " native-mobile" : ""}`}>
+      {nativeMobile && <button className="mobile-connection-button" onClick={() => setConnectionOpen(true)}>Backend</button>}
+      {connectionOpen && <div className="connection-backdrop"><form className="connection-dialog" onSubmit={(event) => {
+        event.preventDefault(); const data=new FormData(event.currentTarget);
+        saveApiConnection({url:String(data.get("url")??""),token:String(data.get("token")??"")}); window.location.reload();
+      }}><h2>Connect Android client</h2><p>Enter the HTTPS address and access token of your Chrono server.</p>
+      <label>Backend URL<input name="url" type="url" required defaultValue={getApiConnection().url} placeholder="https://chrono.example.com" /></label>
+      <label>API token<input name="token" type="password" required defaultValue={getApiConnection().token} /></label>
+      <div className="connection-actions"><button type="button" onClick={()=>setConnectionOpen(false)}>Cancel</button><button type="submit">Save</button></div></form></div>}
       <header className="ux-topbar">
         <div className="ux-brand-lockup">
           <img src="/rsrc/icon_32x32.png" alt="" />

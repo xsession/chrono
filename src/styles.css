@@ -10,3 +10,9 @@ html, body, #root { width: 100%; height: 100%; margin: 0; }
 body { min-width: 320px; min-height: 100vh; overflow: hidden; }
 button, input, textarea, select { font: inherit; }
 button { color: inherit; }
+.mobile-connection-button{position:fixed;right:10px;top:calc(10px + env(safe-area-inset-top));z-index:80}
+.connection-backdrop{position:fixed;inset:0;z-index:100;display:grid;place-items:center;padding:20px;background:#090b0fd9}
+.connection-dialog{width:min(460px,100%);display:grid;gap:16px;padding:24px;border:1px solid #343945;border-radius:12px;background:#181b22}
+.connection-dialog h2,.connection-dialog p{margin:0}.connection-dialog label{display:grid;gap:6px}.connection-dialog input{padding:10px;color:inherit;background:#101218;border:1px solid #454b59;border-radius:6px}.connection-actions{display:flex;justify-content:flex-end;gap:8px}
+.native-mobile{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+@media(max-width:720px){.native-mobile{min-width:320px;min-height:400px}.native-mobile button{min-height:40px}}

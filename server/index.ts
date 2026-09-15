@@ -24,6 +24,8 @@ const projectRoot = path.resolve(__dirname, "..");
 
 const PORT = Number.parseInt(process.env.CHRONO_PORT ?? "1421", 10);
 const HOST = process.env.CHRONO_HOST ?? "127.0.0.1";
+const API_TOKEN = process.env.CHRONO_API_TOKEN ?? "";
+const ALLOWED_ORIGIN = process.env.CHRONO_ALLOWED_ORIGIN ?? "";
 
 // ---------------------------------------------------------------------------
 // Request helpers
@@ -328,6 +330,14 @@ async function handleApi(
 }
 
 const server = http.createServer((request, response) => {
+  const origin = request.headers.origin;
+  if (ALLOWED_ORIGIN && origin === ALLOWED_ORIGIN) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Vary", "Origin");
+    response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  }
+  if (request.method === "OPTIONS") { response.writeHead(ALLOWED_ORIGIN && origin === ALLOWED_ORIGIN ? 204 : 403); response.end(); return; }
   const url = new URL(request.url ?? "/", "http://localhost");
   if (url.pathname === "/api/health") {
     sendJson(response, 200, { ok: true, result: { name: "chrono-next-server", uptime: process.uptime() } });
@@ -335,6 +345,7 @@ const server = http.createServer((request, response) => {
   }
   const match = url.pathname.match(/^\/api\/([a-z0-9_]+)\/?$/);
   if (match) {
+    if (API_TOKEN && request.headers.authorization !== `Bearer ${API_TOKEN}`) { sendJson(response, 401, { ok: false, error: "invalid or missing API token" }); return; }
     void handleApi(request, response, match[1]);
     return;
   }

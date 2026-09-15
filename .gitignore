@@ -1,5 +1,9 @@
 node_modules/
 dist/
+release/
+android/.gradle/
+android/app/build/
+android/build/
 src-tauri/target/
 src-tauri/gen/
 server/*.tsbuildinfo

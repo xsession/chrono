@@ -28,6 +28,15 @@ import type {
   Workspace,
 } from "./types";
 
+const API_URL_KEY = "chrono.apiUrl";
+const API_TOKEN_KEY = "chrono.apiToken";
+export const getApiConnection = () => ({ url: localStorage.getItem(API_URL_KEY) ?? "", token: localStorage.getItem(API_TOKEN_KEY) ?? "" });
+export function saveApiConnection(connection: { url: string; token: string }): void {
+  const url = connection.url.trim().replace(/\/$/, "");
+  if (url && !/^https?:\/\//i.test(url)) throw new Error("Backend URL must start with https:// or http://");
+  localStorage.setItem(API_URL_KEY, url); localStorage.setItem(API_TOKEN_KEY, connection.token.trim());
+}
+
 // HTTP transport for the TypeScript backend.
 //
 // Each former Tauri `invoke("<command>", { ... })` call now POSTs to
@@ -37,9 +46,10 @@ import type {
 // unwrapped here so call sites look identical to the old `invoke` calls.
 
 async function invoke<T>(command: string, payload: Record<string, unknown> = {}): Promise<T> {
-  const response = await fetch(`/api/${command}`, {
+  const connection = getApiConnection();
+  const response = await fetch(`${connection.url}/api/${command}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(connection.token ? { Authorization: `Bearer ${connection.token}` } : {}) },
     body: JSON.stringify(payload),
   });
   let body: { ok: boolean; result?: T; error?: string } | null = null;
