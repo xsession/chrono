@@ -6,6 +6,7 @@ export type RepositoryView =
   | "changes"
   | "history"
   | "branches"
+  | "refs"
   | "rebase"
   | "insights"
   | "repo"
@@ -57,6 +58,7 @@ export function RepositorySidebar({
     { id: "changes", label: "Changes", icon: "changes", badge: changeCount },
     { id: "history", label: "History", icon: "history" },
     { id: "branches", label: "Branches", icon: "branch" },
+    { id: "refs", label: "References", icon: "list" },
     { id: "rebase", label: "Interactive rebase", icon: "layers" },
     { id: "insights", label: "Git Intelligence", icon: "compare" },
     { id: "repo", label: "Repo browser", icon: "repository" },

@@ -28,6 +28,7 @@ import type {
   RebaseStartRequest,
   RebaseStartResult,
   RefComparison,
+  RefGroups,
   WorktreeSummary,
   RepositoryOperationAction,
   RepositoryOperationState,
@@ -90,6 +91,7 @@ export const api = {
   commitFileDiff: (path: string, commit: string, file: string) =>
     invoke<CommitFileDiff>("commit_file_diff", { path, commit, file }),
   listTags: (path: string) => invoke<TagRecord[]>("list_tags", { path }),
+  refGroups: (path: string) => invoke<RefGroups>("reference_groups", { path }),
   createTag: (path: string, name: string, revision: string, message: string) =>
     invoke<CommandResult>("create_tag", { path, name, revision, message }),
   deleteTag: (path: string, name: string) => invoke<CommandResult>("delete_tag", { path, name }),
@@ -132,6 +134,7 @@ export const api = {
   push: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("push_repository", { path, ...auth }),
   clone: (request: CloneRequest) => invoke<RepositorySummary>("clone_repository", request),
   switchBranch: (path: string, branch: string) => invoke<void>("switch_branch", { path, branch }),
+  checkoutRemoteBranch: (path: string, branch: string) => invoke<void>("checkout_remote_branch", { path, branch }),
   createBranch: (path: string, branch: string) => invoke<void>("create_branch", { path, branch }),
   deleteBranch: (path: string, branch: string, force: boolean) =>
     invoke<string>("delete_branch", { path, branch, force }),

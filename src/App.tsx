@@ -7,6 +7,7 @@ import { CommitGraph } from "./components/CommitGraph";
 import { StatusPanel } from "./components/StatusPanel";
 import { BranchPanel } from "./components/BranchPanel";
 import { RepoBrowser } from "./components/RepoBrowser";
+import { RefsBrowser } from "./components/RefsBrowser";
 import { WorkflowPanel } from "./components/WorkflowPanel";
 import { CherryParityPanel } from "./components/CherryParityPanel";
 import { CommandPalette, type Command } from "./components/CommandPalette";
@@ -216,6 +217,7 @@ export default function App() {
     { id: "intelligence", title: "Open Git Intelligence", category: "Explore", keywords: ["search", "compare", "blame", "file history", "contributors"], disabled: !path, run: () => setView("insights") },
     { id: "worktrees", title: "Manage worktrees", category: "Repository", keywords: ["parallel", "checkout"], disabled: !path, run: () => setView("worktrees") },
     { id: "submodules", title: "Manage submodules", category: "Repository", disabled: !path, run: () => setView("submodules") },
+    { id: "refs", title: "Open references browser", category: "Repository", keywords: ["branches", "remotes", "tags", "worktrees", "stashes", "submodules"], disabled: !path, run: () => setView("refs") },
     { id: "stashes", title: "Manage stashes", category: "Repository", disabled: !path, run: () => setView("stashes") },
     { id: "recovery", title: "Open recovery & maintenance", category: "Repository", keywords: ["reflog", "fsck", "lfs"], disabled: !path, run: () => setView("recovery") },
     { id: "sidebar", title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar", category: "View", shortcut: "Ctrl+B", run: () => setSidebarCollapsed((value) => !value) },
@@ -343,6 +345,16 @@ export default function App() {
               onCreate={async (branch) => { await api.createBranch(path, branch); await refresh(); }}
               onDelete={async (branch, force) => { const result = await api.deleteBranch(path, branch, force); await refresh(); return result; }}
               onNotify={(message) => setMessage(message)}
+            />
+          )}
+          {path && view === "refs" && (
+            <RefsBrowser
+              repositoryPath={path}
+              headSha={summary?.head ?? undefined}
+              onCheckout={async (branch) => { await api.switchBranch(path, branch); await refresh(); }}
+              onCheckoutRemote={async (remoteBranch) => { await api.checkoutRemoteBranch(path, remoteBranch); await refresh(); }}
+              onNotify={(message) => setMessage(message)}
+              onRefresh={async () => { await refresh(); }}
             />
           )}
           {path && view === "rebase" && (

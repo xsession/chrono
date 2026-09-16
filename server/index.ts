@@ -200,6 +200,7 @@ const routes: Record<string, Handler> = {
     repo.commitActivity(bodyPath(body), num(body.days ?? 365, "days"), num(body.maxCommits ?? 200000, "maxCommits")),
   diff_revisions: (body) =>
     repo.diffRevisions(bodyPath(body), str(body.from, "from"), str(body.to, "to"), str(body.file, "file")),
+  reference_groups: (body) => repo.listRefGroups(bodyPath(body)),
 
   repository_operation_state: (body) => operationState.repositoryOperationState(bodyPath(body)),
   control_repository_operation: (body) =>
@@ -230,6 +231,7 @@ const routes: Record<string, Handler> = {
       token: optStr(body.token),
     }),
   switch_branch: (body) => backend.switchBranch(bodyPath(body), str(body.branch, "branch")),
+  checkout_remote_branch: (body) => backend.checkoutRemoteBranch(bodyPath(body), str(body.branch, "branch")),
   create_branch: (body) => backend.createBranch(bodyPath(body), str(body.branch, "branch")),
   delete_branch: (body) =>
     repo.deleteBranch(bodyPath(body), str(body.branch, "branch"), body.force === true),

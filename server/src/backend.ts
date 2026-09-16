@@ -206,6 +206,14 @@ export async function switchBranch(inputPath: string, branch: string): Promise<v
   await checked(inputPath, ["switch", branch]);
 }
 
+/** Check out a remote-tracking ref as a new local branch (git switch --track).
+ *  Accepts "origin/master" form. */
+export async function checkoutRemoteBranch(inputPath: string, remoteBranch: string): Promise<void> {
+  const name = remoteBranch.trim();
+  if (!name || name.startsWith("-") || name.includes("\0")) throw invalidError("invalid branch name");
+  await checked(inputPath, ["switch", "--track", name]);
+}
+
 export async function createBranch(inputPath: string, branch: string): Promise<void> {
   await checked(inputPath, ["switch", "-c", branch]);
 }
@@ -243,12 +251,20 @@ function workflowArgs(request: WorkflowRequest): string[] {
       return ["submodule", "update", "--init", "--recursive"];
     case "submodule_sync":
       return ["submodule", "sync", "--recursive"];
+    case "submodule_init_path":
+      return ["submodule", "update", "--init", "--", requireArgs(request, 1)[0]];
+    case "submodule_update_path":
+      return ["submodule", "update", "--", requireArgs(request, 1)[0]];
     case "stash_list":
       return ["stash", "list"];
     case "stash_push":
       return ["stash", "push", "-u", "-m", request.args[0] ?? "Chrono Next stash"];
     case "stash_pop":
-      return ["stash", "pop"];
+      return request.args.length > 0 ? ["stash", "pop", requireArgs(request, 1)[0]] : ["stash", "pop"];
+    case "stash_apply":
+      return ["stash", "apply", requireArgs(request, 1)[0]];
+    case "stash_drop":
+      return ["stash", "drop", requireArgs(request, 1)[0]];
     case "bisect_start": {
       const [good, bad] = requireArgs(request, 2);
       return ["bisect", "start", good, bad];

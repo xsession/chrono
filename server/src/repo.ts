@@ -18,7 +18,7 @@ import {
   runGitRaw,
   type CommandResult,
 } from "./lib/git.ts";
-import { parseUnifiedHunks, type CommitDiffHunk } from "./insights.ts";
+import { parseUnifiedHunks, worktreeSummaries, type CommitDiffHunk } from "./insights.ts";
 
 const MAX_FILE_BYTES = 1024 * 1024; // 1MB file-content cap for the repo browser
 const MAX_EXPORT_FILES = 100000;
@@ -399,4 +399,149 @@ export async function deleteBranch(inputPath: string, branch: string, force: boo
     }
     throw error;
   }
+}
+
+// --- Reference browser (GitKraken-style consolidated refs tree) --------------------
+
+export interface BranchRef {
+  name: string;
+  remote: string | null;
+  target: string;
+  current: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+}
+
+export interface StashRef {
+  ref: string;
+  message: string;
+}
+
+export interface SubmoduleRef {
+  path: string;
+  commit: string;
+  summary: string;
+  /** porcelain status character: ' ' added, '+' checked out at wrong commit,
+ *  '-' not initialized, 'U' unmerged. */
+  status: string;
+}
+
+export interface WorktreeRef {
+  path: string;
+  branch: string | null;
+  head: string;
+  isMain: boolean;
+  locked: boolean;
+  dirtyCount: number;
+  conflictCount: number;
+}
+
+export interface RefGroups {
+  branches: BranchRef[];
+  stashes: StashRef[];
+  submodules: SubmoduleRef[];
+  worktrees: WorktreeRef[];
+  tags: TagRecord[];
+}
+
+/** One call that feeds the consolidated References browser: all local and
+ *  remote branches (with ahead/behind vs upstream), stashes, submodules,
+ *  worktrees, and tags. Ahead/behind comes from for-each-ref's own counting
+ *  (no per-branch rev-list). */
+export async function listRefGroups(inputPath: string): Promise<RefGroups> {
+  const [raw, stashRaw, subPorcelain, subPlain, worktrees, tags] = await Promise.all([
+    checkedStdout(inputPath, [
+      "for-each-ref",
+      "--format=%(refname:short)%1f%(objectname)%1f%(HEAD)%1f%(upstream:short)%1f%(upstream:track)%1e",
+      "refs/heads",
+      "refs/remotes",
+    ]),
+    runGit(inputPath, ["stash", "list"]),
+    runGit(inputPath, ["submodule", "status", "--porcelain"]),
+    runGit(inputPath, ["submodule", "status"]),
+    worktreeSummaries(inputPath),
+    listTags(inputPath),
+  ]);
+
+  const branches: BranchRef[] = [];
+  for (const chunk of raw.split("\u001e")) {
+    const fields = chunk.trim().split("\u001f");
+    if (fields.length < 5) continue;
+    const short = fields[0];
+    // "origin/main" (has a remote/name slash) is a remote-tracking ref;
+    // local branch names never contain "/". origin/HEAD is a symbolic
+    // ref, not a real branch — skip it.
+    const slash = short.indexOf("/");
+    if (short === "origin/HEAD") continue;
+    const isRemote = slash >= 0;
+    let ahead = 0;
+    let behind = 0;
+    const track = (fields[4] ?? "").trim();
+    const aheadMatch = /ahead\s+(\d+)/.exec(track);
+    const behindMatch = /behind\s+(\d+)/.exec(track);
+    if (aheadMatch) ahead = Number.parseInt(aheadMatch[1], 10);
+    if (behindMatch) behind = Number.parseInt(behindMatch[1], 10);
+    branches.push({
+      name: isRemote ? short.slice(slash + 1) : short,
+      remote: isRemote ? short.slice(0, slash) : null,
+      target: fields[1],
+      current: fields[2] === "*",
+      upstream: (fields[3] ?? "").length > 0 ? fields[3] : null,
+      ahead,
+      behind,
+    });
+  }
+  branches.sort((a, b) => (a.remote ? 1 : 0) - (b.remote ? 1 : 0) || a.name.localeCompare(b.name));
+
+  const stashes: StashRef[] = (stashRaw.stdout ?? "")
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      // Default output: "stash@{0}: On master: message" or
+      // "stash@{0}: WIP on master: abc1234 message".
+      const refMatch = /^stash@\{(\d+)\}:\s*(.*)$/.exec(line.trim());
+      if (!refMatch) return null;
+      const ref = refMatch[1] === "0" ? "refs/stash" : `refs/stash@{${refMatch[1]}}`;
+      return { ref, message: refMatch[2].trim() || ref };
+    })
+    .filter((entry): entry is StashRef => entry !== null);
+
+  // `submodule status --porcelain` is rejected by older git; the plain form
+  // has the identical layout (<status> <sha40> <path> [ <sha> (summary) ]).
+  const subOutput = (subPorcelain.code === 0 && subPorcelain.stdout.length > 0
+    ? subPorcelain.stdout
+    : subPlain.stdout) ?? "";
+  const submodules: SubmoduleRef[] = subOutput
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      // <status> <commit> <path> [ <commit> (summary) ]
+      // status is the raw first char: ' ' (in sync), '+', '-', or 'U'.
+      const status = line.slice(0, 1);
+      const rest = line.slice(1).trimStart();
+      const commit = rest.slice(0, 40);
+      const after = rest.slice(commit.length).trimStart();
+      const spaceParen = after.indexOf(" (");
+      const path = (spaceParen >= 0 ? after.slice(0, spaceParen) : after).trim();
+      let summary = "";
+      if (spaceParen >= 0) {
+        const close = after.lastIndexOf(")");
+        summary = close > spaceParen ? after.slice(spaceParen + 2, close) : after.slice(spaceParen + 2);
+      }
+      return { status, commit, path, summary: summary.trim() };
+    })
+    .filter((entry) => entry.path);
+
+  const worktreeRefs: WorktreeRef[] = worktrees.map((worktree) => ({
+    path: worktree.path,
+    branch: worktree.branch,
+    head: worktree.head,
+    isMain: worktree.isMain,
+    locked: worktree.locked !== null,
+    dirtyCount: worktree.dirtyCount,
+    conflictCount: worktree.conflictCount,
+  }));
+
+  return { branches, stashes, submodules, worktrees: worktreeRefs, tags };
 }

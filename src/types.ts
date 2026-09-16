@@ -292,6 +292,46 @@ export type ActivityDay = {
   count: number;
 };
 
+export type BranchRef = {
+  name: string;
+  remote: string | null;
+  target: string;
+  current: boolean;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+};
+
+export type StashRef = {
+  ref: string;
+  message: string;
+};
+
+export type SubmoduleRef = {
+  path: string;
+  commit: string;
+  summary: string;
+  status: string;
+};
+
+export type WorktreeRef = {
+  path: string;
+  branch: string | null;
+  head: string;
+  isMain: boolean;
+  locked: boolean;
+  dirtyCount: number;
+  conflictCount: number;
+};
+
+export type RefGroups = {
+  branches: BranchRef[];
+  stashes: StashRef[];
+  submodules: SubmoduleRef[];
+  worktrees: WorktreeRef[];
+  tags: TagRecord[];
+};
+
 export type HistoryChangeStat = {
   commit: string;
   additions: number;

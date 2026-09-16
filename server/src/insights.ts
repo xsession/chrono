@@ -610,14 +610,13 @@ function isConflictCode(code: string): boolean {
 export async function worktreeSummaries(inputPath: string): Promise<WorktreeSummary[]> {
   const output = await checkedStdout(inputPath, ["worktree", "list", "--porcelain"]);
   const blocks = output.split(/\n\s*\n/).filter((block) => block.trim().length > 0);
-  const result: WorktreeSummary[] = [];
-  for (let index = 0; index < blocks.length; index += 1) {
+  const parsed = blocks.map((block) => {
     let worktreePath = "";
     let head = "";
     let branch: string | null = null;
     let locked: string | null = null;
     let prunable: string | null = null;
-    for (const line of blocks[index].split(/\r?\n/)) {
+    for (const line of block.split(/\r?\n/)) {
       const separator = line.indexOf(" ");
       const key = separator < 0 ? line : line.slice(0, separator);
       const value = separator < 0 ? "" : line.slice(separator + 1);
@@ -628,20 +627,33 @@ export async function worktreeSummaries(inputPath: string): Promise<WorktreeSumm
       else if (key === "locked") locked = value.length === 0 ? "Locked" : value;
       else if (key === "prunable") prunable = value.length === 0 ? "Prunable" : value;
     }
-    if (!worktreePath) continue;
-    const status = await checkedStdout(worktreePath, ["status", "--porcelain=v1"]).catch(() => "");
-    const entries = status.split(/\r?\n/).filter((entry) => entry.length > 0);
-    const conflictCount = entries.filter((entry) => entry.length >= 2 && isConflictCode(entry.slice(0, 2))).length;
-    result.push({
-      path: worktreePath,
-      head,
-      branch,
-      isMain: index === 0,
-      locked,
-      prunable,
-      dirtyCount: entries.length,
-      conflictCount,
-    });
-  }
-  return result;
+    return { worktreePath, head, branch, locked, prunable };
+  });
+  // Count dirty files per worktree concurrently — serial `git status` calls
+  // make this O(worktrees * status-cost), which is ~10s on repos with many
+  // worktrees.
+  const statuses = await Promise.all(
+    parsed.map((worktree) =>
+      worktree.worktreePath
+        ? checkedStdout(worktree.worktreePath, ["status", "--porcelain=v1"]).catch(() => "")
+        : Promise.resolve(""),
+    ),
+  );
+  return parsed
+    .map((worktree, index) => {
+      if (!worktree.worktreePath) return null;
+      const entries = statuses[index].split(/\r?\n/).filter((entry) => entry.length > 0);
+      const conflictCount = entries.filter((entry) => entry.length >= 2 && isConflictCode(entry.slice(0, 2))).length;
+      return {
+        path: worktree.worktreePath,
+        head: worktree.head,
+        branch: worktree.branch,
+        isMain: index === 0,
+        locked: worktree.locked,
+        prunable: worktree.prunable,
+        dirtyCount: entries.length,
+        conflictCount,
+      };
+    })
+    .filter((entry): entry is WorktreeSummary => entry !== null);
 }

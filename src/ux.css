@@ -2939,6 +2939,280 @@ button.ux-reference-row:hover:not(:disabled) {
 
 .ux-rebase-footer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 
+/* ── References browser (GitKraken-style consolidated refs tree) ─────────────── */
+
+/* Chevron rotation helper (used by collapsible groups). */
+.ux-icon.is-rotated { transform: rotate(90deg); transition: transform 120ms ease; }
+
+.ux-refs-view {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+/* GitKraken-style header: title row + filter row ("Viewing N" left of filter). */
+.ux-refs-header {
+  display: grid;
+  gap: 7px;
+  padding: 9px 12px 8px;
+  border-bottom: 1px solid var(--ux-border);
+}
+.ux-refs-header-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.ux-refs-header h2 {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ux-text-1);
+}
+.ux-refs-header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
+}
+.ux-refs-link {
+  padding: 2px 8px;
+  border: 0;
+  border-radius: var(--ux-radius);
+  background: transparent;
+  color: var(--ux-text-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.ux-refs-link:hover { background: var(--ux-bg-hover); color: var(--ux-text-1); }
+
+.ux-refs-viewing {
+  color: var(--ux-text-3);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ux-refs-viewing strong { color: var(--ux-accent); font-weight: 600; }
+
+.ux-refs-filter {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: 28px;
+  border: 1px solid var(--ux-border);
+  border-radius: var(--ux-radius);
+  background: var(--ux-bg-1);
+}
+.ux-refs-filter input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 64px 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ux-text-1);
+  font-size: 12px;
+  outline: none;
+}
+.ux-refs-filter .ux-icon {
+  position: absolute;
+  right: 9px;
+  width: 14px;
+  height: 14px;
+  color: var(--ux-text-3);
+  pointer-events: none;
+}
+.ux-refs-filter-clear {
+  position: absolute;
+  right: 28px;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .08);
+  color: var(--ux-text-2);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ux-refs-filter-clear:hover { background: rgba(255, 255, 255, .16); }
+
+.ux-refs-tree {
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 10px 12px;
+}
+
+/* Section headers (LOCAL / REMOTE / WORKTREES / STASHES / TAGS / SUBMODULES) */
+.ux-refs-section {
+  width: 100%;
+  min-height: 36px;
+  margin-top: 6px;
+  display: grid;
+  grid-template-columns: 18px 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--ux-radius);
+  background: transparent;
+  color: var(--ux-text-2);
+  text-align: left;
+  cursor: pointer;
+}
+.ux-refs-section:first-child { margin-top: 0; }
+.ux-refs-section:hover { background: var(--ux-bg-hover); }
+.ux-refs-section .ux-icon { color: var(--ux-text-3); }
+.ux-refs-section-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ux-text-2);
+}
+.ux-refs-count {
+  color: var(--ux-accent);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+.ux-refs-count-inline {
+  color: var(--ux-text-3);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Rows: 3 tracks — icon, name (flex), badges (auto). Group headers carry a
+   4th child (count) which wraps into the badges track. */
+.ux-refs-row {
+  width: 100%;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--ux-radius);
+  background: transparent;
+  color: var(--ux-text-2);
+  text-align: left;
+}
+button.ux-refs-row { cursor: pointer; }
+button.ux-refs-row:hover:not(:disabled) { background: var(--ux-bg-hover); }
+button.ux-refs-row:disabled { opacity: .55; cursor: default; }
+.ux-refs-row .ux-icon { color: var(--ux-text-3); flex: none; }
+
+.ux-refs-row--branch.is-current,
+.ux-refs-row--worktree.is-current {
+  background: #1d3a24;
+  color: #d6f2de;
+}
+.ux-refs-row--branch.is-current .ux-icon,
+.ux-refs-row--worktree.is-current .ux-icon { color: #5fc98a; }
+
+.ux-refs-name {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+}
+.ux-refs-name strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ux-text-1);
+}
+.ux-refs-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ux-text-3);
+  font-size: 9.5px;
+}
+.ux-refs-row--branch.is-current .ux-refs-name strong { color: #fff; }
+
+/* Group headers (remotes, remote dirs) */
+.ux-refs-row--group {
+  grid-template-columns: 18px 20px minmax(0, 1fr) auto;
+  background: rgba(255, 255, 255, .02);
+}
+.ux-refs-row--group .ux-refs-name strong { font-weight: 600; }
+
+/* Indentation levels for remote nesting */
+.ux-refs-remote { margin-left: 0; }
+.ux-refs-remote > .ux-refs-children { margin-left: 18px; }
+.ux-refs-dir > .ux-refs-children { margin-left: 18px; }
+
+/* Badges (ahead/behind/current/status) */
+.ux-refs-badges {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  justify-self: end;
+  min-width: 0;
+}
+.ux-refs-row code {
+  color: var(--ux-text-3);
+  font-size: 9.5px;
+}
+.ux-refs-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .06);
+  color: var(--ux-text-2);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ux-refs-badge--current { background: rgba(95, 201, 138, .15); color: #6fd695; }
+.ux-refs-badge--ok { background: rgba(95, 201, 138, .15); color: #6fd695; }
+.ux-refs-badge--ahead { background: rgba(79, 156, 249, .14); color: #7db6ff; }
+.ux-refs-badge--behind { background: rgba(225, 166, 103, .14); color: #eab67f; }
+
+/* Per-item action buttons (stash pop/apply/drop, tag checkout, submodule init/update). */
+.ux-refs-action {
+  padding: 2px 8px;
+  border: 1px solid var(--ux-border);
+  border-radius: var(--ux-radius);
+  background: rgba(255, 255, 255, .03);
+  color: var(--ux-text-2);
+  font-size: 10px;
+  cursor: pointer;
+}
+.ux-refs-action:hover:not(:disabled) { background: var(--ux-bg-hover); color: var(--ux-text-1); }
+.ux-refs-action:disabled { opacity: .45; cursor: default; }
+.ux-refs-action--danger:hover:not(:disabled) { background: rgba(224, 108, 117, .15); color: #f0989f; border-color: rgba(224, 108, 117, .4); }
+
+.ux-refs-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ux-accent);
+  display: inline-block;
+}
+
+.ux-refs-row.is-busy { opacity: .7; }
+
+.ux-refs-empty {
+  padding: 4px 10px;
+  color: var(--ux-text-3);
+  font-size: 10.5px;
+  font-style: italic;
+}
+
+.ux-refs-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--ux-border);
+  color: var(--ux-text-3);
+  font-size: 10px;
+}
+
 /* ── TortoiseGit-parity wave: repo browser, tags, merge, diff toggles ───────── */
 
 .ux-form-grid.three {
