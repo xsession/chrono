@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
-import type { BranchRecord, CommitDetails, CommitRecord, HistoryChangeStat, WorktreeSummary } from "../types";
+import type { BranchRecord, CommitDetails, CommitRecord, HistoryChangeStat, TagRecord, WorktreeSummary } from "../types";
 import { api } from "../api";
-import { graphWidth, laneX, layoutGraph, ROW_H } from "../graph";
-import type { GraphRowData } from "../graph";
+import {
+  graphLabelYs, graphLabels, graphLabelsWidth, graphWidth, labelTextWidth,
+  firstParentChain, laneX, layoutGraph, ROW_H, unionIds,
+} from "../graph";
+import type { GraphLabel, GraphRowData } from "../graph";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
 import { CommitDiffView } from "./CommitDiffView";
@@ -17,6 +20,13 @@ type Props = {
   onSelect: (commit: CommitRecord) => void;
 };
 
+type HighlightMode = "all" | "current" | "selected";
+type FilterMode = "message" | "author" | "path";
+
+const HIGHLIGHT_STORAGE = "chrono.history.highlight";
+const FILTER_HISTORY_STORAGE = "chrono.history.filterHistory";
+const FILTER_HISTORY_MAX = 10;
+
 function formatDate(value: string): string {
   const date = /^\d+$/.test(value) ? new Date(Number(value) * 1000) : new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined, {
@@ -24,40 +34,84 @@ function formatDate(value: string): string {
   }).format(date);
 }
 
+function loadStoredHistory(): string[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(FILTER_HISTORY_STORAGE) ?? "[]");
+    return Array.isArray(raw) ? raw.filter((value): value is string => typeof value === "string").slice(0, FILTER_HISTORY_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
 type DisplayItem =
   | { kind: "commit"; item: GraphRowData }
   | { kind: "elided"; key: number; count: number; throughLanes: number[] };
 
-/** SVG of one commit row: arriving lines (top), pass-through lines, and
- *  lines leaving toward parents (bottom), plus the commit/merge node.
- *  Branch/HEAD labels live in the subject column so they can never
- *  occlude a lane line. */
-function RowGraph({ item, laneCount, isHead }: { item: GraphRowData; laneCount: number; isHead: boolean }) {
-  const width = graphWidth(laneCount);
+/** SVG of one commit row: arriving lines (top), pass-through lines, lines
+ *  leaving toward parents (bottom), the node, and inline ref pills.
+ *  When `highlight` is a set, every piece of geometry not feeding from / to
+ *  a highlighted commit is dimmed (SourceGit highlight modes). */
+function RowGraph({
+  item, isHead, highlight, labels, labelX, svgWidth,
+}: {
+  item: GraphRowData;
+  isHead: boolean;
+  /** null = no dimming; otherwise the highlighted commit id set */
+  highlight: Set<string> | null;
+  labels: GraphLabel[];
+  labelX: number;
+  svgWidth: number;
+}) {
   const y = ROW_H / 2;
+  const dimOf = (ids: string[] | undefined): boolean =>
+    highlight !== null && !(ids ?? []).some((id) => highlight.has(id));
+  const nodeDim = highlight !== null && !highlight.has(item.commit.id);
+  const labelYs = graphLabelYs(labels.length);
+  let labelOffset = labelX;
   return (
-    <svg className="ux-graph-svg" width={width} height={ROW_H} viewBox={`0 0 ${width} ${ROW_H}`} aria-hidden="true">
+    <svg className="ux-graph-svg" width={svgWidth} height={ROW_H} viewBox={`0 0 ${svgWidth} ${ROW_H}`} aria-hidden="true">
       {item.through.map((seg, index) => (
-        <line key={`t${index}`} className="ux-graph-line" style={{ stroke: seg.color }} x1={laneX(seg.lane)} y1={0} x2={laneX(seg.lane)} y2={ROW_H} />
+        <line key={`t${index}`} className={`ux-graph-line${dimOf(seg.childIds) ? " is-dim" : ""}`} style={{ stroke: seg.color }} x1={laneX(seg.lane)} y1={0} x2={laneX(seg.lane)} y2={ROW_H} />
       ))}
       {item.top.map((seg, index) => (
-        <line key={`top${index}`} className="ux-graph-line" style={{ stroke: seg.color }} x1={laneX(seg.from)} y1={0} x2={laneX(seg.to)} y2={y} />
+        <line key={`top${index}`} className={`ux-graph-line${dimOf(seg.sourceIds) ? " is-dim" : ""}`} style={{ stroke: seg.color }} x1={laneX(seg.from)} y1={0} x2={laneX(seg.to)} y2={y} />
       ))}
       {item.bottom.map((seg, index) => (
-        <line key={`b${index}`} className="ux-graph-line" style={{ stroke: seg.color }} x1={laneX(seg.from)} y1={y} x2={laneX(seg.to)} y2={ROW_H} />
+        <line key={`b${index}`} className={`ux-graph-line${dimOf(seg.targetId ? [seg.targetId] : undefined) ? " is-dim" : ""}`} style={{ stroke: seg.color }} x1={laneX(seg.from)} y1={y} x2={laneX(seg.to)} y2={ROW_H} />
       ))}
       {item.isMerge
         ? <>
-            <circle cx={laneX(item.lane)} cy={y} r={7.5} className="ux-graph-node ux-graph-node--merge" style={{ stroke: item.color }} />
+            <circle cx={laneX(item.lane)} cy={y} r={7.5} className={`ux-graph-node ux-graph-node--merge${nodeDim ? " is-dim" : ""}`} style={{ stroke: item.color }} />
             {isHead && <circle cx={laneX(item.lane)} cy={y} r={3} style={{ fill: "var(--ux-accent)" }} />}
           </>
-        : <circle cx={laneX(item.lane)} cy={y} r={5} className="ux-graph-node" style={{ stroke: item.color }} />}
+        : <circle cx={laneX(item.lane)} cy={y} r={5} className={`ux-graph-node${nodeDim ? " is-dim" : ""}`} style={{ stroke: item.color }} />}
+      {labels.map((label, index) => {
+        const width = labelTextWidth(label.name);
+        const pillX = labelOffset;
+        const pillY = labelYs[index];
+        labelOffset += width + 4;
+        return (
+          <g key={label.name} className={`ux-graph-label${nodeDim ? " is-dim" : ""}`}>
+            <rect x={pillX} y={pillY} width={width} height={12} rx={6} className={`ux-graph-label-box ux-graph-label-box--${label.kind}`} />
+            <text x={pillX + width / 2} y={pillY + 9} textAnchor="middle" className={`ux-graph-label-text${label.kind === "head" ? " ux-graph-label-text--head" : ""}`}>{label.name}</text>
+          </g>
+        );
+      })}
     </svg>
   );
 }
 
 export function CommitGraph({ repositoryPath, commits, branches, headSha, selected, onSelect }: Props) {
   const [query, setQuery] = useState("");
+  const [filterMode, setFilterMode] = useState<FilterMode>("message");
+  const [filterBusy, setFilterBusy] = useState(false);
+  const [filteredCommits, setFilteredCommits] = useState<CommitRecord[] | null>(null);
+  const [filterHistory, setFilterHistory] = useState<string[]>(loadStoredHistory);
+  const [filterHistoryIndex, setFilterHistoryIndex] = useState<number | null>(null);
+  const [highlightMode, setHighlightMode] = useState<HighlightMode>(() => {
+    const stored = localStorage.getItem(HIGHLIGHT_STORAGE);
+    return stored === "current" || stored === "selected" ? stored : "all";
+  });
   const [inspectorWidth, setInspectorWidth] = useState(380);
   const [stats, setStats] = useState<Map<string, HistoryChangeStat>>(new Map());
   const [details, setDetails] = useState<CommitDetails | null>(null);
@@ -65,20 +119,99 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   const [worktrees, setWorktrees] = useState<WorktreeSummary[]>([]);
   const [showChanges, setShowChanges] = useState(() => localStorage.getItem("chrono.history.changes") !== "off");
   const [graphColWidthOverride, setGraphColWidthOverride] = useState<number>(() => Number.parseInt(localStorage.getItem("chrono.history.graphWidth") ?? "0", 10) || 0);
+  const [tags, setTags] = useState<TagRecord[]>([]);
   const graphDrag = useRef<number | null>(null);
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return commits;
-    return commits.filter((commit) => [commit.subject, commit.authorName, commit.authorEmail, commit.id]
-      .some((value) => value.toLowerCase().includes(needle)));
-  }, [commits, query]);
+  const setHighlight = (mode: HighlightMode) => {
+    setHighlightMode(mode);
+    localStorage.setItem(HIGHLIGHT_STORAGE, mode);
+  };
 
-  // Layout over all loaded commits so topology stays stable while filtering;
-  // hidden rows are collapsed into dashed separators showing live lanes.
-  const layout = useMemo(() => layoutGraph(commits), [commits]);
+  const currentBranch = branches.find((branch) => branch.current);
+
+  // Server-side filter (SourceGit QueryCommits): message = per-word --grep
+  // AND, author = --author, path = literal pathspec; scans --all. `null`
+  // means "no active filter" → show the loaded HEAD history.
+  const filterKey = `${filterMode}\u0000${query.trim()}`;
+  useEffect(() => {
+    const needle = query.trim();
+    if (!needle) {
+      setFilteredCommits(null);
+      setFilterBusy(false);
+      return;
+    }
+    let cancelled = false;
+    setFilterBusy(true);
+    setFilterHistoryIndex(null);
+    const timer = setTimeout(() => {
+      api.historyQuery(repositoryPath, { query: needle, mode: filterMode, limit: 300 })
+        .then((rows) => { if (!cancelled) setFilteredCommits(rows); })
+        .catch(() => { if (!cancelled) setFilteredCommits([]); })
+        .finally(() => { if (!cancelled) setFilterBusy(false); });
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [filterKey, repositoryPath]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Filter-history completion (gitg entry history): ↑/↓ cycle previous
+  // filters, Enter commits the current one to the persisted list.
+  const commitFilterHistory = (value: string) => {
+    const needle = value.trim();
+    if (!needle) return;
+    setFilterHistory((previous) => {
+      const next = [needle, ...previous.filter((entry) => entry !== needle)].slice(0, FILTER_HISTORY_MAX);
+      localStorage.setItem(FILTER_HISTORY_STORAGE, JSON.stringify(next));
+      return next;
+    });
+    setFilterHistoryIndex(null);
+  };
+  const onFilterKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      commitFilterHistory(query);
+    } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      if (filterHistory.length === 0) return;
+      const direction = event.key === "ArrowUp" ? 1 : -1;
+      const nextIndex = filterHistoryIndex === null
+        ? (direction === 1 ? 0 : filterHistory.length - 1)
+        : (filterHistoryIndex + direction + filterHistory.length) % filterHistory.length;
+      setFilterHistoryIndex(nextIndex);
+      setQuery(filterHistory[nextIndex]);
+    }
+  };
+
+  const onFilterChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const value = event.target.value;
+    setQuery(value);
+    if (filterHistoryIndex !== null && value !== filterHistory[filterHistoryIndex]) {
+      setFilterHistoryIndex(null);
+    }
+  };
+
+  // The list under the layout: server-filtered rows when a filter is active,
+  // else the loaded HEAD history.
+  const activeCommits = filteredCommits ?? commits;
+  const filtered = activeCommits;
+
+  // Layout over the active set (HEAD history, or the server-filtered rows)
+  // so every visible commit gets a row; hidden rows are collapsed into
+  // dashed separators showing live lanes.
+  const layout = useMemo(() => layoutGraph(activeCommits), [activeCommits]);
   const laneCount = layout.laneCount;
   const graphWidthPx = graphWidth(laneCount);
+
+  // Highlight set for the active mode (SourceGit): the current branch's
+  // first-parent chain, or the selected commit's first-parent chain.
+  const highlight: Set<string> | null =
+    highlightMode === "current" && currentBranch
+      ? firstParentChain(activeCommits, currentBranch.target)
+      : highlightMode === "selected" && selected
+        ? firstParentChain(activeCommits, selected.id)
+        : null;
+
+  // Inline ref pills (GitEmber drawLabel) paint at the end of the lanes; rows
+  // whose pills don't fit in the graph column overflow into the subject
+  // cell's 8px padding only (never over the commit text).
+  const labelBudget = graphWidthPx + 8;
 
   // The graph column is at least as wide as the graph itself (so lanes never
   // clip into the commit text) and the user can widen it for breathing room.
@@ -155,6 +288,14 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     return () => { cancelled = true; };
   }, [repositoryPath, commits]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!repositoryPath) { setTags([]); return; }
+    api.listTags(repositoryPath).then((value) => { if (!cancelled) setTags(value); })
+      .catch(() => { if (!cancelled) setTags([]); });
+    return () => { cancelled = true; };
+  }, [repositoryPath]);
+
   const wip = worktrees.filter((worktree) => worktree.dirtyCount > 0 || worktree.conflictCount > 0);
   const gridTemplate = showChanges
     ? `${graphColWidth}px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px`
@@ -164,10 +305,29 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     <div className="ux-history-view" style={{ gridTemplateColumns: `minmax(560px, 1fr) 6px ${inspectorWidth}px` }}>
       <section className="ux-history-list" aria-label="Commit history">
         <header className="ux-view-toolbar">
-          <div><h2>History</h2><span>{commits.length} commits loaded</span></div>
+          <div><h2>History</h2><span>{commits.length} commits loaded{filteredCommits !== null ? ` · ${activeCommits.length} match` : ""}</span></div>
           <div className="ux-history-toolbar-actions">
+            <div className="ux-highlight-modes" role="group" aria-label="Graph highlight mode">
+              <button type="button" className={highlightMode === "all" ? " is-active" : ""} onClick={() => setHighlight("all")} title="Show all lanes in full color">All</button>
+              <button type="button" className={highlightMode === "current" ? " is-active" : ""} disabled={!currentBranch} onClick={() => setHighlight("current")} title={`Highlight ${currentBranch?.name ?? "the current branch"}'s first-parent chain`}>Branch</button>
+              <button type="button" className={highlightMode === "selected" ? " is-active" : ""} disabled={!selected} onClick={() => setHighlight("selected")} title="Highlight the selected commit's first-parent chain">Selected</button>
+            </div>
+            <select className="ux-filter-mode" value={filterMode} onChange={(event) => setFilterMode(event.target.value as FilterMode)} aria-label="Filter mode" title="Which field to search">
+              <option value="message">message</option>
+              <option value="author">author</option>
+              <option value="path">path</option>
+            </select>
+            <label className={`ux-search-field${filterBusy ? " is-busy" : ""}`}>
+              <Icon name="search" />
+              <input
+                value={query}
+                onChange={onFilterChange}
+                onKeyDown={onFilterKeyDown}
+                placeholder={filterMode === "path" ? "Filter by path · all refs" : filterMode === "author" ? "Filter by author · all refs" : "Filter by message · all refs"}
+                aria-label="Filter commits"
+              />
+            </label>
             <label className="ux-check-row"><input type="checkbox" checked={showChanges} onChange={(event) => { setShowChanges(event.target.checked); localStorage.setItem("chrono.history.changes", event.target.checked ? "on" : "off"); }} />Changes</label>
-            <label className="ux-search-field"><Icon name="search" /><input value={query} onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)} placeholder="Filter loaded commits" aria-label="Filter loaded commits" /></label>
           </div>
         </header>
 
@@ -202,12 +362,26 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               const commit = item.commit;
               const isSelected = selected?.id === commit.id;
               const isHead = headSha === commit.id;
-              const branchChips = branches.filter((branch) => branch.target === commit.id);
+              const isDimmed = highlight !== null && !highlight.has(commit.id);
               const stat = stats.get(commit.id);
+              // Inline ref pills (prefix-stripped, HEAD first) clipped to the
+              // label budget — refs that don't fit collapse into a "+n" chip.
+              const labelX = laneX(item.lane) + 12;
+              const allLabels = graphLabels(commit.id, branches, headSha, tags);
+              const rowLabels: GraphLabel[] = [];
+              let labelUsed = 0;
+              for (const label of allLabels) {
+                const width = labelTextWidth(label.name) + (rowLabels.length > 0 ? 4 : 0);
+                if (labelUsed + width > labelBudget - labelX) break;
+                rowLabels.push(label);
+                labelUsed += width;
+              }
+              const clippedRefs = allLabels.length - rowLabels.length;
+              const svgWidth = Math.max(graphWidthPx, labelX + labelUsed + 2);
               return (
-                <button key={commit.id} className={`ux-commit-row${isSelected ? " is-selected" : ""}`} style={{ gridTemplateColumns: gridTemplate }} onClick={() => onSelect(commit)} aria-pressed={isSelected}>
+                <button key={commit.id} className={`ux-commit-row${isSelected ? " is-selected" : ""}${isDimmed ? " is-dimmed" : ""}`} style={{ gridTemplateColumns: gridTemplate }} onClick={() => onSelect(commit)} aria-pressed={isSelected}>
                   <span className="ux-graph-cell" style={{ width: graphColWidth }} aria-label={item.isMerge ? `${commit.parents.length} parents` : "Commit"}>
-                    <RowGraph item={item} laneCount={laneCount} isHead={isHead} />
+                    <RowGraph item={item} isHead={isHead} highlight={highlight} labels={rowLabels} labelX={labelX} svgWidth={svgWidth} />
                     <span
                       className="ux-graph-resize"
                       title="Drag to resize the graph column (or use ←/→)"
@@ -225,10 +399,9 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                   </span>
                   <span className="ux-commit-subject">
                     <span className="ux-commit-subject-text">{commit.subject}</span>
-                    {isHead && <span className="ux-graph-chip ux-graph-chip--head" title="HEAD">HEAD</span>}
-                    {branchChips.map((branch) => (
-                      <span key={branch.name} className={branch.current ? "ux-graph-chip ux-graph-chip--current" : "ux-graph-chip"} title={`branch ${branch.name}`}>{branch.name}</span>
-                    ))}
+                    {clippedRefs > 0 && (
+                      <span className="ux-graph-chip ux-graph-chip--muted" title={`${clippedRefs} more ref${clippedRefs === 1 ? "" : "s"} on this commit`}>+{clippedRefs}</span>
+                    )}
                   </span>
                   <span>{commit.authorName}</span><span>{formatDate(commit.authoredAt)}</span>
                   {showChanges && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} files, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}
@@ -236,7 +409,13 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                 </button>
               );
             })}
-            {!display.length && <div className="ux-empty-state">No loaded commits match “{query}”. Use Git Intelligence for full-history file, patch and range search.</div>}
+            {!display.length && (
+              <div className="ux-empty-state">
+                {filterBusy
+                  ? "Filtering…"
+                  : `No commits match ${filterMode === "path" ? "path" : filterMode === "author" ? "author" : "message"} “${query.trim()}” (searched all refs).`}
+              </div>
+            )}
           </div>
         </div>
       </section>

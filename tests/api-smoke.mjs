@@ -344,6 +344,44 @@ async function run() {
     token: "t",
   });
   assert(prProvider.includes("unsupported provider"), "unknown provider rejected");
+
+  // --- history filter (SourceGit query modes) -----------------------------------
+  const msgFilter = await api("history_query", { path: ROOT, query: "feature change", mode: "message", limit: 50 });
+  assert(msgFilter.length === 1 && msgFilter[0].subject === "feature change", `message filter finds the exact commit (got ${msgFilter.length})`);
+  const msgNoMatch = await api("history_query", { path: ROOT, query: "zzz-no-such-message", mode: "message", limit: 50 });
+  assert(msgNoMatch.length === 0, "message filter with no hits returns empty");
+  const authorFilter = await api("history_query", { path: ROOT, query: "smoke@example.test", mode: "author", limit: 50 });
+  assert(authorFilter.length >= 3 && authorFilter.every((commit) => commit.authorEmail === "smoke@example.test"), "author filter returns only that author");
+  const pathFilter = await api("history_query", { path: ROOT, query: "base.txt", mode: "path", limit: 50 });
+  assert(pathFilter.length >= 3, `path filter lists base.txt commits (got ${pathFilter.length})`);
+  const pathNoMatch = await api("history_query", { path: ROOT, query: "does-not-exist.txt", mode: "path", limit: 50 });
+  assert(pathNoMatch.length === 0, "path filter with no hits returns empty");
+
+  // :(literal) pathspec: a file whose name contains glob characters must not
+  // match its glob siblings.
+  write("b[0].txt", "bracket\n");
+  write("b1.txt", "sibling\n");
+  git(["add", "b[0].txt", "b1.txt"]);
+  git(["commit", "-q", "-m", "add bracket file"]);
+  const literalHistory = await api("file_history", { path: ROOT, file: "b[0].txt", followRenames: true, allRefs: true, limit: 50 });
+  assert(literalHistory.length === 1, `literal pathspec isolates the bracket file (got ${literalHistory.length} commits)`);
+
+  // unborn HEAD: a fresh repo with zero commits returns empty, never an error.
+  const UNBORN = fs.mkdtempSync(path.join(os.tmpdir(), "chrono-unborn-"));
+  git(["init", "-q", UNBORN]);
+  const unbornSummary = await api("repository_summary", { path: UNBORN });
+  assert(unbornSummary.head === null, "unborn HEAD summary reports null head");
+  const unbornHistory = await api("repository_history", { path: UNBORN, limit: 50 });
+  assert(Array.isArray(unbornHistory) && unbornHistory.length === 0, "unborn HEAD history is empty, not an error");
+  const unbornStatus = await api("repository_status", { path: UNBORN });
+  assert(Array.isArray(unbornStatus) && unbornStatus.length === 0, "unborn HEAD status is empty, not an error");
+  const unbornQuery = await api("history_query", { path: UNBORN, query: "anything", mode: "message", limit: 50 });
+  assert(unbornQuery.length === 0, "unborn HEAD filter is empty, not an error");
+  try { fs.rmSync(UNBORN, { recursive: true, force: true }); } catch { /* best effort */ }
+
+  // invalid filter mode is rejected by the route
+  const badMode = await apiError("history_query", { path: ROOT, query: "x", mode: "bogus" });
+  assert(badMode.includes("filter mode"), "unknown filter mode rejected");
 }
 
 // --- main ----------------------------------------------------------------------

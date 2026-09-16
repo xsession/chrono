@@ -102,6 +102,21 @@ const routes: Record<string, Handler> = {
   repository_summary: (body) => backend.repositorySummary(bodyPath(body)),
   repository_history: (body) =>
     backend.repositoryHistory(bodyPath(body), num(body.limit ?? 300, "limit")),
+  history_query: (body) => {
+    const mode = body.mode;
+    if (mode !== "message" && mode !== "author" && mode !== "path") {
+      throw new AppError("invalid", "filter mode must be message, author or path");
+    }
+    const limit = num(body.limit ?? 300, "limit");
+    // SourceGit-style search modes: message = one --grep per word + --all-match,
+    // author = --author, path = literal pathspec. All default to `--all` so the
+    // whole repo (not just HEAD's branch) is searched.
+    return insights.historyQuery(bodyPath(body), {
+      query: str(body.query, "query"),
+      mode,
+      limit,
+    });
+  },
   repository_status: (body) => backend.repositoryStatus(bodyPath(body)),
   repository_branches: (body) => backend.repositoryBranches(bodyPath(body)),
 

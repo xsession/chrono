@@ -77,6 +77,8 @@ async function invoke<T>(command: string, payload: Record<string, unknown> = {})
 export const api = {
   summary: (path: string) => invoke<RepositorySummary>("repository_summary", { path }),
   history: (path: string, limit = 300) => invoke<CommitRecord[]>("repository_history", { path, limit }),
+  historyQuery: (path: string, request: { query: string; mode: "message" | "author" | "path"; limit?: number }) =>
+    invoke<CommitRecord[]>("history_query", { path, ...request }),
   status: (path: string) => invoke<FileChange[]>("repository_status", { path }),
   branches: (path: string) => invoke<BranchRecord[]>("repository_branches", { path }),
   conflicts: (path: string) => invoke<ConflictFileSummary[]>("repository_conflicts", { path }),

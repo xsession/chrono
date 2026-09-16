@@ -9,6 +9,7 @@ import {
   checked,
   checkedStdout,
   COMMIT_FORMAT,
+  hasHead,
   parseCommits,
   repositoryRoot,
   runGit,
@@ -93,8 +94,10 @@ export async function repositorySummary(inputPath: string): Promise<RepositorySu
 }
 
 export async function repositoryHistory(inputPath: string, limit: number): Promise<CommitRecord[]> {
+  const root = await repositoryRoot(inputPath);
+  if (!(await hasHead(root))) return []; // unborn HEAD: no commits, not an error
   const clamped = String(Math.min(Math.max(limit, 1), 5000));
-  const result = await checkedStdout(inputPath, [
+  const result = await checkedStdout(root, [
     "log",
     "--date=iso-strict",
     `--pretty=format:${COMMIT_FORMAT}`,
@@ -105,7 +108,9 @@ export async function repositoryHistory(inputPath: string, limit: number): Promi
 }
 
 export async function repositoryStatus(inputPath: string): Promise<FileChange[]> {
-  const result = await checkedStdout(inputPath, ["status", "--porcelain=v1", "-z"]);
+  const root = await repositoryRoot(inputPath);
+  if (!(await hasHead(root))) return []; // unborn HEAD: nothing to compare against
+  const result = await checkedStdout(root, ["status", "--porcelain=v1", "-z"]);
   const entries = result.split("\0").filter((entry) => entry.length > 0);
   const changes: FileChange[] = [];
   for (let i = 0; i < entries.length; i += 1) {

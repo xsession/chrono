@@ -1099,6 +1099,89 @@ body {
   box-shadow: none;
 }
 
+/* Highlight-mode dimming (SourceGit): geometry not on the highlighted chain
+   renders muted but still visible. */
+.ux-graph-line.is-dim { opacity: 0.28; }
+.ux-graph-node.is-dim { opacity: 0.35; }
+.ux-graph-label.is-dim { opacity: 0.35; }
+.ux-commit-row.is-dimmed > span:not(.ux-graph-cell),
+.ux-commit-row.is-dimmed > code {
+  opacity: 0.45;
+}
+
+/* Inline ref pills in the graph column (GitEmber drawLabel). The SVG is
+   absolutely positioned in the graph cell; the pills sit at the right edge
+   of the lanes and may overflow into the subject cell's 8px padding. */
+.ux-graph-svg { z-index: 1; }
+.ux-graph-label-box {
+  fill: var(--ux-bg-2);
+  stroke: var(--ux-border-strong);
+  stroke-width: 1;
+}
+.ux-graph-label-box--head {
+  fill: var(--ux-accent);
+  stroke: transparent;
+}
+.ux-graph-label-box--branch {
+  fill: var(--ux-accent-soft);
+  stroke: var(--ux-accent);
+}
+.ux-graph-label-text {
+  font-family: var(--ux-font);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  fill: var(--ux-text-2);
+  paint-order: stroke;
+}
+.ux-graph-label-text--head { fill: #fff; }
+
+/* History toolbar: highlight-mode segmented control + filter mode select. */
+.ux-highlight-modes {
+  display: inline-flex;
+  height: 29px;
+  border: 1px solid var(--ux-border);
+  border-radius: var(--ux-radius);
+  background: var(--ux-bg-0);
+  overflow: hidden;
+  flex: none;
+}
+.ux-highlight-modes button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--ux-text-3);
+  font: 600 11px var(--ux-font);
+  padding: 0 10px;
+  height: 100%;
+  cursor: pointer;
+}
+.ux-highlight-modes button + button { border-left: 1px solid var(--ux-border); }
+.ux-highlight-modes button:hover:not(:disabled) { color: var(--ux-text); background: var(--ux-bg-2); }
+.ux-highlight-modes button.is-active {
+  color: #fff;
+  background: var(--ux-accent);
+}
+.ux-highlight-modes button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ux-filter-mode {
+  height: 29px;
+  flex: none;
+  border: 1px solid var(--ux-border);
+  border-radius: var(--ux-radius);
+  background: var(--ux-bg-0);
+  color: var(--ux-text-2);
+  font: 500 11px var(--ux-font);
+  padding: 0 6px;
+  outline: none;
+}
+.ux-filter-mode:focus { border-color: #4b83bf; }
+
+.ux-search-field.is-busy { border-color: var(--ux-success); }
+
 .ux-elided-row {
   cursor: default;
   background: transparent !important;

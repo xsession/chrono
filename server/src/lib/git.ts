@@ -131,6 +131,21 @@ export async function repositoryRoot(path: string): Promise<string> {
   return result.stdout.trim();
 }
 
+// True when the repository has at least one commit. Every HEAD-relative read
+// command (log, status, blame…) is guarded with this first: an unborn-HEAD
+// repo then returns empty results instead of a git error (GitDesktop's rule).
+export async function hasHead(path: string): Promise<boolean> {
+  const result = await checkedOpt(path, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+  return result !== null;
+}
+
+// Wrap a user-supplied path in a `:(literal)` pathspec so glob characters in
+// the path (e.g. `b[0].txt`) can't match sibling files (GitDesktop fix).
+// `git blame` takes a literal path, not a pathspec — never wrap for blame.
+export function literalPathspec(file: string): string {
+  return `:(literal)${file}`;
+}
+
 // The shared commit log format string (fields separated by \u001f, records by \u001e).
 export const COMMIT_FORMAT = "%H%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%s%x1e";
 

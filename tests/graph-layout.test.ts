@@ -1,7 +1,11 @@
 // Layout tests for src/graph.ts (the commit graph engine behind the History
 // timeline). Run: node --experimental-strip-types tests/graph-layout.test.ts
 import { strict as assert } from "node:assert";
-import { layoutGraph, LANE_W, LANE_PAD, ROW_H, laneX, graphWidth } from "../src/graph.ts";
+import {
+  layoutGraph, LANE_W, LANE_PAD, ROW_H, laneX, graphWidth,
+  GRAPH_COLORS, firstParentChain, unionIds,
+  graphLabels, graphLabelsWidth, labelTextWidth, graphLabelYs,
+} from "../src/graph.ts";
 import type { CommitRecord } from "../src/types.ts";
 
 let counter = 0;
@@ -152,6 +156,119 @@ function rowOf(result, id: string) {
   assert.equal(graphWidth(1), 96, "minimum width clamp");
   assert.equal(graphWidth(3), 96, "minimum width clamp");
   assert.equal(graphWidth(5), 13 * 2 + 4 * 19, "beyond the clamp");
+}
+
+// 9. FIFO recycled colors: even with 12 concurrent branches (far beyond the
+//    8-color palette) every rendered color stays inside GRAPH_COLORS, and a
+//    linear chain keeps one color for its whole length.
+{
+  const commits: CommitRecord[] = [c("tip", "trunk0")];
+  for (let i = 0; i < 12; i += 1) commits.push(c(`branch${i}`, "root"));
+  const r = layoutGraph(commits);
+  const palette = new Set(GRAPH_COLORS);
+  const seen = new Set<string>();
+  for (const item of r.items) {
+    assert.ok(palette.has(item.color), `node color ${item.color} in palette`);
+    seen.add(item.color);
+    for (const seg of [...item.top, ...item.bottom]) assert.ok(palette.has(seg.color), "segment color in palette");
+    for (const line of item.through) assert.ok(palette.has(line.color), "through color in palette");
+  }
+  assert.ok(seen.size <= GRAPH_COLORS.length, `<= palette colors in flight, got ${seen.size}`);
+  // A 50-commit linear chain: one color, reused forever.
+  const chain: CommitRecord[] = [];
+  let prev: string | null = null;
+  for (let i = 0; i < 50; i += 1) {
+    const id = `c${i}`;
+    chain.push(c(id, ...(prev ? [prev] : [])));
+    prev = id;
+  }
+  const rc = layoutGraph(chain);
+  assert.equal(new Set(rc.items.map((item) => item.color)).size, 1, "chain keeps a single color");
+}
+
+// 10. Segments carry commit ids for highlighting: bottom → parent,
+//     top → child, through → the edge's full row span.
+{
+  const r = layoutGraph([c("M", "A", "B"), c("A", "root"), c("B", "root"), c("root")]);
+  const m = rowOf(r, "M");
+  assert.equal(m.bottom.length, 2);
+  assert.equal(new Set(m.bottom.map((seg) => seg.targetId)).size, 2, "each departing line names its parent");
+  for (const seg of m.bottom) {
+    assert.ok(["A", "B"].includes(seg.targetId ?? ""), "targetId is a real parent id");
+  }
+  const root = rowOf(r, "root");
+  assert.equal(root.top.length, 1);
+  assert.ok(Array.isArray(root.top[0].sourceIds) && root.top[0].sourceIds.includes("A") && root.top[0].sourceIds.includes("B"), "top segment names its children");
+}
+
+// 10b. through segments expose the edge's full row span (from child row to
+//      parent row) — what a highlight dimmer uses to dim only the stretch
+//      below the last highlighted child.
+{
+  const r = layoutGraph([c("tip", "m1"), c("m1", "m0"), c("side0", "side1"), c("side1", "m0"), c("m0")]);
+  const m1 = rowOf(r, "m1");
+  const m0 = rowOf(r, "m0");
+  const side0 = rowOf(r, "side0");
+  const side1 = rowOf(r, "side1");
+  assert.notEqual(side1.lane, m1.lane, "side commit sits on its own lane");
+  // The side line (side1 → m0) crosses m1's row in between; its span starts
+  // at side1's row (the line re-spawns there after the split).
+  const through = m1.through.find((line) => line.lane === side1.lane);
+  assert.ok(through, "side line crosses m1's row");
+  if (through) {
+    assert.equal(through.from, side1.visRow, "through.from = span's child row");
+    assert.equal(through.to, m0.visRow, "through.to = span's parent row");
+  }
+}
+
+// 11. firstParentChain / unionIds (SourceGit selected-commit highlight walk).
+{
+  const commits = [
+    c("tip", "m2"),
+    c("m2", "m1", "s2"),
+    c("s2", "s1"),
+    c("m1", "m0", "s1"),
+    c("s1", "m0"),
+    c("m0"),
+  ];
+  // Walking from the tip follows FIRST parents only: tip → m2 → m1 → m0.
+  const chain = firstParentChain(commits, "tip");
+  assert.deepEqual([...chain].sort(), ["m0", "m1", "m2", "tip"]);
+  assert.ok(!chain.has("s1") && !chain.has("s2"), "side branch excluded");
+  // From a side commit it walks that commit's first parent.
+  const side = firstParentChain(commits, "s2");
+  assert.deepEqual([...side].sort(), ["m0", "s1", "s2"]);
+  // Unknown or empty starts produce an empty set.
+  assert.equal(firstParentChain(commits, "ghost").size, 0);
+  assert.equal(firstParentChain(commits, null).size, 0);
+  assert.deepEqual([...unionIds(chain, null, side, undefined)].sort(), ["m0", "m1", "m2", "s1", "s2", "tip"]);
+  assert.equal(unionIds(null, undefined).size, 0);
+}
+
+// 12. Inline ref labels (GitEmber drawLabel): prefix stripping, ordering
+//     (HEAD → current branch → other branches → tags), width budgeting.
+{
+  const branches = [
+    { name: "feature/x", target: "c1", current: false, remote: false },
+    { name: "main", target: "c1", current: true, remote: false },
+    { name: "origin/main", target: "c1", current: false, remote: true },
+  ];
+  const labels = graphLabels("c1", branches, "c1", [{ name: "v1.0", target: "c1" }, { name: "other", target: "c2" }]);
+  assert.deepEqual(labels.map((label) => label.name), ["HEAD", "main", "feature/x", "v1.0"]);
+  assert.deepEqual(labels.map((label) => label.kind), ["head", "branch", "branch", "tag"]);
+  // Remotes and other commits' tags are excluded.
+  assert.ok(!labels.some((label) => label.name === "origin/main"));
+  assert.ok(!labels.some((label) => label.name === "other"));
+  // Width math: sum of pills + gaps + start offset.
+  assert.equal(graphLabelsWidth(labels), 6 + labels.reduce((sum, label) => sum + labelTextWidth(label.name), 0) + 4 * (labels.length - 1));
+  assert.equal(graphLabelsWidth([]), 0);
+  // Pill Y positions stay within the row and are ordered.
+  const ys = graphLabelYs(3);
+  assert.equal(ys.length, 3);
+  assert.ok(ys[0] < ys[1] && ys[1] < ys[2], "pill ys ordered");
+  assert.ok(ys[0] >= 0 && ys[2] + 12 <= ROW_H, "pill ys within the row");
+  // A commit with no refs at all gets no pills.
+  assert.equal(graphLabels("c2", branches, "c1").length, 0);
 }
 
 console.log("graph layout: all assertions passed");

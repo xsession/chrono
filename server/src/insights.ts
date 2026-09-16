@@ -7,8 +7,11 @@ import { AppError, invalidError } from "./lib/errors.ts";
 import {
   checkedStdout,
   COMMIT_FORMAT,
+  hasHead,
+  literalPathspec,
   parseCommits,
   parseNumstat,
+  repositoryRoot,
   type CommitRecord,
 } from "./lib/git.ts";
 
@@ -203,6 +206,8 @@ export async function searchCommits(
   }
 
   const limit = Math.min(Math.max(request.limit, 1), 1000);
+  const root = await repositoryRoot(inputPath);
+  if (!(await hasHead(root))) return { query: request.query, commits: [] };
   const args = ["log", "--date=iso-strict", `--pretty=format:${COMMIT_FORMAT}`, "-n", String(limit)];
   if (commitExact !== null) {
     args.push(commitExact, "--no-walk");
@@ -213,10 +218,47 @@ export async function searchCommits(
   for (const value of messages) args.push(`--grep=${value}`);
   for (const value of authors) args.push(`--author=${value}`);
   for (const value of changes) args.push(`-G${value}`);
-  if (files.length > 0) args.push("--", ...files);
+  if (files.length > 0) args.push("--", ...files.map(literalPathspec));
 
-  const output = await checkedStdout(inputPath, args);
+  const output = await checkedStdout(root, args);
   return { query: request.query, commits: parseCommits(output) };
+}
+
+/**
+ * History filter (SourceGit QueryCommits semantics):
+ *  - message: split into words, one `--grep` each + `--all-match -i` (AND)
+ *  - author : `-i --author=<query>`
+ *  - path   : `-- <literal pathspec>`
+ * Scans all refs (`--all`) in date order, capped like search_commits.
+ */
+export async function historyQuery(
+  inputPath: string,
+  request: { query: string; mode: "message" | "author" | "path"; limit: number },
+): Promise<CommitRecord[]> {
+  const query = request.query.trim();
+  if (query.length === 0) throw invalidError("filter query is required");
+  const root = await repositoryRoot(inputPath);
+  if (!(await hasHead(root))) return [];
+  const limit = Math.min(Math.max(request.limit, 1), 1000);
+  const args = [
+    "log",
+    "--date=iso-strict",
+    `--pretty=format:${COMMIT_FORMAT}`,
+    "-n",
+    String(limit),
+    "--all",
+    "--date-order",
+  ];
+  if (request.mode === "message") {
+    const words = tokenize(query);
+    if (words.length > 1) args.push("--all-match", "-i");
+    for (const word of words) args.push(`--grep=${word}`);
+  } else if (request.mode === "author") {
+    args.push("-i", `--author=${query}`);
+  } else {
+    args.push("--", literalPathspec(query));
+  }
+  return parseCommits(await checkedStdout(root, args));
 }
 
 export async function commitDetails(inputPath: string, commit: string): Promise<CommitDetails> {
@@ -295,13 +337,15 @@ export async function commitFileDiff(inputPath: string, commit: string, filePath
   }
 
   // First parent is the base; a root commit diffs against the empty tree.
-  const parentsField = (await checkedStdout(inputPath, ["show", "-s", "--format=%P", revision])).trim();
+  // `:(literal)` keeps glob characters in the path from matching siblings.
+  const root = await repositoryRoot(inputPath);
+  const parentsField = (await checkedStdout(root, ["show", "-s", "--format=%P", revision])).trim();
   const parents = parentsField.split(/\s+/).filter((value) => value.length > 0);
   const base = parents[0] ?? EMPTY_TREE;
-  const diffBase = ["--no-renames", base, revision, "--", file];
+  const diffBase = ["--no-renames", base, revision, "--", literalPathspec(file)];
 
   // Counts + binary flag.
-  const numstatLine = (await checkedStdout(inputPath, ["diff", "--numstat", ...diffBase])).split(/\r?\n/).find((line) => line.length) ?? "";
+  const numstatLine = (await checkedStdout(root, ["diff", "--numstat", ...diffBase])).split(/\r?\n/).find((line) => line.length) ?? "";
   const [addRaw, delRaw] = numstatLine.split("\t");
   const binary = addRaw === "-" || delRaw === "-";
   const additions = binary ? 0 : Number.parseInt(addRaw, 10) || 0;
@@ -309,7 +353,7 @@ export async function commitFileDiff(inputPath: string, commit: string, filePath
 
   // Status letter (A/M/D/T). Falls back to "modified" if git reports nothing
   // (e.g. a rename recorded under a combined "old => new" path in the list).
-  const statusLine = (await checkedStdout(inputPath, ["diff", "--name-status", ...diffBase])).split(/\r?\n/).find((line) => line.length)?.trim() ?? "";
+  const statusLine = (await checkedStdout(root, ["diff", "--name-status", ...diffBase])).split(/\r?\n/).find((line) => line.length)?.trim() ?? "";
   const letter = statusLine.charAt(0).toUpperCase();
   const status = letter === "A" ? "added" : letter === "D" ? "deleted" : letter === "T" ? "typechange" : "modified";
 
@@ -317,7 +361,7 @@ export async function commitFileDiff(inputPath: string, commit: string, filePath
     return { path: file, status, binary, additions, deletions, hunks: [] };
   }
 
-  const raw = await checkedStdout(inputPath, ["diff", "--unified=3", ...diffBase]);
+  const raw = await checkedStdout(root, ["diff", "--unified=3", ...diffBase]);
   const hunks = parseUnifiedHunks(raw);
   return { path: file, status, binary: false, additions, deletions, hunks };
 }
@@ -365,8 +409,10 @@ export function parseUnifiedHunks(raw: string): CommitDiffHunk[] {
 }
 
 export async function historyChangeStats(inputPath: string, limit: number): Promise<HistoryChangeStat[]> {
+  const root = await repositoryRoot(inputPath);
+  if (!(await hasHead(root))) return []; // unborn HEAD: nothing to count
   const clamped = Math.min(Math.max(limit, 1), 1000);
-  const output = await checkedStdout(inputPath, [
+  const output = await checkedStdout(root, [
     "log",
     "-n",
     String(clamped),
@@ -457,6 +503,8 @@ export async function compareRefs(
 }
 
 export async function fileHistory(inputPath: string, request: FileHistoryRequest): Promise<CommitRecord[]> {
+  const root = await repositoryRoot(inputPath);
+  if (!(await hasHead(root))) return []; // unborn HEAD: no file history
   const file = request.file.trim();
   if (file.length === 0) throw invalidError("file path is required");
   const args = [
@@ -468,8 +516,8 @@ export async function fileHistory(inputPath: string, request: FileHistoryRequest
   ];
   if (request.allRefs) args.push("--all");
   if (request.followRenames) args.push("--follow");
-  args.push("--", file);
-  return parseCommits(await checkedStdout(inputPath, args));
+  args.push("--", literalPathspec(file));
+  return parseCommits(await checkedStdout(root, args));
 }
 
 export async function lineHistory(
@@ -483,6 +531,8 @@ export async function lineHistory(
   if (trimmedFile.length === 0 || start === 0 || end < start) {
     throw invalidError("valid file and 1-based line range are required");
   }
+  const root = await repositoryRoot(inputPath);
+  if (!(await hasHead(root))) return []; // unborn HEAD: no line history
   const range = `${start},${end}:${trimmedFile}`;
   const args = [
     "log",
@@ -494,7 +544,7 @@ export async function lineHistory(
     "-n",
     String(Math.min(Math.max(limit, 1), 500)),
   ];
-  return parseCommits(await checkedStdout(inputPath, args));
+  return parseCommits(await checkedStdout(root, args));
 }
 
 export async function blameFile(
@@ -506,12 +556,19 @@ export async function blameFile(
 ): Promise<BlameResult> {
   const trimmedFile = file.trim();
   if (trimmedFile.length === 0) throw invalidError("file path is required");
+  const root = await repositoryRoot(inputPath);
+  if (!(await hasHead(root))) {
+    // Unborn HEAD with no explicit revision: blame has nothing to blame.
+    if (!revision?.trim()) return { file: trimmedFile, lines: [], truncated: false };
+  }
   const args = ["blame", "--line-porcelain"];
   if (ignoreWhitespace) args.push("-w");
   const trimmedRevision = revision?.trim();
   if (trimmedRevision) args.push(safeRevision(trimmedRevision));
+  // NOTE: no `:(literal)` here — `git blame` takes a literal path, never a
+  // pathspec (GitDesktop's explicit exception to their literal-pathspec rule).
   args.push("--", trimmedFile);
-  const output = await checkedStdout(inputPath, args);
+  const output = await checkedStdout(root, args);
 
   const lines: BlameLine[] = [];
   const rawLines = output.split(/\r?\n/);
