@@ -182,7 +182,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
             {display.map((entry, displayIndex) => {
               if (entry.kind === "elided") {
                 return (
-                  <div key={`elided-${displayIndex}`} className="ux-commit-row ux-elided-row" aria-hidden="true">
+                  <div key={`elided-${displayIndex}`} className="ux-commit-row ux-elided-row" style={{ gridTemplateColumns: gridTemplate }} aria-hidden="true">
                     <span className="ux-graph-cell" style={{ width: graphColWidth }}>
                       <svg className="ux-graph-svg" width={graphWidthPx} height={ROW_H} viewBox={`0 0 ${graphWidthPx} ${ROW_H}`}>
                         {entry.throughLanes.map((lane) => (
@@ -205,7 +205,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               const branchChips = branches.filter((branch) => branch.target === commit.id);
               const stat = stats.get(commit.id);
               return (
-                <button key={commit.id} className={`ux-commit-row${isSelected ? " is-selected" : ""}`} onClick={() => onSelect(commit)} aria-pressed={isSelected}>
+                <button key={commit.id} className={`ux-commit-row${isSelected ? " is-selected" : ""}`} style={{ gridTemplateColumns: gridTemplate }} onClick={() => onSelect(commit)} aria-pressed={isSelected}>
                   <span className="ux-graph-cell" style={{ width: graphColWidth }} aria-label={item.isMerge ? `${commit.parents.length} parents` : "Commit"}>
                     <RowGraph item={item} laneCount={laneCount} isHead={isHead} />
                     <span
