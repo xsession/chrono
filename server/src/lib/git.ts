@@ -96,9 +96,7 @@ export async function checkedStdout(
   extraEnv: Record<string, string> = {},
 ): Promise<string> {
   const output = await runGit(path, args, extraEnv);
-  if (output.code !== 0) {
-    throw new AppError("command", `git ${args.join(" ")}: ${output.stderr.trim()}`);
-  }
+  if (output.code !== 0) throw gitFailure(path, args, output.stderr, output.code);
   return output.stdout;
 }
 
@@ -110,10 +108,21 @@ export async function checked(
 ): Promise<CommandResult> {
   const output = await runGit(path, args, extraEnv);
   const result = toCommandResult(output);
-  if (result.exitCode !== 0) {
-    throw new AppError("command", `git ${args.join(" ")}: ${result.stderr.trim()}`);
-  }
+  if (result.exitCode !== 0) throw gitFailure(path, args, result.stderr, result.exitCode);
   return result;
+}
+
+// Build the failure message, naming the workdir so the UI says WHICH folder
+// failed. git's stderr is empty on several platforms (notably Windows when
+// the workdir is missing), which used to surface as "git <args>: " — a
+// fallback keeps the message useful either way.
+function gitFailure(workdir: string | null, args: string[], stderr: string, code: number): AppError {
+  const detail = stderr.replace(/\s+/g, " ").trim();
+  const where = workdir ? ` in ${workdir}` : "";
+  return new AppError(
+    "command",
+    detail ? `git ${args.join(" ")}${where}: ${detail}` : `git ${args.join(" ")}${where} failed (exit code ${code})`,
+  );
 }
 
 // Return CommandResult, or null on failure (mirrors Rust `.ok()`).
@@ -126,9 +135,21 @@ export async function checkedOpt(
   return output.code === 0 ? toCommandResult(output) : null;
 }
 
+// Resolve the worktree root for a user-supplied path. When the folder is
+// missing or not a git checkout, git's stderr can be empty (Windows), so the
+// error names the path explicitly instead of leaving a dangling colon.
 export async function repositoryRoot(path: string): Promise<string> {
-  const result = await checked(path, ["rev-parse", "--show-toplevel"]);
-  return result.stdout.trim();
+  const output = await runGit(path, ["rev-parse", "--show-toplevel"]);
+  if (output.code !== 0) {
+    const detail = output.stderr.replace(/\s+/g, " ").trim();
+    throw new AppError(
+      "invalid",
+      detail
+        ? `git rev-parse --show-toplevel in ${path}: ${detail}`
+        : `"${path}" is not inside a git work tree — the folder may be missing or renamed`,
+    );
+  }
+  return output.stdout.trim();
 }
 
 // True when the repository has at least one commit. Every HEAD-relative read

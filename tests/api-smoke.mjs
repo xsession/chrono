@@ -314,6 +314,11 @@ async function run() {
   // validation errors
   const missingPath = await apiError("repository_summary", {});
   assert(missingPath.includes("path"), "missing path field rejected");
+  // A folder that is not a git checkout (or is missing) must report the
+  // problem with the path, not a bare "git rev-parse --show-toplevel: ".
+  const nonRepo = await apiError("repository_summary", { path: CONFIG_DIR });
+  assert(nonRepo.includes(CONFIG_DIR), `non-repo path is named in the error (got: ${nonRepo})`);
+  assert(!nonRepo.endsWith(": "), "no dangling-colon error (empty git stderr)");
   const unsafePath = await apiError("conflict_detail", { path: ROOT, file: "../escape.txt" });
   assert(unsafePath.includes("safe"), "unsafe conflict path rejected");
   const missingField = await apiError("resolve_conflict", { path: ROOT, file: "base.txt" });
