@@ -19,7 +19,7 @@ export default defineConfig({
   clearScreen: false,
   server: {
     strictPort: true,
-    host: "0.0.0.0",
+    host: process.env.CHRONO_VITE_HOST ?? "127.0.0.1",
     port: Number.parseInt(process.env.CHRONO_VITE_PORT ?? "1420", 10),
     proxy,
   },

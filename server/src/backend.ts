@@ -42,6 +42,12 @@ export interface BranchRecord {
   upstream: string | null;
 }
 
+export interface RemoteRecord {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
 export interface CloneRequest {
   url: string;
   destination: string;
@@ -93,6 +99,21 @@ export async function repositorySummary(inputPath: string): Promise<RepositorySu
   };
 }
 
+export async function repositoryRemotes(inputPath: string): Promise<RemoteRecord[]> {
+  const output = await checkedStdout(inputPath, ["remote", "-v"]);
+  const records = new Map<string, RemoteRecord>();
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^(\S+)\s+(.+?)\s+\((fetch|push)\)$/);
+    if (!match) continue;
+    const [, name, url, kind] = match;
+    const previous = records.get(name) ?? { name, fetchUrl: "", pushUrl: "" };
+    if (kind === "fetch") previous.fetchUrl = url;
+    else previous.pushUrl = url;
+    records.set(name, previous);
+  }
+  return [...records.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function repositoryHistory(inputPath: string, limit: number): Promise<CommitRecord[]> {
   const root = await repositoryRoot(inputPath);
   if (!(await hasHead(root))) return []; // unborn HEAD: no commits, not an error
@@ -105,6 +126,46 @@ export async function repositoryHistory(inputPath: string, limit: number): Promi
     clamped,
   ]);
   return parseCommits(result);
+}
+
+export interface HistoryPage {
+  commits: CommitRecord[];
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+/** Load one bounded slice of the all-refs history. The cursor is an opaque
+ * decimal offset for now; keeping it server-owned lets the UI move through
+ * large histories without loading the whole repository in one request. */
+export async function repositoryHistoryPage(
+  inputPath: string,
+  limit: number,
+  cursor: string | null,
+): Promise<HistoryPage> {
+  const root = await repositoryRoot(inputPath);
+  if (!(await hasHead(root))) return { commits: [], nextCursor: null, hasMore: false }; // unborn HEAD: no commits, not an error
+  const offset = cursor === null || cursor.trim() === "" ? 0 : Number(cursor);
+  if (!Number.isSafeInteger(offset) || offset < 0) throw invalidError("invalid history cursor");
+  const pageSize = Math.min(Math.max(limit, 1), 1000);
+  const result = await checkedStdout(root, [
+    "log",
+    "--all",
+    "--date-order",
+    "--date=iso-strict",
+    `--pretty=format:${COMMIT_FORMAT}`,
+    "-n",
+    String(pageSize + 1),
+    "--skip",
+    String(offset),
+  ]);
+  const parsed = parseCommits(result);
+  const hasMore = parsed.length > pageSize;
+  const commits = hasMore ? parsed.slice(0, pageSize) : parsed;
+  return {
+    commits,
+    nextCursor: hasMore ? String(offset + commits.length) : null,
+    hasMore,
+  };
 }
 
 export async function repositoryStatus(inputPath: string): Promise<FileChange[]> {
@@ -223,6 +284,24 @@ export async function createBranch(inputPath: string, branch: string): Promise<v
   await checked(inputPath, ["switch", "-c", branch]);
 }
 
+/** Create a branch at an explicit revision without changing the checked-out branch. */
+export async function createBranchAt(inputPath: string, branch: string, revision: string): Promise<void> {
+  const name = branch.trim();
+  const rev = revision.trim();
+  if (!/^[A-Za-z0-9._/-]+$/.test(name) || name.startsWith("-") || name.endsWith("/") || name.includes("..") || name.includes("@{")) {
+    throw invalidError("invalid branch name");
+  }
+  if (!rev || rev.startsWith("-") || rev.includes("\0")) throw invalidError("invalid revision");
+  await checked(inputPath, ["branch", name, rev]);
+}
+
+export async function resetTo(inputPath: string, revision: string, mode: "soft" | "mixed" | "hard"): Promise<CommandResult> {
+  const rev = revision.trim();
+  if (!rev || rev.startsWith("-") || rev.includes("\0")) throw invalidError("invalid revision");
+  if (mode !== "soft" && mode !== "mixed" && mode !== "hard") throw invalidError("reset mode must be soft, mixed or hard");
+  return checked(inputPath, ["reset", `--${mode}`, rev]);
+}
+
 export async function runWorkflow(inputPath: string, request: WorkflowRequest): Promise<CommandResult> {
   return checked(inputPath, workflowArgs(request));
 }
@@ -270,9 +349,14 @@ function workflowArgs(request: WorkflowRequest): string[] {
       return ["stash", "apply", requireArgs(request, 1)[0]];
     case "stash_drop":
       return ["stash", "drop", requireArgs(request, 1)[0]];
+    case "checkout_tag": {
+      const [revision] = requireArgs(request, 1);
+      if (revision.startsWith("-") || revision.includes("\0")) throw invalidError("invalid revision");
+      return ["switch", "--detach", revision];
+    }
     case "bisect_start": {
-      const [good, bad] = requireArgs(request, 2);
-      return ["bisect", "start", good, bad];
+      const [bad, good] = requireArgs(request, 2);
+      return ["bisect", "start", bad, good];
     }
     case "bisect_good": {
       const [commit] = requireArgs(request, 1);

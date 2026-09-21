@@ -12,6 +12,7 @@ import {
   parseCommits,
   parseNumstat,
   repositoryRoot,
+  runGit,
   type CommitRecord,
 } from "./lib/git.ts";
 
@@ -60,6 +61,50 @@ export interface RefComparison {
   rightOnly: CommitRecord[];
   filesFromBaseToLeft: CommitFileChange[];
   filesFromBaseToRight: CommitFileChange[];
+}
+
+export interface RangeDiffEntry {
+  status: "added" | "deleted" | "changed" | "same";
+  oldPosition: number | null;
+  oldCommit: string | null;
+  newPosition: number | null;
+  newCommit: string | null;
+  subject: string;
+  details: string[];
+}
+
+export interface RangeDiffResult {
+  base: string;
+  before: string;
+  after: string;
+  entries: RangeDiffEntry[];
+  raw: string;
+  truncated: boolean;
+}
+
+export interface RepositoryHealth {
+  branch: string | null;
+  head: string | null;
+  dirtyFiles: number;
+  conflictFiles: number;
+  worktreeCount: number;
+  dirtyWorktreeCount: number;
+  submoduleCount: number;
+  changedSubmoduleCount: number;
+  lfsAvailable: boolean;
+  lfsTrackedFiles: number;
+  objectCount: number;
+  packedObjectCount: number;
+  packCount: number;
+  packSizeKb: number;
+  reflogEntries: number;
+  maintenanceConfigured: boolean;
+  fsck: {
+    scanned: boolean;
+    unreachableObjects: number;
+    danglingCommits: number;
+    warnings: string[];
+  };
 }
 
 export interface FileHistoryRequest {
@@ -499,6 +544,144 @@ export async function compareRefs(
     rightOnly,
     filesFromBaseToLeft,
     filesFromBaseToRight,
+  };
+}
+
+const MAX_RANGE_DIFF_LINES = 2400;
+
+type ParsedRangeSide = {
+  position: number | null;
+  commit: string | null;
+  subject: string;
+};
+
+function parseRangeSide(value: string): ParsedRangeSide {
+  const match = /^\s*(\d+|-):\s*(.*)$/.exec(value);
+  if (!match) return { position: null, commit: null, subject: value.trim() };
+  const position = match[1] === "-" ? null : Number.parseInt(match[1], 10);
+  const rest = match[2].trim();
+  if (!rest || /^-+$/.test(rest)) return { position, commit: null, subject: "" };
+  if (rest.startsWith("-------")) return { position, commit: null, subject: rest.slice(7).trim() };
+  const [commit, ...subject] = rest.split(/\s+/);
+  return { position, commit: /^[0-9a-f]{7,40}$/i.test(commit) ? commit : null, subject: subject.join(" ") || (commit ?? "") };
+}
+
+function parseRangeDiff(rawOutput: string): { entries: RangeDiffEntry[]; raw: string; truncated: boolean } {
+  const lines = rawOutput.replace(/\r/g, "").split("\n");
+  const truncated = lines.length > MAX_RANGE_DIFF_LINES;
+  const visibleLines = lines.slice(0, MAX_RANGE_DIFF_LINES);
+  const entries: RangeDiffEntry[] = [];
+  let current: RangeDiffEntry | null = null;
+  for (const line of visibleLines) {
+    const marker = /\s([<=>!])\s/.exec(line);
+    if (!marker || marker.index === undefined) {
+      if (current && line.trim().length > 0) current.details.push(line);
+      continue;
+    }
+    const left = parseRangeSide(line.slice(0, marker.index));
+    const right = parseRangeSide(line.slice(marker.index + marker[0].length));
+    const status = marker[1] === ">" ? "added" : marker[1] === "<" ? "deleted" : marker[1] === "!" ? "changed" : "same";
+    current = {
+      status,
+      oldPosition: left.position,
+      oldCommit: left.commit,
+      newPosition: right.position,
+      newCommit: right.commit,
+      subject: right.subject || left.subject,
+      details: [],
+    };
+    entries.push(current);
+  }
+  return { entries, raw: visibleLines.join("\n").trim(), truncated };
+}
+
+export async function rangeDiff(
+  inputPath: string,
+  base: string,
+  before: string,
+  after: string,
+): Promise<RangeDiffResult> {
+  const safeBase = safeRevision(base);
+  const safeBefore = safeRevision(before);
+  const safeAfter = safeRevision(after);
+  const output = await checkedStdout(inputPath, [
+    "range-diff",
+    "--no-color",
+    "--no-dual-color",
+    `${safeBase}..${safeBefore}`,
+    `${safeBase}..${safeAfter}`,
+  ]);
+  const parsed = parseRangeDiff(output);
+  return {
+    base: safeBase,
+    before: safeBefore,
+    after: safeAfter,
+    ...parsed,
+  };
+}
+
+function parseCountObjects(output: string): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const line of output.split(/\r?\n/)) {
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    const key = line.slice(0, separator).trim();
+    const value = Number.parseInt(line.slice(separator + 1).trim(), 10);
+    if (key && Number.isFinite(value)) result[key] = value;
+  }
+  return result;
+}
+
+function nonEmptyLines(output: string): string[] {
+  return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+}
+
+export async function repositoryHealth(inputPath: string, scanObjects = false): Promise<RepositoryHealth> {
+  const root = await repositoryRoot(inputPath);
+  const [branchResult, headResult, statusResult, objectResult, reflogResult, submoduleResult, lfsVersion, lfsFiles, maintenanceResult] = await Promise.all([
+    runGit(root, ["branch", "--show-current"]),
+    runGit(root, ["rev-parse", "--verify", "--quiet", "HEAD"]),
+    runGit(root, ["status", "--porcelain=v1"]),
+    runGit(root, ["count-objects", "-v"]),
+    runGit(root, ["reflog", "show", "--all", "--format=%H"]),
+    runGit(root, ["submodule", "status", "--recursive"]),
+    runGit(root, ["lfs", "version"]),
+    runGit(root, ["lfs", "ls-files", "-n"]),
+    runGit(root, ["config", "--get-regexp", "^maintenance\\."]),
+  ]);
+  const statusLines = nonEmptyLines(statusResult.stdout);
+  const conflictFiles = statusLines.filter((line) => /^(?:..)?(?:UU|AA|DD|AU|UD|UA|DU)/.test(line) || line.slice(0, 2).includes("U")).length;
+  const submoduleLines = nonEmptyLines(submoduleResult.stdout);
+  const worktrees = await worktreeSummaries(root);
+  let fsckWarnings: string[] = [];
+  if (scanObjects) {
+    const fsck = await runGit(root, ["fsck", "--full", "--no-reflogs", "--no-progress"]);
+    fsckWarnings = nonEmptyLines(`${fsck.stdout}\n${fsck.stderr}`).slice(0, 24);
+  }
+  const objects = parseCountObjects(objectResult.stdout);
+  return {
+    branch: branchResult.code === 0 && branchResult.stdout.trim() ? branchResult.stdout.trim() : null,
+    head: headResult.code === 0 && headResult.stdout.trim() ? headResult.stdout.trim() : null,
+    dirtyFiles: statusLines.length,
+    conflictFiles,
+    worktreeCount: worktrees.length,
+    dirtyWorktreeCount: worktrees.filter((worktree) => worktree.dirtyCount > 0 || worktree.conflictCount > 0).length,
+    submoduleCount: submoduleLines.length,
+    changedSubmoduleCount: submoduleLines.filter((line) => /^[+\-U]/.test(line)).length,
+    lfsAvailable: lfsVersion.code === 0,
+    lfsTrackedFiles: lfsFiles.code === 0 ? nonEmptyLines(lfsFiles.stdout).length : 0,
+    objectCount: objects.count ?? 0,
+    packedObjectCount: objects["in-pack"] ?? 0,
+    packCount: objects.packs ?? 0,
+    packSizeKb: objects["size-pack"] ?? 0,
+    reflogEntries: nonEmptyLines(reflogResult.stdout).length,
+    maintenanceConfigured: maintenanceResult.code === 0 && maintenanceResult.stdout.trim().length > 0,
+    fsck: {
+      scanned: scanObjects,
+      unreachableObjects: fsckWarnings.filter((line) => /unreachable/i.test(line)).length,
+      danglingCommits: fsckWarnings.filter((line) => /dangling commit/i.test(line)).length,
+      warnings: fsckWarnings,
+    },
   };
 }
 

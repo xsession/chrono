@@ -15,6 +15,8 @@ type Props = {
   headSha?: string;
   onCheckout: (branch: string) => Promise<void>;
   onCheckoutRemote: (remoteBranch: string) => Promise<void>;
+  onCheckoutTag: (tag: string) => Promise<void>;
+  onOpenWorktree?: (path: string) => void | Promise<void>;
   onNotify: (message: string) => void;
   onRefresh: () => Promise<void>;
 };
@@ -41,7 +43,7 @@ function isMatch(needle: string, ...haystack: (string | null | undefined)[]): bo
   return haystack.some((value) => value && value.toLowerCase().includes(n));
 }
 
-export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRemote, onNotify, onRefresh }: Props) {
+export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRemote, onCheckoutTag, onOpenWorktree, onNotify, onRefresh }: Props) {
   const [groups, setGroups] = useState<RefGroups | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -64,9 +66,14 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
   const [busy, setBusy] = useState<string | null>(null);
   const filterRef = useRef<HTMLInputElement>(null);
 
-  const load = useCallback(() => {
-    api.refGroups(repositoryPath).then((value) => { setGroups(value); setError(null); })
-      .catch((err) => setError(String(err)));
+  const load = useCallback(async () => {
+    try {
+      const value = await api.refGroups(repositoryPath);
+      setGroups(value);
+      setError(null);
+    } catch (err) {
+      setError(String(err));
+    }
   }, [repositoryPath]);
 
   useEffect(() => { load(); }, [load]);
@@ -141,6 +148,23 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
   const remoteMatched = remoteBranches.filter((branch) => isMatch(needle, branch.name, branch.remote));
   const remoteMatchedRemotes = new Set(remoteMatched.map((branch) => branch.remote ?? "origin"));
 
+  // Apply the filter inside each remote group as well as to the remote list.
+  // Otherwise a match on one branch expands the remote and incorrectly shows
+  // every sibling branch while the "Viewing N/M" count claims they are hidden.
+  const visibleRemoteGroups = useMemo(() => {
+    if (!needle) return remoteGroups;
+    const result = new Map<string, Map<string, typeof remoteBranches>>();
+    for (const [remote, dirs] of remoteGroups) {
+      const visibleDirs = new Map<string, typeof remoteBranches>();
+      for (const [dir, branches] of dirs) {
+        const matches = branches.filter((branch) => isMatch(needle, branch.name, remote));
+        if (matches.length > 0) visibleDirs.set(dir, matches);
+      }
+      if (visibleDirs.size > 0) result.set(remote, visibleDirs);
+    }
+    return result;
+  }, [needle, remoteGroups, remoteBranches]);
+
   const visibleCounts = {
     local: localMatches.length,
     remote: remoteMatched.length,
@@ -153,9 +177,10 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
   const grandTotal = (groups ? groups.branches.length + groups.worktrees.length + groups.stashes.length + groups.tags.length + groups.submodules.length : 0);
 
   const checkout = async (branch: string) => {
-    setBusy(branch);
+    setBusy(branchBusyKey(branch));
     try {
       await onCheckout(branch);
+      await load();
     } catch (err) {
       onNotify(String(err));
     } finally {
@@ -163,13 +188,18 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
     }
   };
 
-  const currentWorktreeBranch = groups?.worktrees.find((wt) => wt.isMain)?.branch;
+  const normalizePath = (value: string): string => {
+    const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
+    return /^[A-Z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
+  };
+  const currentWorktreePath = normalizePath(repositoryPath);
   const branchBusyKey = (branch: string) => `branch:${branch}`;
 
   const trackCheckout = async (remoteBranch: string) => {
     setBusy(`remote:${remoteBranch}`);
     try {
       await onCheckoutRemote(remoteBranch);
+      await load();
     } catch (err) {
       onNotify(String(err));
     } finally {
@@ -246,10 +276,11 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
           />
         {!collapsed.has("remote") && (
           <div className="ux-refs-children" role="group">
-            {allRemotes.filter((remote) => remoteMatchedRemotes.has(remote) || !needle).map((remote) => {
+            {allRemotes.filter((remote) => !needle || remoteMatchedRemotes.has(remote)).map((remote) => {
               const remoteOpen = openRemotes.has(remote) || needle.length > 0;
-              const branches = remoteGroups.get(remote)?.get("") ?? [];
-              const subGroups = [...(remoteGroups.get(remote)?.entries() ?? [])].filter(([dir]) => dir !== "");
+              const groupsForRemote = visibleRemoteGroups.get(remote);
+              const branches = groupsForRemote?.get("") ?? [];
+              const subGroups = [...(groupsForRemote?.entries() ?? [])].filter(([dir]) => dir !== "");
               return (
                 <div key={remote} className="ux-refs-remote">
                   <button role="treeitem" aria-expanded={remoteOpen} className={`ux-refs-row ux-refs-row--group${remoteOpen ? " is-open" : ""}`} onClick={() => toggleRemote(remote)}>
@@ -282,21 +313,37 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
         {!collapsed.has("worktrees") && (
           <div className="ux-refs-children" role="group">
             {worktrees.map((wt) => {
-              const inThisWorktree = wt.branch === currentWorktreeBranch;
+              const inThisWorktree = normalizePath(wt.path) === currentWorktreePath;
+              const worktreeBusy = `worktree:${wt.path}`;
               return (
-                <div key={wt.path} role="treeitem" className={`ux-refs-row ux-refs-row--worktree${inThisWorktree ? " is-current" : ""}`}>
+                <button
+                  type="button"
+                  key={wt.path}
+                  role="treeitem"
+                  aria-current={inThisWorktree ? "page" : undefined}
+                  className={`ux-refs-row ux-refs-row--worktree${inThisWorktree ? " is-current" : ""}`}
+                  disabled={!onOpenWorktree || busy !== null}
+                  title={onOpenWorktree ? `Open worktree ${wt.path}` : wt.path}
+                  onClick={async () => {
+                    if (!onOpenWorktree) return;
+                    setBusy(worktreeBusy);
+                    try { await onOpenWorktree(wt.path); }
+                    catch (err) { onNotify(String(err)); }
+                    finally { setBusy(null); }
+                  }}
+                >
                   <Icon name={wt.locked ? "warning" : wt.isMain ? "repository" : "worktree"} />
                   <span className="ux-refs-name">
                     <strong>{wt.branch ?? `Detached ${wt.head.slice(0, 8)}`}</strong>
                     <small>{wt.path}{inThisWorktree ? " · current" : ""}</small>
                   </span>
                   <span className="ux-refs-badges">
-                    {inThisWorktree && <span className="ux-refs-badge ux-refs-badge--current">here</span>}
+                    {busy === worktreeBusy ? <span className="ux-refs-badge">opening…</span> : inThisWorktree && <span className="ux-refs-badge ux-refs-badge--current">here</span>}
                     {wt.conflictCount > 0 && <span className="ux-refs-badge ux-refs-badge--behind">{wt.conflictCount} conflicts</span>}
                     {wt.dirtyCount > 0 && <span className="ux-refs-badge">{wt.dirtyCount} changed</span>}
                     {wt.dirtyCount === 0 && wt.conflictCount === 0 && <span className="ux-refs-dot" title="clean worktree" aria-hidden="true" />}
                   </span>
-                </div>
+                </button>
               );
             })}
             {!worktrees.length && <div className="ux-refs-empty">No worktrees{needle ? " match" : ""}.</div>}
@@ -317,6 +364,7 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
                   const result = await api.workflow(repositoryPath, { operation, args: [stash.ref] });
                   onNotify(fmt(result));
                   await onRefresh();
+                  await load();
                 } catch (err) { onNotify(String(err)); }
                 finally { setBusy(null); }
               };
@@ -361,7 +409,8 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
                       onClick={async () => {
                         setBusy(busyKey);
                         try {
-                          await onCheckout(tag.name);
+                          await onCheckoutTag(tag.name);
+                          await load();
                         } catch (err) { onNotify(String(err)); }
                         finally { setBusy(null); }
                       }}>checkout</button>
@@ -387,6 +436,7 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
                   const result = await api.workflow(repositoryPath, { operation, args: [sub.path] });
                   onNotify(fmt(result));
                   await onRefresh();
+                  await load();
                 } catch (err) { onNotify(String(err)); }
                 finally { setBusy(null); }
               };
@@ -462,7 +512,7 @@ function RemoteBranchRow({ branch, remote, onCheckout, busy }: {
         <code>{branch.target.slice(0, 8)}</code>
         {isBusy
           ? <span className="ux-refs-badge">checking out…</span>
-          : <button className="ux-icon-button" title={`Checkout ${remote}/${branch.name} (creates a tracking branch)`} disabled={busy !== null} onClick={() => onCheckout(`${remote}/${branch.name}`)}>⤓</button>}
+          : <button className="ux-icon-button" title={`Checkout ${remote}/${branch.name} (creates a tracking branch)`} disabled={busy !== null} onClick={() => onCheckout(`${remote}/${branch.name}`)} onDoubleClick={(event) => event.stopPropagation()}>⤓</button>}
       </span>
     </div>
   );

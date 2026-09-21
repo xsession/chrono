@@ -361,7 +361,7 @@ export function unionIds(...sets: Array<Set<string> | null | undefined>): Set<st
 // usable from any renderer.
 // ---------------------------------------------------------------------------
 
-export type GraphLabelKind = "branch" | "tag" | "head";
+export type GraphLabelKind = "branch" | "tag" | "head" | "stash" | "worktree";
 
 export interface GraphLabel {
   /** display text, refs/…/ prefixes stripped */
@@ -383,6 +383,8 @@ export function graphLabels(
   branches: { name: string; target: string; current: boolean; remote: boolean }[],
   headSha: string | null | undefined,
   tags: { name: string; target: string }[] = [],
+  stashes: { ref: string; message: string; target: string }[] = [],
+  worktrees: { path: string; branch: string | null; head: string }[] = [],
 ): GraphLabel[] {
   const strip = (ref: string): string =>
     ref.replace(/^refs\/remotes\//, "").replace(/^refs\/heads\//, "").replace(/^refs\/tags\//, "");
@@ -393,7 +395,12 @@ export function graphLabels(
     entries.push({ label: { name: strip(branch.name), kind: "branch" }, order: branch.current ? 1 : 2 });
   }
   for (const tag of tags) if (tag.target === commitId) entries.push({ label: { name: tag.name, kind: "tag" }, order: 3 });
-  // HEAD first, then the current branch, other branches, tags (name-stable).
+  for (const stash of stashes) if (stash.target === commitId) entries.push({ label: { name: stash.ref.replace(/^refs\/stash/, "stash"), kind: "stash" }, order: 4 });
+  for (const worktree of worktrees) if (worktree.head === commitId) {
+    const name = worktree.branch || `detached ${worktree.head.slice(0, 8)}`;
+    entries.push({ label: { name: `wt:${name}`, kind: "worktree" }, order: 5 });
+  }
+  // HEAD first, then branches, tags, stashes and worktree heads (name-stable).
   entries.sort((a, b) => a.order - b.order || a.label.name.localeCompare(b.label.name));
   return entries.map((entry) => entry.label);
 }
@@ -411,7 +418,8 @@ export function graphLabelYs(count: number): number[] {
   const out: number[] = [];
   const pillH = 12;
   const step = 12;
-  const start = (ROW_H - (step * Math.max(0, count - 1) + pillH)) / 2;
-  for (let i = 0; i < count; i += 1) out.push(Math.round(start + i * step));
+  const visibleCount = Math.min(3, Math.max(0, count));
+  const start = (ROW_H - (step * Math.max(0, visibleCount - 1) + pillH)) / 2;
+  for (let i = 0; i < visibleCount; i += 1) out.push(Math.round(start + i * step));
   return out;
 }

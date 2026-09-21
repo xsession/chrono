@@ -141,14 +141,22 @@ export function BranchPanel({ branches, repositoryPath, headSha, onCheckout, onC
                   </span>
                 </div>
               ) : (
-                <button key={branch.name} className={`ux-reference-row${branch.current ? " is-current" : ""}`} onClick={() => !branch.current && checkout(branch.name)} disabled={disabled || branch.current || busyBranch !== null}>
+                <div
+                  key={branch.name}
+                  className={`ux-reference-row${branch.current ? " is-current" : ""}`}
+                  role="button"
+                  tabIndex={disabled || branch.current || busyBranch !== null ? -1 : 0}
+                  aria-disabled={disabled || branch.current || busyBranch !== null}
+                  onClick={() => { if (!branch.current && !disabled && busyBranch === null) void checkout(branch.name); }}
+                  onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !branch.current && !disabled && busyBranch === null) { event.preventDefault(); void checkout(branch.name); } }}
+                >
                   <Icon name="branch" />
                   <span className="ux-reference-name"><strong>{branch.name}</strong><small>{branch.upstream || "No upstream"}</small></span>
                   <span className="ux-reference-actions">
                     {busyBranch === branch.name ? <code>switching</code> : <code>{branch.target.slice(0, 8)}</code>}
-                    {!branch.current && <button className="ux-icon-button" title={`Delete ${branch.name}`} aria-label={`Delete ${branch.name}`} onClick={(event) => { event.stopPropagation(); setConfirmDelete({ name: branch.name, force: false }); }}>✕</button>}
+                    {!branch.current && <button className="ux-icon-button" disabled={disabled || busyBranch !== null} title={`Delete ${branch.name}`} aria-label={`Delete ${branch.name}`} onClick={(event) => { event.stopPropagation(); setConfirmDelete({ name: branch.name, force: false }); }}>✕</button>}
                   </span>
-                </button>
+                </div>
               )
             ))}
             {!local.length && <div className="ux-empty-state">No local branches match this filter.</div>}

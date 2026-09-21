@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
-import type { CommandResult, WorkflowRequest } from "../types";
+import type { CommandResult, RefGroups, StashRef, SubmoduleRef, WorktreeSummary, WorkflowRequest } from "../types";
 import { api } from "../api";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
@@ -11,38 +11,14 @@ type Props = {
   section: WorkflowSection;
   repositoryPath: string;
   onRun: (request: WorkflowRequest) => Promise<CommandResult>;
+  onOpenWorktree?: (path: string) => void | Promise<void>;
   operationLocked?: boolean;
 };
 
 type RunOptions = { quiet?: boolean };
 
-type WorktreeInfo = {
-  path: string;
-  head: string;
-  branch: string;
-  locked: string;
-  prunable: string;
-};
-
-function parseWorktrees(output: string): WorktreeInfo[] {
-  return output.trim().split(/\n\s*\n/).filter(Boolean).map((block) => {
-    const record: WorktreeInfo = { path: "", head: "", branch: "Detached HEAD", locked: "", prunable: "" };
-    for (const line of block.split(/\r?\n/)) {
-      const [key, ...rest] = line.split(" ");
-      const value = rest.join(" ");
-      if (key === "worktree") record.path = value;
-      if (key === "HEAD") record.head = value;
-      if (key === "branch") record.branch = value.replace(/^refs\/heads\//, "");
-      if (key === "detached") record.branch = "Detached HEAD";
-      if (key === "locked") record.locked = value || "Locked";
-      if (key === "prunable") record.prunable = value || "Prunable";
-    }
-    return record;
-  }).filter((record) => record.path);
-}
-
-function parseStashes(output: string): string[] {
-  return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+function normalizeFsPath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
 /** Unicode-safe base64 (btoa throws on non-ASCII patch content). */
@@ -55,20 +31,24 @@ function b64encode(value: string): string {
   return btoa(binary);
 }
 
-export function WorkflowPanel({ section, repositoryPath, onRun, operationLocked = false }: Props) {
+export function WorkflowPanel({ section, repositoryPath, onRun, onOpenWorktree, operationLocked = false }: Props) {
   const [output, setOutput] = useState("No command has run yet.");
   const [busy, setBusy] = useState<string | null>(null);
   const [worktreePath, setWorktreePath] = useState("");
   const [worktreeRef, setWorktreeRef] = useState("");
   const [stashMessage, setStashMessage] = useState("");
   const [outputWidth, setOutputWidth] = useState(360);
-  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
-  const [stashes, setStashes] = useState<string[]>([]);
+  const [worktrees, setWorktrees] = useState<WorktreeSummary[]>([]);
+  const [stashes, setStashes] = useState<StashRef[]>([]);
+  const [submodules, setSubmodules] = useState<SubmoduleRef[]>([]);
   const [patchFrom, setPatchFrom] = useState("HEAD");
   const [patchTo, setPatchTo] = useState("");
   const [patchDest, setPatchDest] = useState("");
   const [applyPatchData, setApplyPatchData] = useState("");
   const [applyPatchDir, setApplyPatchDir] = useState("");
+  const [bisectGood, setBisectGood] = useState("");
+  const [bisectBad, setBisectBad] = useState("");
+  const [bisectRevision, setBisectRevision] = useState("HEAD");
 
   const run = async (operation: string, args: string[] = [], options: RunOptions = {}) => {
     setBusy(operation);
@@ -98,22 +78,56 @@ export function WorkflowPanel({ section, repositoryPath, onRun, operationLocked 
     }
   };
 
+  const refreshRefGroups = async () => {
+    setBusy("reference_groups");
+    try {
+      const result: RefGroups = await api.refGroups(repositoryPath);
+      if (section === "stashes") {
+        setStashes(result.stashes);
+        setOutput(result.stashes.length ? `Found ${result.stashes.length} stash${result.stashes.length === 1 ? "" : "es"}.` : "No stashes.");
+      } else {
+        setSubmodules(result.submodules);
+        setOutput(result.submodules.length ? `Found ${result.submodules.length} submodule${result.submodules.length === 1 ? "" : "s"}.` : "No submodules registered.");
+      }
+      return result;
+    } catch (error) {
+      setOutput(String(error));
+      throw error;
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const refreshSection = async () => {
     if (section === "worktrees") {
-      const result = await run("worktree_list");
-      setWorktrees(parseWorktrees(result.stdout));
+      setBusy("worktree_summaries");
+      try {
+        const result = await api.worktreeSummaries(repositoryPath);
+        setWorktrees(result);
+        const dirty = result.filter((worktree) => worktree.dirtyCount > 0).length;
+        const conflicts = result.reduce((total, worktree) => total + worktree.conflictCount, 0);
+        setOutput(`${result.length} worktree${result.length === 1 ? "" : "s"} · ${dirty} dirty · ${conflicts} conflict${conflicts === 1 ? "" : "s"}`);
+      } catch (error) {
+        setOutput(String(error));
+        throw error;
+      } finally {
+        setBusy(null);
+      }
       return;
     }
     if (section === "stashes") {
-      const result = await run("stash_list");
-      setStashes(parseStashes(result.stdout));
+      await refreshRefGroups();
+      return;
+    }
+    if (section === "submodules") {
+      await refreshRefGroups();
       return;
     }
     if (section === "recovery") {
       await run("reflog");
       return;
     }
-    setOutput("Submodule status is not structured yet. No write operation was run automatically; use Sync only when you explicitly want to update local submodule URLs.");
+    setOutput("No command has run yet.");
   };
 
   useEffect(() => {
@@ -154,19 +168,30 @@ export function WorkflowPanel({ section, repositoryPath, onRun, operationLocked 
                   await run("worktree_add", [worktreePath.trim(), worktreeRef.trim()]);
                   setWorktreePath("");
                   setWorktreeRef("");
-                  const result = await run("worktree_list", [], { quiet: false });
-                  setWorktrees(parseWorktrees(result.stdout));
+                  await refreshSection();
                 }}>Create worktree</button>
                 <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("worktree_prune").catch(() => undefined)}>Prune stale metadata</button>
               </div>
             </article>
             <article className="ux-task-card wide">
-              <div className="ux-section-title"><strong>Linked worktrees</strong><span>{worktrees.length}</span></div>
+              <div className="ux-section-title"><strong>Linked worktrees</strong><span>{worktrees.length} · {worktrees.filter((worktree) => worktree.dirtyCount > 0).length} dirty · {worktrees.reduce((total, worktree) => total + worktree.conflictCount, 0)} conflicts</span></div>
               <div className="ux-worktree-table" role="table" aria-label="Linked worktrees">
-                <div className="ux-worktree-row is-header" role="row"><span role="columnheader">Branch</span><span role="columnheader">Path</span><span role="columnheader">HEAD</span><span role="columnheader">State</span></div>
+                <div className="ux-worktree-row is-header" role="row"><span role="columnheader">Branch</span><span role="columnheader">Path</span><span role="columnheader">HEAD</span><span role="columnheader">State</span><span role="columnheader">Action</span></div>
                 {worktrees.map((worktree) => (
                   <div className="ux-worktree-row" role="row" key={worktree.path}>
-                    <strong role="cell">{worktree.branch}</strong><span role="cell" title={worktree.path}>{worktree.path}</span><code role="cell">{worktree.head.slice(0, 8)}</code><span role="cell">{worktree.locked || worktree.prunable || "Ready"}</span>
+                    <strong role="cell">{worktree.branch || "Detached HEAD"}</strong><span role="cell" title={worktree.path}>{worktree.path}</span><code role="cell">{worktree.head.slice(0, 8)}</code><span role="cell">{worktree.conflictCount ? `${worktree.conflictCount} conflict${worktree.conflictCount === 1 ? "" : "s"}` : worktree.dirtyCount ? `${worktree.dirtyCount} changed file${worktree.dirtyCount === 1 ? "" : "s"}` : worktree.locked || worktree.prunable || "Clean"}</span>
+                    <span role="cell" className="ux-worktree-actions">
+                      {onOpenWorktree && <button className="ux-refs-action" disabled={busy !== null} title={`Open ${worktree.path}`} onClick={() => void onOpenWorktree(worktree.path)}>Open</button>}
+                      {normalizeFsPath(worktree.path) !== normalizeFsPath(repositoryPath) && <button
+                        className="ux-refs-action ux-refs-action--danger"
+                        disabled={operationLocked || busy !== null || Boolean(worktree.locked)}
+                        title={worktree.locked ? "Unlock this worktree before removing it" : `Remove ${worktree.path}`}
+                        onClick={() => {
+                          if (worktree.locked || !window.confirm(`Remove worktree ${worktree.path}? This deletes its working directory metadata.`)) return;
+                          void run("worktree_remove", [worktree.path]).then(() => refreshSection()).catch(() => undefined);
+                        }}
+                      >Remove</button>}
+                    </span>
                   </div>
                 ))}
                 {!worktrees.length && <div className="ux-empty-state">No worktree records returned.</div>}
@@ -174,7 +199,7 @@ export function WorkflowPanel({ section, repositoryPath, onRun, operationLocked 
             </article>
             <article className="ux-task-card wide is-muted">
               <h3>Safety model</h3>
-              <p>Removal is intentionally not exposed as a one-click action until the backend returns dirty state and lock metadata suitable for a destructive-action confirmation.</p>
+              <p>Chrono reads each linked checkout independently, so dirty files and conflicts remain visible while another branch is being worked on. The current worktree cannot be removed; other worktrees require confirmation.</p>
             </article>
           </div>
         )}
@@ -193,9 +218,23 @@ export function WorkflowPanel({ section, repositoryPath, onRun, operationLocked 
               <p>Apply URL changes from <code>.gitmodules</code> to local submodule configuration, including nested submodules.</p>
               <button className="ux-button" disabled={operationLocked || busy !== null} onClick={() => void run("submodule_sync").catch(() => undefined)}>Sync recursively</button>
             </article>
-            <article className="ux-task-card wide is-muted">
-              <h3>Next backend slice</h3>
-              <p>Expose structured submodule status (path, expected commit, checked-out commit, branch, initialized/dirty state) so this screen can become a table instead of command output.</p>
+            <article className="ux-task-card wide">
+              <div className="ux-section-title"><strong>Registered submodules</strong><span>{submodules.length}</span></div>
+              <div className="ux-worktree-table" role="table" aria-label="Registered submodules">
+                <div className="ux-worktree-row is-header" role="row"><span role="columnheader">Path</span><span role="columnheader">Recorded commit</span><span role="columnheader">State</span><span role="columnheader">Action</span></div>
+                {submodules.map((submodule) => {
+                  const state = submodule.status === " " ? "Synced" : submodule.status === "+" ? "Checked out at another commit" : submodule.status === "-" ? "Not initialized" : "Unmerged";
+                  return <div className="ux-worktree-row" role="row" key={submodule.path}>
+                    <strong role="cell">{submodule.path}</strong><code role="cell">{submodule.commit.slice(0, 12)}</code><span role="cell" title={submodule.summary}>{state}{submodule.summary ? ` · ${submodule.summary}` : ""}</span>
+                    <span role="cell" className="ux-worktree-actions">
+                      {submodule.status === "-" && <button className="ux-refs-action" disabled={operationLocked || busy !== null} onClick={() => void run("submodule_init_path", [submodule.path]).then(() => refreshSection()).catch(() => undefined)}>Init</button>}
+                      {submodule.status === "+" && <button className="ux-refs-action" disabled={operationLocked || busy !== null} onClick={() => void run("submodule_update_path", [submodule.path]).then(() => refreshSection()).catch(() => undefined)}>Update</button>}
+                      {submodule.status === " " && <span className="ux-help-text">Ready</span>}
+                    </span>
+                  </div>;
+                })}
+                {!submodules.length && <div className="ux-empty-state">No submodules registered.</div>}
+              </div>
             </article>
           </div>
         )}
@@ -211,13 +250,18 @@ export function WorkflowPanel({ section, repositoryPath, onRun, operationLocked 
                 <button className="ux-primary-button" disabled={operationLocked || busy !== null} onClick={async () => {
                   await run("stash_push", stashMessage.trim() ? [stashMessage.trim()] : []);
                   setStashMessage("");
-                  const result = await run("stash_list");
-                  setStashes(parseStashes(result.stdout));
+                  await refreshSection();
                 }}>Stash changes</button>
-                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={async () => { await run("stash_pop"); const result = await run("stash_list"); setStashes(parseStashes(result.stdout)); }}>Pop latest</button>
+                <button className="ux-button" disabled={operationLocked || busy !== null} onClick={async () => { await run("stash_pop"); await refreshSection(); }}>Pop latest</button>
               </div>
               <div className="ux-stash-list" aria-label="Stashes">
-                {stashes.map((stash) => <code key={stash}>{stash}</code>)}
+                {stashes.map((stash) => <div className="ux-stash-row" key={stash.ref}>
+                  <code title={stash.message}>{stash.ref} · {stash.message}</code>
+                  <span className="ux-card-actions wrap">
+                    <button className="ux-refs-action" disabled={operationLocked || busy !== null} onClick={() => void run("stash_apply", [stash.ref]).then(() => refreshSection()).catch(() => undefined)}>Apply</button>
+                    <button className="ux-refs-action ux-refs-action--danger" disabled={operationLocked || busy !== null} onClick={() => { if (window.confirm(`Drop ${stash.ref}? This cannot be undone.`)) void run("stash_drop", [stash.ref]).then(() => refreshSection()).catch(() => undefined); }}>Drop</button>
+                  </span>
+                </div>)}
                 {!stashes.length && <span className="ux-help-text">No stashes.</span>}
               </div>
             </article>
@@ -231,6 +275,22 @@ export function WorkflowPanel({ section, repositoryPath, onRun, operationLocked 
               <h3>Reflog</h3>
               <p>Inspect recent HEAD movements when a branch or commit appears to be lost.</p>
               <button className="ux-button" disabled={busy !== null} onClick={() => void run("reflog").catch(() => undefined)}>Refresh reflog</button>
+            </article>
+            <article className="ux-task-card wide">
+              <span className="ux-card-icon"><Icon name="compare" /></span>
+              <h3>Bisect a regression</h3>
+              <p>Binary-search history for the first bad commit. Start with known good and bad revisions, then mark each checked commit good or bad as Git moves through the search.</p>
+              <div className="ux-form-grid two">
+                <label><span>Known good revision</span><input value={bisectGood} onChange={(event) => setBisectGood(event.target.value)} placeholder="HEAD~20" /></label>
+                <label><span>Known bad revision</span><input value={bisectBad} onChange={(event) => setBisectBad(event.target.value)} placeholder="HEAD" /></label>
+              </div>
+              <div className="ux-card-actions wrap">
+                <button className="ux-primary-button" disabled={operationLocked || busy !== null || !bisectGood.trim() || !bisectBad.trim()} onClick={() => void run("bisect_start", [bisectBad.trim(), bisectGood.trim()]).catch(() => undefined)}>Start bisect</button>
+                <label className="ux-inline-field"><span>Current revision</span><input value={bisectRevision} onChange={(event) => setBisectRevision(event.target.value)} placeholder="HEAD" /></label>
+                <button className="ux-button" disabled={operationLocked || busy !== null || !bisectRevision.trim()} onClick={() => void run("bisect_good", [bisectRevision.trim()]).catch(() => undefined)}>Mark good</button>
+                <button className="ux-button" disabled={operationLocked || busy !== null || !bisectRevision.trim()} onClick={() => void run("bisect_bad", [bisectRevision.trim()]).catch(() => undefined)}>Mark bad</button>
+                <button className="ux-danger-button" disabled={operationLocked || busy !== null} onClick={() => { if (window.confirm("Reset the current bisect session?")) void run("bisect_reset").catch(() => undefined); }}>Reset bisect</button>
+              </div>
             </article>
             <article className="ux-task-card">
               <span className="ux-card-icon"><Icon name="changes" /></span>

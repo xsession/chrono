@@ -20,6 +20,9 @@ const PORT = 14231 + Math.floor(Math.random() * 500);
 const BASE = `http://127.0.0.1:${PORT}`;
 const ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "chrono-api-test-"));
 const CONFIG_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "chrono-config-"));
+const OUT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "chrono-api-output-"));
+const APPLY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "chrono-api-apply-"));
+const WORKTREE_DIR = path.join(os.tmpdir(), `chrono-api-worktree-${process.pid}-${Date.now()}`);
 
 let failures = 0;
 let checks = 0;
@@ -121,11 +124,21 @@ async function run() {
   const summary = await api("repository_summary", { path: ROOT });
   assert(summary.branch === "main", "summary reports current branch");
   assert(summary.name === path.basename(ROOT), "summary reports repo name");
+  git(["remote", "add", "origin", "git@github.com:xsession/chrono.git"]);
+  const remotes = await api("repository_remotes", { path: ROOT });
+  assert(remotes.length === 1 && remotes[0].fetchUrl.includes("github.com:xsession/chrono.git"), "repository_remotes parses fetch URLs");
+  assert(remotes[0].pushUrl === remotes[0].fetchUrl, "repository_remotes preserves the push URL");
+  git(["remote", "remove", "origin"]);
 
   const history = await api("repository_history", { path: ROOT, limit: 100 });
   assert(history.length === 3, `main history lists 3 commits (got ${history.length})`);
   assert(history[0].id.length === 40, "history commit id is full sha");
   assert(history[0].authorName === "API Smoke", "history parses author name");
+
+  const historyPage1 = await api("repository_history_page", { path: ROOT, limit: 2 });
+  assert(historyPage1.commits.length === 2 && historyPage1.hasMore, "history page returns a bounded first slice");
+  const historyPage2 = await api("repository_history_page", { path: ROOT, limit: 2, cursor: historyPage1.nextCursor });
+  assert(historyPage2.commits.length >= 1 && historyPage2.commits[0].id !== historyPage1.commits[0].id, "history cursor advances without repeating the page");
 
   const status = await api("repository_status", { path: ROOT });
   assert(Array.isArray(status) && status.length === 0, "status is clean at setup");
@@ -263,6 +276,29 @@ async function run() {
   assert(comparison.leftOnlyCount >= 1, "compare refs counts left-only commits");
   assert(Array.isArray(comparison.filesFromBaseToLeft), "compare refs reports file diffs");
 
+  const rangeBase = git(["rev-parse", "HEAD"]);
+  git(["switch", "-qc", "range-before", rangeBase]);
+  write("range.txt", "before\n");
+  git(["add", "range.txt"]);
+  git(["commit", "-q", "-m", "range before"]);
+  const rangeBefore = git(["rev-parse", "HEAD"]);
+  git(["switch", "-q", "main"]);
+  git(["switch", "-qc", "range-after", rangeBase]);
+  write("range.txt", "after\n");
+  git(["add", "range.txt"]);
+  git(["commit", "-q", "-m", "range after"]);
+  const rangeAfter = git(["rev-parse", "HEAD"]);
+  git(["switch", "-q", "main"]);
+  const rangeDiff = await api("range_diff", { path: ROOT, base: rangeBase, before: rangeBefore, after: rangeAfter });
+  assert(rangeDiff.entries.length === 2, "range_diff reports the rewritten patch series");
+  assert(rangeDiff.entries.some((entry) => entry.status === "deleted" && entry.oldCommit) && rangeDiff.entries.some((entry) => entry.status === "added" && entry.newCommit), "range_diff reports removed and added patch entries");
+
+  const repositoryHealth = await api("repository_health", { path: ROOT });
+  assert(repositoryHealth.worktreeCount === 1 && repositoryHealth.dirtyFiles === 0, "repository_health reports a clean main worktree");
+  assert(repositoryHealth.reflogEntries > 0 && repositoryHealth.objectCount >= 0, "repository_health reports recovery and object metrics");
+  const scannedHealth = await api("repository_health", { path: ROOT, scanObjects: true });
+  assert(scannedHealth.fsck.scanned === true && Array.isArray(scannedHealth.fsck.warnings), "repository_health can run an object scan");
+
   const fileHistory = await api("file_history", { path: ROOT, file: "base.txt", followRenames: true, allRefs: true, limit: 50 });
   assert(fileHistory.length >= 3, `file history lists base.txt commits (got ${fileHistory.length})`);
 
@@ -284,6 +320,12 @@ async function run() {
   // workflows
   const stash = await api("run_workflow", { path: ROOT, operation: "stash_list", args: [] });
   assert(stash.exitCode === 0, "workflow stash_list runs");
+  git(["tag", "v-smoke"]);
+  const tagCheckout = await api("run_workflow", { path: ROOT, operation: "checkout_tag", args: ["v-smoke"] });
+  assert(tagCheckout.exitCode === 0, "workflow checkout_tag detaches at the tag");
+  const detachedSummary = await api("repository_summary", { path: ROOT });
+  assert(detachedSummary.branch === null, "tag checkout reports detached HEAD");
+  git(["switch", "-q", "main"]);
   const reflog = await api("run_workflow", { path: ROOT, operation: "reflog", args: [] });
   assert(reflog.stdout.length > 0, "workflow reflog returns output");
   const badWorkflow = await apiError("run_workflow", { path: ROOT, operation: "nope", args: [] });
@@ -300,16 +342,146 @@ async function run() {
   const status3 = await api("repository_status", { path: ROOT });
   assert(status3.length === 1 && status3[0].indexStatus === "?", "unstaged file reported as untracked");
   await api("stage_paths", { path: ROOT, files: ["staged.txt"] });
+  const draft = await api("draft_commit_message", { path: ROOT, mode: "rules" });
+  assert(draft.source === "local-rules" && draft.files.length === 1 && draft.files[0].path === "staged.txt", "local commit writer summarizes staged files");
+  assert(draft.subject.length > 0 && draft.subject.length <= 72 && draft.message.startsWith(draft.subject), "local commit writer returns a bounded commit message");
+  const conventionalDraft = await api("draft_commit_message", { path: ROOT, mode: "rules", style: "conventional", issueReference: "CHRONO-42" });
+  assert(conventionalDraft.style === "conventional" && conventionalDraft.issueReference === "CHRONO-42" && /^\w+: /.test(conventionalDraft.subject) && conventionalDraft.body.includes("Refs: CHRONO-42"), "commit writer applies conventional style and issue references");
+  const plainDraft = await api("draft_commit_message", { path: ROOT, mode: "rules", style: "plain", issueReference: "#7" });
+  assert(plainDraft.style === "plain" && !/^\w+: /.test(plainDraft.subject) && plainDraft.body.includes("Refs: #7"), "commit writer supports plain style with issue references");
+  const invalidIssue = await apiError("draft_commit_message", { path: ROOT, mode: "rules", issueReference: "not an issue" });
+  assert(invalidIssue.includes("issue reference"), "commit writer rejects unsafe issue references");
+  const autoDraft = await api("draft_commit_message", { path: ROOT, mode: "auto" });
+  assert((autoDraft.source === "local-rules" || autoDraft.source === "ollama") && autoDraft.message.length > 0, "auto commit writer uses a local model or offline fallback");
   const commitId = await api("create_commit", { path: ROOT, message: "add staged file" });
   assert(commitId.length === 40, "commit returns head sha");
   const emptyCommit = await apiError("create_commit", { path: ROOT, message: "   " });
   assert(emptyCommit.includes("empty"), "empty commit message rejected");
+  const emptyDraft = await apiError("draft_commit_message", { path: ROOT, mode: "rules" });
+  assert(emptyDraft.includes("no staged changes"), "local commit writer rejects an empty index");
 
   // workspaces
   const saved = [{ id: "local", name: "Local repositories", repositories: [{ path: ROOT }] }];
   await api("save_workspaces", { workspaces: saved });
   const loaded = await api("load_workspaces", {});
   assert(loaded.length === 1 && loaded[0].repositories[0].path === ROOT, "workspaces round-trip");
+
+  // direct repository actions backing the Repo browser, Branches, Recovery,
+  // References and History controls
+  const currentHead = git(["rev-parse", "HEAD"]);
+  const parentHead = git(["rev-parse", "HEAD^"]);
+  const refsBefore = await api("reference_groups", { path: ROOT });
+  assert(Array.isArray(refsBefore.branches) && Array.isArray(refsBefore.tags) && Array.isArray(refsBefore.stashes), "reference groups return every ref collection");
+
+  const tagsBefore = await api("list_tags", { path: ROOT });
+  assert(Array.isArray(tagsBefore), "list_tags returns a list");
+  await api("create_branch_at", { path: ROOT, branch: "ui-commit-action", revision: parentHead });
+  assert((await api("repository_branches", { path: ROOT })).some((branch) => branch.name === "ui-commit-action"), "create_branch_at creates a branch without switching HEAD");
+  await api("delete_branch", { path: ROOT, branch: "ui-commit-action", force: false });
+  await api("create_tag", { path: ROOT, name: "v-direct", revision: currentHead, message: "direct endpoint tag" });
+  const directTag = (await api("list_tags", { path: ROOT })).find((tag) => tag.name === "v-direct");
+  assert(directTag?.annotated === true && directTag.target === currentHead, "create_tag creates an annotated tag at the requested revision");
+  await api("delete_tag", { path: ROOT, name: "v-direct" });
+  assert(!(await api("list_tags", { path: ROOT })).some((tag) => tag.name === "v-direct"), "delete_tag removes the tag");
+
+  write("working.txt", "working\n");
+  const workingDiff = await api("working_tree_diff", { path: ROOT, file: "working.txt" });
+  assert(workingDiff.status === "??" && workingDiff.additions === 1, "working_tree_diff includes an untracked file");
+  const cleanPreview = await api("clean_untracked", { path: ROOT, dryRun: true });
+  assert(cleanPreview.stdout.includes("working.txt"), "clean_untracked dry-run lists untracked files");
+  await api("clean_untracked", { path: ROOT, dryRun: false });
+  assert(!fs.existsSync(path.join(ROOT, "working.txt")), "clean_untracked deletes only after the explicit non-dry run");
+
+  const hunkLines = Array.from({ length: 12 }, (_value, index) => `line-${index + 1}`).join("\n") + "\n";
+  write("hunks.txt", hunkLines);
+  git(["add", "hunks.txt"]);
+  git(["commit", "-q", "-m", "hunk staging fixture"]);
+  write("hunks.txt", hunkLines.replace("line-2", "line-2 changed").replace("line-11", "line-11 changed"));
+  const unstagedHunks = await api("unstaged_file_diff", { path: ROOT, file: "hunks.txt" });
+  assert(unstagedHunks.hunks.length === 2, `unstaged_file_diff exposes separate text hunks (got ${unstagedHunks.hunks.length})`);
+  await api("stage_hunks", { path: ROOT, file: "hunks.txt", hunks: [0] });
+  const stagedHunkDiff = git(["diff", "--cached", "--", "hunks.txt"]);
+  const remainingHunks = await api("unstaged_file_diff", { path: ROOT, file: "hunks.txt" });
+  assert(stagedHunkDiff.includes("line-2 changed") && remainingHunks.hunks.length === 1, "stage_hunks stages only the selected hunk");
+  await api("stage_hunks", { path: ROOT, file: "hunks.txt", hunks: [0] });
+  assert(git(["diff", "--cached", "--name-only"]).includes("hunks.txt") && (await api("repository_status", { path: ROOT })).every((change) => change.path !== "hunks.txt" || change.worktreeStatus === " "), "stage_hunks can finish staging the remaining hunk");
+  const emptyHunkSelection = await apiError("stage_hunks", { path: ROOT, file: "hunks.txt", hunks: [] });
+  assert(emptyHunkSelection.includes("at least one hunk"), "stage_hunks rejects an empty selection");
+  git(["commit", "-q", "-m", "complete hunk staging fixture"]);
+
+  const tree = await api("list_tree", { path: ROOT, revision: "HEAD", dir: "" });
+  assert(tree.some((entry) => entry.path === "staged.txt" && entry.type === "blob"), "list_tree exposes files at a revision");
+  const fileAtRevision = await api("file_at_revision", { path: ROOT, revision: "HEAD", dir: "staged.txt" });
+  assert(fileAtRevision.content === "staged\n" && fileAtRevision.binary === false, "file_at_revision returns text content");
+  const rootFile = await api("file_at_revision", { path: ROOT, revision: history[2].id, dir: "base.txt" });
+  assert(rootFile.content === "base\n" && rootFile.binary === false, "file_at_revision previews a root revision");
+
+  const patch = await api("create_patch", { path: ROOT, from: parentHead, to: currentHead });
+  assert(patch.size > 0 && patch.base64.length > 0 && patch.name.endsWith(".patch"), "create_patch returns a binary-safe patch export");
+  const patchPath = path.join(OUT_DIR, "direct.patch");
+  const savedPatch = await api("save_patch", { path: ROOT, from: parentHead, to: currentHead, destination: patchPath });
+  assert(savedPatch.includes("direct.patch") && fs.statSync(patchPath).size > 0, "save_patch writes the requested destination");
+  execFileSync("git", ["clone", "-q", ROOT, APPLY_DIR]);
+  execFileSync("git", ["-C", APPLY_DIR, "reset", "-q", "--hard", parentHead]);
+  const applied = await api("apply_patch", { path: ROOT, data: patch.base64, dir: APPLY_DIR });
+  assert(applied.exitCode === 0 && fs.existsSync(path.join(APPLY_DIR, "staged.txt")), "apply_patch applies the generated patch to another checkout");
+
+  const revisionDiff = await api("diff_revisions", { path: ROOT, from: parentHead, to: currentHead, file: "staged.txt" });
+  assert(revisionDiff.additions === 1 && revisionDiff.deletions === 0, "diff_revisions reports file changes between refs");
+  assert(revisionDiff.hunks.length > 0 && revisionDiff.hunks[0].lines.some((line) => line.kind === "add"), "diff_revisions exposes unified hunk lines for the revision viewer");
+  const activity = await api("commit_activity", { path: ROOT, days: 7 });
+  assert(activity.length === 7 && activity.every((day) => /^\d{4}-\d{2}-\d{2}$/.test(day.date)), "commit_activity returns a dated heatmap window");
+  const mergeNoop = await api("merge_branch", { path: ROOT, branch: "main", strategy: "ff-only" });
+  assert(mergeNoop.exitCode === 0, "merge_branch supports a safe fast-forward no-op on the current branch");
+  const exportDir = path.join(OUT_DIR, "exported");
+  const exported = await api("export_revision", { path: ROOT, revision: "HEAD", destination: exportDir });
+  assert(exported.stdout.includes("Exported") && fs.existsSync(path.join(exportDir, "staged.txt")), "export_revision archives a revision outside the repository");
+
+  // per-item stash and worktree actions used by References and Workflow views
+  git(["branch", "workflow-worktree"]);
+  const addedWorktree = await api("run_workflow", { path: ROOT, operation: "worktree_add", args: [WORKTREE_DIR, "workflow-worktree"] });
+  assert(addedWorktree.exitCode === 0 && fs.existsSync(path.join(WORKTREE_DIR, ".git")), "worktree_add creates a linked checkout");
+  const refsWithWorktree = await api("reference_groups", { path: ROOT });
+  assert(refsWithWorktree.worktrees.some((worktree) => worktree.path === WORKTREE_DIR), "reference groups expose the created worktree");
+  fs.writeFileSync(path.join(WORKTREE_DIR, "monitor.txt"), "dirty worktree\n");
+  const monitoredWorktrees = await api("worktree_summaries", { path: ROOT });
+  const monitoredWorktree = monitoredWorktrees.find((worktree) => worktree.path === WORKTREE_DIR);
+  assert(monitoredWorktree && monitoredWorktree.dirtyCount === 1 && monitoredWorktree.conflictCount === 0, "worktree summaries expose dirty session state");
+  fs.unlinkSync(path.join(WORKTREE_DIR, "monitor.txt"));
+  const removedWorktree = await api("run_workflow", { path: ROOT, operation: "worktree_remove", args: [WORKTREE_DIR] });
+  assert(removedWorktree.exitCode === 0 && !fs.existsSync(WORKTREE_DIR), "worktree_remove removes the linked checkout");
+
+  write("stash-apply.txt", "stash action\n");
+  const pushedStash = await api("run_workflow", { path: ROOT, operation: "stash_push", args: ["UI action coverage"] });
+  assert(pushedStash.exitCode === 0, "stash_push creates a stash from tracked and untracked changes");
+  const stashRef = (await api("reference_groups", { path: ROOT })).stashes.find((stash) => stash.message.includes("UI action coverage"));
+  assert(Boolean(stashRef), "reference groups expose the new stash");
+  const appliedStash = await api("run_workflow", { path: ROOT, operation: "stash_apply", args: [stashRef.ref] });
+  assert(appliedStash.exitCode === 0 && fs.existsSync(path.join(ROOT, "stash-apply.txt")), "stash_apply restores changes while keeping the stash");
+  await api("clean_untracked", { path: ROOT, dryRun: false });
+  const droppedStash = await api("run_workflow", { path: ROOT, operation: "stash_drop", args: [stashRef.ref] });
+  assert(droppedStash.exitCode === 0, "stash_drop deletes the selected stash");
+  write("stash-pop.txt", "pop action\n");
+  await api("run_workflow", { path: ROOT, operation: "stash_push", args: ["UI pop coverage"] });
+  const poppedStash = await api("run_workflow", { path: ROOT, operation: "stash_pop", args: [] });
+  assert(poppedStash.exitCode === 0 && fs.existsSync(path.join(ROOT, "stash-pop.txt")), "stash_pop applies and removes the latest stash");
+  await api("clean_untracked", { path: ROOT, dryRun: false });
+
+  const bisectStart = await api("run_workflow", { path: ROOT, operation: "bisect_start", args: ["HEAD", "HEAD~3"] });
+  assert(bisectStart.exitCode === 0, "bisect_start accepts bad then good revisions");
+  const bisectReset = await api("run_workflow", { path: ROOT, operation: "bisect_reset", args: [] });
+  assert(bisectReset.exitCode === 0, "bisect_reset returns the repository to its original branch");
+
+  git(["switch", "-qc", "reset-action"]);
+  write("reset-action.txt", "reset action\n");
+  git(["add", "reset-action.txt"]);
+  git(["commit", "-q", "-m", "reset action commit"]);
+  const resetTarget = git(["rev-parse", "HEAD^"]);
+  const resetResult = await api("reset_to_commit", { path: ROOT, revision: resetTarget, mode: "mixed" });
+  assert(resetResult.exitCode === 0 && git(["rev-parse", "HEAD"]) === resetTarget, "reset_to_commit moves the branch with the requested mode");
+  fs.unlinkSync(path.join(ROOT, "reset-action.txt"));
+  git(["switch", "-q", "main"]);
+  git(["branch", "-D", "reset-action"]);
 
   // validation errors
   const missingPath = await apiError("repository_summary", {});
@@ -402,7 +574,7 @@ let exiting = false;
 function cleanup() {
   exiting = true;
   try { server.kill(); } catch { /* already dead */ }
-  for (const dir of [ROOT, CONFIG_DIR]) {
+  for (const dir of [ROOT, CONFIG_DIR, OUT_DIR, APPLY_DIR, WORKTREE_DIR]) {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
 }

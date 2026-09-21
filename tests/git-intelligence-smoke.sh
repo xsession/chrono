@@ -31,12 +31,12 @@ git -C "$repo" commit -qm "document parser"
 main2=$(git -C "$repo" rev-parse HEAD)
 
 # Search primitives used by Git Intelligence.
-git -C "$repo" log --all --grep='timeout' --format=%H | grep -qx "$feature1"
-git -C "$repo" log --all --author='Bob' --format=%H | grep -qx "$feature2"
+git -C "$repo" log --all --grep='timeout' --format=%H | grep -Fx "$feature1" >/dev/null
+git -C "$repo" log --all --author='Bob' --format=%H | grep -Fx "$feature2" >/dev/null
 # @me prefers the configured email, avoiding regex ambiguity between name/email.
-git -C "$repo" log --all --author='alice@example.test' --format=%H | grep -q "$base"
-git -C "$repo" log --all --format=%H -- src/app.txt | grep -q "$feature2"
-git -C "$repo" log --all -G'TIMEOUT' --format=%H | grep -qx "$feature1"
+git -C "$repo" log --all --author='alice@example.test' --format=%H | grep -F "$base" >/dev/null
+git -C "$repo" log --all --format=%H -- src/app.txt | grep -F "$feature2" >/dev/null
+git -C "$repo" log --all -G'TIMEOUT' --format=%H | grep -Fx "$feature1" >/dev/null
 echo "PASS rich commit search primitives"
 
 # Common-base comparison semantics.
@@ -44,12 +44,12 @@ mb=$(git -C "$repo" merge-base main feature)
 [[ "$mb" == "$base" ]] || { echo "FAIL merge base"; exit 1; }
 counts=$(git -C "$repo" rev-list --left-right --count main...feature)
 [[ "$counts" == $'1\t2' || "$counts" == '1  2' || "$counts" =~ ^1[[:space:]]+2$ ]] || { echo "FAIL compare counts: $counts"; exit 1; }
-git -C "$repo" diff --numstat "$mb..feature" | grep -q 'src/app.txt'
+git -C "$repo" diff --numstat "$mb..feature" | grep -F 'src/app.txt' >/dev/null
 echo "PASS merge-base compare"
 
 # File and line history.
 [[ "$(git -C "$repo" log feature --format=%H -- src/app.txt | wc -l)" -ge 3 ]]
-git -C "$repo" log -L 2,2:src/app.txt feature --format=%H --no-patch | grep -q "$feature1"
+git -C "$repo" log -L 2,2:src/app.txt feature --format=%H --no-patch | grep -F "$feature1" >/dev/null
 echo "PASS file and line history"
 
 # Blame porcelain must expose author, summary and content per line.

@@ -8,6 +8,7 @@ import type {
   ConflictResolutionRequest,
   ConflictResolutionResult,
   CommitRecord,
+  HistoryPage,
   FileChange,
   CommitFileDiff,
   TagRecord,
@@ -20,6 +21,9 @@ import type {
   PullRequestRecord,
   BlameResult,
   CommitDetails,
+  CommitDraft,
+  CommitDraftMode,
+  CommitDraftOptions,
   CommitSearchResult,
   ContributorRecord,
   FileHistoryRequest,
@@ -28,11 +32,15 @@ import type {
   RebaseStartRequest,
   RebaseStartResult,
   RefComparison,
+  RangeDiffResult,
   RefGroups,
+  RepositoryHealth,
   WorktreeSummary,
   RepositoryOperationAction,
   RepositoryOperationState,
   RepositorySummary,
+  RemoteRecord,
+  ResetMode,
   WorkflowRequest,
   Workspace,
 } from "./types";
@@ -76,7 +84,10 @@ async function invoke<T>(command: string, payload: Record<string, unknown> = {})
 
 export const api = {
   summary: (path: string) => invoke<RepositorySummary>("repository_summary", { path }),
+  remotes: (path: string) => invoke<RemoteRecord[]>("repository_remotes", { path }),
   history: (path: string, limit = 300) => invoke<CommitRecord[]>("repository_history", { path, limit }),
+  historyPage: (path: string, cursor: string | null = null, limit = 300) =>
+    invoke<HistoryPage>("repository_history_page", { path, cursor, limit }),
   historyQuery: (path: string, request: { query: string; mode: "message" | "author" | "path"; limit?: number }) =>
     invoke<CommitRecord[]>("history_query", { path, ...request }),
   status: (path: string) => invoke<FileChange[]>("repository_status", { path }),
@@ -100,6 +111,8 @@ export const api = {
   mergeBranch: (path: string, branch: string, strategy: "no-ff" | "squash" | "ff-only") =>
     invoke<CommandResult>("merge_branch", { path, branch, strategy }),
   workingTreeDiff: (path: string, file: string) => invoke<WorkingTreeDiff>("working_tree_diff", { path, file }),
+  unstagedFileDiff: (path: string, file: string) => invoke<WorkingTreeDiff>("unstaged_file_diff", { path, file }),
+  stageHunks: (path: string, file: string, hunks: number[]) => invoke<CommandResult>("stage_hunks", { path, file, hunks }),
   cleanUntracked: (path: string, dryRun: boolean) => invoke<CommandResult>("clean_untracked", { path, dryRun }),
   listTree: (path: string, revision: string, dirPath: string) =>
     invoke<TreeEntry[]>("list_tree", { path, revision, dir: dirPath }),
@@ -117,6 +130,10 @@ export const api = {
   historyStats: (path: string, limit = 300) => invoke<HistoryChangeStat[]>("history_change_stats", { path, limit }),
   compareRefs: (path: string, left: string, right: string, limit = 100) =>
     invoke<RefComparison>("compare_refs", { path, left, right, limit }),
+  rangeDiff: (path: string, base: string, before: string, after: string) =>
+    invoke<RangeDiffResult>("range_diff", { path, base, before, after }),
+  repositoryHealth: (path: string, scanObjects = false) =>
+    invoke<RepositoryHealth>("repository_health", { path, scanObjects }),
   fileHistory: (path: string, request: FileHistoryRequest) =>
     invoke<CommitRecord[]>("file_history", { path, ...request }),
   lineHistory: (path: string, file: string, start: number, end: number, limit = 100) =>
@@ -131,6 +148,8 @@ export const api = {
   stage: (path: string, files: string[]) => invoke<void>("stage_paths", { path, files }),
   unstage: (path: string, files: string[]) => invoke<void>("unstage_paths", { path, files }),
   commit: (path: string, message: string) => invoke<string>("create_commit", { path, message }),
+  draftCommit: (path: string, mode: CommitDraftMode = "auto", model?: string, options: CommitDraftOptions = {}) =>
+    invoke<CommitDraft>("draft_commit_message", { path, mode, ...(model ? { model } : {}), ...options }),
   fetch: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("fetch_repository", { path, ...auth }),
   pull: (path: string) => invoke<CommandResult>("pull_repository", { path }),
   push: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("push_repository", { path, ...auth }),
@@ -138,6 +157,8 @@ export const api = {
   switchBranch: (path: string, branch: string) => invoke<void>("switch_branch", { path, branch }),
   checkoutRemoteBranch: (path: string, branch: string) => invoke<void>("checkout_remote_branch", { path, branch }),
   createBranch: (path: string, branch: string) => invoke<void>("create_branch", { path, branch }),
+  createBranchAt: (path: string, branch: string, revision: string) => invoke<void>("create_branch_at", { path, branch, revision }),
+  resetTo: (path: string, revision: string, mode: ResetMode) => invoke<CommandResult>("reset_to_commit", { path, revision, mode }),
   deleteBranch: (path: string, branch: string, force: boolean) =>
     invoke<string>("delete_branch", { path, branch, force }),
   workflow: (path: string, request: WorkflowRequest) => invoke<CommandResult>("run_workflow", { path, ...request }),

@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { AppError, statusCodeFor } from "./src/lib/errors.ts";
 import * as backend from "./src/backend.ts";
+import * as commitWriter from "./src/commitWriter.ts";
 import * as conflictCenter from "./src/conflictCenter.ts";
 import * as insights from "./src/insights.ts";
 import * as operationState from "./src/operationState.ts";
@@ -88,6 +89,13 @@ function strArray(value: unknown, field: string): string[] {
   return value as string[];
 }
 
+function numArray(value: unknown, field: string): number[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "number" || !Number.isSafeInteger(item))) {
+    throw new AppError("invalid", `missing or invalid field: ${field}`);
+  }
+  return value as number[];
+}
+
 function bodyPath(body: Record<string, unknown>): string {
   return str(body.path, "path");
 }
@@ -100,8 +108,11 @@ type Handler = (body: Record<string, unknown>) => Promise<unknown>;
 
 const routes: Record<string, Handler> = {
   repository_summary: (body) => backend.repositorySummary(bodyPath(body)),
+  repository_remotes: (body) => backend.repositoryRemotes(bodyPath(body)),
   repository_history: (body) =>
     backend.repositoryHistory(bodyPath(body), num(body.limit ?? 300, "limit")),
+  repository_history_page: (body) =>
+    backend.repositoryHistoryPage(bodyPath(body), num(body.limit ?? 300, "limit"), optStr(body.cursor)),
   history_query: (body) => {
     const mode = body.mode;
     if (mode !== "message" && mode !== "author" && mode !== "path") {
@@ -164,6 +175,14 @@ const routes: Record<string, Handler> = {
       str(body.right, "right"),
       num(body.limit ?? 100, "limit"),
     ),
+  range_diff: (body) =>
+    insights.rangeDiff(
+      bodyPath(body),
+      str(body.base, "base"),
+      str(body.before, "before"),
+      str(body.after, "after"),
+    ),
+  repository_health: (body) => insights.repositoryHealth(bodyPath(body), body.scanObjects === true),
   file_history: (body) =>
     insights.fileHistory(bodyPath(body), {
       file: str(body.file, "file"),
@@ -198,6 +217,8 @@ const routes: Record<string, Handler> = {
   merge_branch: (body) =>
     repo.mergeBranch(bodyPath(body), str(body.branch, "branch"), (body.strategy === "ff-only" ? "ff-only" : body.strategy === "squash" ? "squash" : "no-ff")),
   working_tree_diff: (body) => repo.workingTreeDiff(bodyPath(body), str(body.file, "file")),
+  unstaged_file_diff: (body) => repo.unstagedFileDiff(bodyPath(body), str(body.file, "file")),
+  stage_hunks: (body) => repo.stageHunks(bodyPath(body), str(body.file, "file"), numArray(body.hunks, "hunks")),
   clean_untracked: (body) => repo.cleanUntracked(bodyPath(body), bool(body.dryRun ?? false, "dryRun")),
   list_tree: (body) =>
     repo.listTree(bodyPath(body), str(body.revision, "revision"), typeof body.dir === "string" ? body.dir : ""),
@@ -227,6 +248,17 @@ const routes: Record<string, Handler> = {
   stage_paths: (body) => backend.stagePaths(bodyPath(body), strArray(body.files, "files")),
   unstage_paths: (body) => backend.unstagePaths(bodyPath(body), strArray(body.files, "files")),
   create_commit: (body) => backend.createCommit(bodyPath(body), str(body.message, "message")),
+  draft_commit_message: (body) => {
+    const mode = body.mode ?? "auto";
+    if (mode !== "auto" && mode !== "rules" && mode !== "ollama") {
+      throw new AppError("invalid", "draft mode must be auto, rules or ollama");
+    }
+    const style = body.style === "plain" ? "plain" : "conventional";
+    return commitWriter.draftCommitMessage(bodyPath(body), mode, optStr(body.model), {
+      style,
+      issueReference: optStr(body.issueReference),
+    });
+  },
   fetch_repository: (body) =>
     backend.fetchRepository(bodyPath(body), {
       username: optStr(body.username),
@@ -248,6 +280,12 @@ const routes: Record<string, Handler> = {
   switch_branch: (body) => backend.switchBranch(bodyPath(body), str(body.branch, "branch")),
   checkout_remote_branch: (body) => backend.checkoutRemoteBranch(bodyPath(body), str(body.branch, "branch")),
   create_branch: (body) => backend.createBranch(bodyPath(body), str(body.branch, "branch")),
+  create_branch_at: (body) => backend.createBranchAt(bodyPath(body), str(body.branch, "branch"), str(body.revision, "revision")),
+  reset_to_commit: (body) => {
+    const mode = body.mode;
+    if (mode !== "soft" && mode !== "mixed" && mode !== "hard") throw new AppError("invalid", "reset mode must be soft, mixed or hard");
+    return backend.resetTo(bodyPath(body), str(body.revision, "revision"), mode);
+  },
   delete_branch: (body) =>
     repo.deleteBranch(bodyPath(body), str(body.branch, "branch"), body.force === true),
   run_workflow: (body) =>

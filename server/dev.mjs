@@ -8,6 +8,7 @@ import process from "node:process";
 const projectRoot = path.resolve(import.meta.dirname, "..");
 const PORT = process.env.CHRONO_PORT ?? "1421";
 const VITE_PORT = process.env.CHRONO_VITE_PORT ?? "1420";
+const VITE_HOST = process.env.CHRONO_VITE_HOST ?? "127.0.0.1";
 
 const server = spawn(process.execPath, ["--experimental-strip-types", path.join(import.meta.dirname, "index.ts")], {
   stdio: "inherit",
@@ -17,7 +18,7 @@ const server = spawn(process.execPath, ["--experimental-strip-types", path.join(
 // Launch Vite's CLI directly with node (avoids shelling out to `npm`, which
 // needs a shell on Windows).
 const viteBin = path.join(projectRoot, "node_modules", "vite", "bin", "vite.js");
-const vite = spawn(process.execPath, [viteBin, "--host", "0.0.0.0"], {
+const vite = spawn(process.execPath, [viteBin, "--host", VITE_HOST], {
   stdio: "inherit",
   env: { ...process.env, CHRONO_PORT: PORT, CHRONO_VITE_PORT: VITE_PORT },
 });

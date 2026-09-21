@@ -17,6 +17,12 @@ export type CommitRecord = {
   subject: string;
 };
 
+export type HistoryPage = {
+  commits: CommitRecord[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
 export type FileChange = {
   path: string;
   indexStatus: string;
@@ -30,6 +36,12 @@ export type BranchRecord = {
   current: boolean;
   remote: boolean;
   upstream: string | null;
+};
+
+export type RemoteRecord = {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
 };
 
 export type WorkspaceRepository = {
@@ -55,10 +67,41 @@ export type AuthRequest = {
   token?: string;
 };
 
+export type CommitDraftMode = "auto" | "rules" | "ollama";
+
+export type CommitDraftStyle = "plain" | "conventional";
+
+export type CommitDraftOptions = {
+  style?: CommitDraftStyle;
+  issueReference?: string;
+};
+
+export type CommitDraftFile = {
+  path: string;
+  status: string;
+  additions: number | null;
+  deletions: number | null;
+  binary: boolean;
+};
+
+export type CommitDraft = {
+  subject: string;
+  body: string;
+  message: string;
+  style: CommitDraftStyle;
+  issueReference: string | null;
+  source: "ollama" | "local-rules";
+  model: string | null;
+  files: CommitDraftFile[];
+  truncatedDiff: boolean;
+};
+
 export type WorkflowRequest = {
   operation: string;
   args: string[];
 };
+
+export type ResetMode = "soft" | "mixed" | "hard";
 
 export type CommandResult = {
   stdout: string;
@@ -305,6 +348,7 @@ export type BranchRef = {
 export type StashRef = {
   ref: string;
   message: string;
+  target: string;
 };
 
 export type SubmoduleRef = {
@@ -357,6 +401,50 @@ export type RefComparison = {
   rightOnly: CommitRecord[];
   filesFromBaseToLeft: CommitFileChange[];
   filesFromBaseToRight: CommitFileChange[];
+};
+
+export type RangeDiffEntry = {
+  status: "added" | "deleted" | "changed" | "same";
+  oldPosition: number | null;
+  oldCommit: string | null;
+  newPosition: number | null;
+  newCommit: string | null;
+  subject: string;
+  details: string[];
+};
+
+export type RangeDiffResult = {
+  base: string;
+  before: string;
+  after: string;
+  entries: RangeDiffEntry[];
+  raw: string;
+  truncated: boolean;
+};
+
+export type RepositoryHealth = {
+  branch: string | null;
+  head: string | null;
+  dirtyFiles: number;
+  conflictFiles: number;
+  worktreeCount: number;
+  dirtyWorktreeCount: number;
+  submoduleCount: number;
+  changedSubmoduleCount: number;
+  lfsAvailable: boolean;
+  lfsTrackedFiles: number;
+  objectCount: number;
+  packedObjectCount: number;
+  packCount: number;
+  packSizeKb: number;
+  reflogEntries: number;
+  maintenanceConfigured: boolean;
+  fsck: {
+    scanned: boolean;
+    unreachableObjects: number;
+    danglingCommits: number;
+    warnings: string[];
+  };
 };
 
 export type FileHistoryRequest = {

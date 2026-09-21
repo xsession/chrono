@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiConnection, saveApiConnection } from "./api";
 import { Capacitor } from "@capacitor/core";
-import type { BranchRecord, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
+import type { BranchRecord, CommitDraftOptions, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, ResetMode, Workspace } from "./types";
+import { HISTORY_PAGE_SIZE, addHistoryPage, summarizeHistoryWindow, type HistorySegment } from "./historyWindow";
 import { RepositorySidebar, type RepositoryView } from "./components/RepositorySidebar";
 import { CommitGraph } from "./components/CommitGraph";
 import { StatusPanel } from "./components/StatusPanel";
@@ -51,7 +52,8 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([emptyWorkspace]);
   const [path, setPath] = useState("");
   const [summary, setSummary] = useState<RepositorySummary | null>(null);
-  const [commits, setCommits] = useState<CommitRecord[]>([]);
+  const [historySegments, setHistorySegments] = useState<HistorySegment[]>([]);
+  const [historyLoadingDirection, setHistoryLoadingDirection] = useState<"older" | "newer" | null>(null);
   const [selectedCommit, setSelectedCommit] = useState<CommitRecord | null>(null);
   const [changes, setChanges] = useState<FileChange[]>([]);
   const [branches, setBranches] = useState<BranchRecord[]>([]);
@@ -62,6 +64,13 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
+  const historyRequestRef = useRef(0);
+
+  const historyWindow = useMemo(() => summarizeHistoryWindow(historySegments), [historySegments]);
+  const commits = historyWindow.commits;
+  const historyHasMore = historyWindow.hasOlder;
+  const historyHasNewer = historyWindow.hasNewer;
+  const historyLoading = historyLoadingDirection !== null;
 
   useEffect(() => {
     api.loadWorkspaces()
@@ -71,19 +80,22 @@ export default function App() {
 
   const refresh = useCallback(async (repositoryPath = path) => {
     if (!repositoryPath) return;
+    const requestId = ++historyRequestRef.current;
+    setHistoryLoadingDirection(null);
     setBusy(true);
     try {
-      const [nextSummary, nextCommits, nextChanges, nextBranches, nextOperation] = await Promise.all([
+      const [nextSummary, nextHistory, nextChanges, nextBranches, nextOperation] = await Promise.all([
         api.summary(repositoryPath),
-        api.history(repositoryPath),
+        api.historyPage(repositoryPath),
         api.status(repositoryPath),
         api.branches(repositoryPath),
         api.operationState(repositoryPath)
       ]);
+      if (requestId !== historyRequestRef.current) return;
       setPath(repositoryPath);
       setSummary(nextSummary);
-      setCommits(nextCommits);
-      setSelectedCommit((current) => nextCommits.find((commit) => commit.id === current?.id) || nextCommits[0] || null);
+      setHistorySegments([{ offset: 0, page: nextHistory }]);
+      setSelectedCommit((current) => nextHistory.commits.find((commit) => commit.id === current?.id) || nextHistory.commits[0] || null);
       setChanges(nextChanges);
       setBranches(nextBranches);
       setOperation(nextOperation);
@@ -94,6 +106,44 @@ export default function App() {
       setBusy(false);
     }
   }, [path]);
+
+  const loadOlderHistory = useCallback(async () => {
+    const cursor = historyWindow.olderCursor;
+    const offset = historyWindow.olderOffset;
+    if (!path || !historyHasMore || historyLoading || cursor === null || offset === null) return;
+    const requestId = ++historyRequestRef.current;
+    setHistoryLoadingDirection("older");
+    try {
+      const page = await api.historyPage(path, cursor, HISTORY_PAGE_SIZE);
+      if (requestId !== historyRequestRef.current) return;
+      setHistorySegments((current) => addHistoryPage(current, offset, page, "older"));
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      if (requestId === historyRequestRef.current) setHistoryLoadingDirection(null);
+    }
+  }, [historyHasMore, historyLoading, historyWindow, path]);
+
+  const loadNewerHistory = useCallback(async () => {
+    const offset = historyWindow.newerOffset;
+    if (!path || !historyHasNewer || historyLoading || offset === null) return;
+    const requestId = ++historyRequestRef.current;
+    setHistoryLoadingDirection("newer");
+    try {
+      const page = await api.historyPage(path, String(offset), HISTORY_PAGE_SIZE);
+      if (requestId !== historyRequestRef.current) return;
+      setHistorySegments((current) => addHistoryPage(current, offset, page, "newer"));
+    } catch (error) {
+      setMessage(String(error));
+    } finally {
+      if (requestId === historyRequestRef.current) setHistoryLoadingDirection(null);
+    }
+  }, [historyHasNewer, historyLoading, historyWindow, path]);
+
+  useEffect(() => {
+    if (selectedCommit && commits.some((commit) => commit.id === selectedCommit.id)) return;
+    setSelectedCommit(commits[0] ?? null);
+  }, [commits, selectedCommit]);
 
   const rememberRepository = async (repositoryPath: string) => {
     const next = structuredClone(workspaces.length ? workspaces : [emptyWorkspace]);
@@ -146,6 +196,47 @@ export default function App() {
       setBusy(false);
     }
   }, [path, refresh]);
+
+  const copyCommitSha = useCallback(async (commit: string) => {
+    try {
+      await navigator.clipboard?.writeText(commit);
+      setMessage(`Copied ${commit.slice(0, 8)} to the clipboard`);
+    } catch {
+      setMessage(`Commit ${commit}`);
+    }
+  }, []);
+
+  const runCommitAction = useCallback(async (action: "cherry-pick" | "revert", commit: CommitRecord) => {
+    if (!path) return;
+    const label = action === "cherry-pick" ? "Cherry-pick" : "Revert";
+    await runRepositoryAction(`${label} ${commit.id.slice(0, 8)}`, () => api.workflow(path, { operation: action.replace("-", "_") as "cherry_pick" | "revert", args: [commit.id] }));
+  }, [path, runRepositoryAction]);
+
+  const createBranchAt = useCallback(async (commit: CommitRecord) => {
+    if (!path) return;
+    const branch = window.prompt("Create branch at selected commit", "feature/");
+    if (!branch?.trim()) return;
+    await runRepositoryAction(`Create branch ${branch.trim()}`, async () => {
+      await api.createBranchAt(path, branch.trim(), commit.id);
+    });
+  }, [path, runRepositoryAction]);
+
+  const createTagAt = useCallback(async (commit: CommitRecord) => {
+    if (!path) return;
+    const name = window.prompt("Create tag at selected commit", "v");
+    if (!name?.trim()) return;
+    const message = window.prompt("Annotated tag message (leave empty for a lightweight tag)", "") ?? "";
+    await runRepositoryAction(`Create tag ${name.trim()}`, () => api.createTag(path, name.trim(), commit.id, message));
+  }, [path, runRepositoryAction]);
+
+  const resetToCommit = useCallback(async (commit: CommitRecord, mode: ResetMode) => {
+    if (!path) return;
+    const warning = mode === "hard"
+      ? `Hard reset this branch to ${commit.id.slice(0, 8)}? Uncommitted changes will be discarded.`
+      : `Reset this branch to ${commit.id.slice(0, 8)} (${mode})?`;
+    if (!window.confirm(warning)) return;
+    await runRepositoryAction(`Reset ${mode}`, () => api.resetTo(path, commit.id, mode));
+  }, [path, runRepositoryAction]);
 
   const runOperationAction = useCallback(async (action: RepositoryOperationAction) => {
     if (!path || !operation.operation) return false;
@@ -214,7 +305,8 @@ export default function App() {
     { id: "history", title: "Show history", category: "View", shortcut: "Ctrl+2", disabled: !path, run: () => setView("history") },
     { id: "branches", title: "Show branches", category: "View", shortcut: "Ctrl+3", disabled: !path, run: () => setView("branches") },
     { id: "rebase", title: "Plan interactive rebase", category: "History", keywords: ["rewrite", "squash", "fixup", "reword"], disabled: !path || operationActive, run: () => setView("rebase") },
-    { id: "intelligence", title: "Open Git Intelligence", category: "Explore", keywords: ["search", "compare", "blame", "file history", "contributors"], disabled: !path, run: () => setView("insights") },
+    { id: "intelligence", title: "Open Git Intelligence", category: "Explore", keywords: ["search", "compare", "blame", "file history", "contributors", "activity", "stats"], disabled: !path, run: () => setView("insights") },
+    { id: "bisect", title: "Open bisect controls", category: "History", keywords: ["regression", "good", "bad"], disabled: !path || operationActive, run: () => setView("recovery") },
     { id: "worktrees", title: "Manage worktrees", category: "Repository", keywords: ["parallel", "checkout"], disabled: !path, run: () => setView("worktrees") },
     { id: "submodules", title: "Manage submodules", category: "Repository", disabled: !path, run: () => setView("submodules") },
     { id: "refs", title: "Open references browser", category: "Repository", keywords: ["branches", "remotes", "tags", "worktrees", "stashes", "submodules"], disabled: !path, run: () => setView("refs") },
@@ -328,13 +420,15 @@ export default function App() {
               changes={changes}
               repositoryPath={path}
               onStage={async (files) => { await api.stage(path, files); await refresh(); }}
+              onStageHunks={async (file, hunks) => { await api.stageHunks(path, file, hunks); await refresh(); }}
               onUnstage={async (files) => { await api.unstage(path, files); await refresh(); }}
+              onDraftCommit={(options: CommitDraftOptions) => api.draftCommit(path, "auto", undefined, options)}
               operationActive={operationActive}
               onResolveConflicts={() => setView("conflicts")}
               onCommit={async (commitMessage) => { await api.commit(path, commitMessage); await refresh(); }}
             />
           )}
-          {path && view === "history" && <CommitGraph repositoryPath={path} commits={commits} branches={branches} headSha={summary?.head ?? undefined} selected={selectedCommit} onSelect={setSelectedCommit} />}
+          {path && view === "history" && <CommitGraph repositoryPath={path} commits={commits} branches={branches} headSha={summary?.head ?? undefined} selected={selectedCommit} onSelect={setSelectedCommit} onCopyCommit={copyCommitSha} onCommitAction={runCommitAction} onCreateBranchAt={createBranchAt} onCreateTagAt={createTagAt} onResetTo={resetToCommit} actionBusy={busy || operationActive} onOpenWorktree={refresh} historyHasNewer={historyHasNewer} historyHasMore={historyHasMore} historyLoading={historyLoading} historyLoadingDirection={historyLoadingDirection} onLoadNewer={loadNewerHistory} onLoadMore={loadOlderHistory} />}
           {path && view === "branches" && (
             <BranchPanel
               branches={branches}
@@ -353,6 +447,8 @@ export default function App() {
               headSha={summary?.head ?? undefined}
               onCheckout={async (branch) => { await api.switchBranch(path, branch); await refresh(); }}
               onCheckoutRemote={async (remoteBranch) => { await api.checkoutRemoteBranch(path, remoteBranch); await refresh(); }}
+              onCheckoutTag={async (tag) => { await api.workflow(path, { operation: "checkout_tag", args: [tag] }); await refresh(); }}
+              onOpenWorktree={refresh}
               onNotify={(message) => setMessage(message)}
               onRefresh={async () => { await refresh(); }}
             />
@@ -375,7 +471,7 @@ export default function App() {
             />
           )}
           {path && (view === "worktrees" || view === "submodules" || view === "stashes" || view === "recovery") && (
-            <WorkflowPanel section={view} repositoryPath={path} operationLocked={operationActive} onRun={(request) => api.workflow(path, request)} />
+            <WorkflowPanel section={view} repositoryPath={path} operationLocked={operationActive} onOpenWorktree={refresh} onRun={(request) => api.workflow(path, request)} />
           )}
           {view === "cherry" && <CherryParityPanel />}
         </section>
