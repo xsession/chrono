@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiConnection, saveApiConnection } from "./api";
 import { Capacitor } from "@capacitor/core";
 import type { BranchRecord, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
@@ -16,6 +16,16 @@ import { CloneDialog } from "./components/CloneDialog";
 import { OperationBanner } from "./components/OperationBanner";
 import { ConflictCenter } from "./components/ConflictCenter";
 import { RebasePlanner } from "./components/RebasePlanner";
+import { RepoTabs } from "./components/RepoTabs";
+import { TerminalPanel, type TerminalPanelHandle } from "./components/TerminalPanel";
+import { GitLogModal } from "./components/GitLogModal";
+import { KeyBindingsModal } from "./components/KeyBindingsModal";
+import { ToastHost } from "./components/ToastHost";
+import { sagaBus } from "./sagas/bus";
+import { buildSagaHandlers } from "./sagas/registry";
+import { setSagaActions, type SagaActions } from "./sagas/actions";
+import type { SagaResult } from "./sagas/bus";
+import { pushToast, clearToasts } from "./toastBus";
 import { GitIntelligencePanel } from "./components/GitIntelligencePanel";
 
 const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
@@ -62,6 +72,15 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
+
+  // v6 GitKraken-style additions: multi-repo tabs, terminal panel, modals, zoom.
+  const [repoTabs, setRepoTabs] = useState<string[]>([]);
+  const lastClosedTabRef = useRef<string | null>(null);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [gitLogOpen, setGitLogOpen] = useState(false);
+  const [keybindingsOpen, setKeybindingsOpen] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const terminalRef = useRef<TerminalPanelHandle | null>(null);
 
   useEffect(() => {
     api.loadWorkspaces()
@@ -186,6 +205,13 @@ export default function App() {
         setSidebarCollapsed((value) => !value);
         return;
       }
+      // v6 GitKraken-style shortcuts (RE §View/§TerminalPanel)
+      if (modifier && !event.shiftKey && event.key.toLowerCase() === "t") { event.preventDefault(); setTerminalOpen((value) => !value); return; }
+      if (modifier && !event.shiftKey && event.key.toLowerCase() === "g") { event.preventDefault(); setGitLogOpen(true); return; }
+      if (modifier && !event.shiftKey && event.key.toLowerCase() === "k") { event.preventDefault(); setKeybindingsOpen(true); return; }
+      if (modifier && (event.key === "=" || event.key === "+")) { event.preventDefault(); zoom("up"); return; }
+      if (modifier && event.key === "-") { event.preventDefault(); zoom("down"); return; }
+      if (modifier && !event.shiftKey && event.key === "0") { event.preventDefault(); zoom("reset"); return; }
       if (modifier && path && ["1", "2", "3"].includes(event.key)) {
         event.preventDefault();
         setView(event.key === "1" ? "changes" : event.key === "2" ? "history" : "branches");
@@ -199,6 +225,124 @@ export default function App() {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [path, refresh]);
+
+  // ---------------------------------------------------------------------------
+  // v6 multi-repo tabs (GitKraken RE §Tabs) + saga bridge wiring (§11.2)
+  // ---------------------------------------------------------------------------
+  const openRepoTab = useCallback(async (repositoryPath?: string): Promise<SagaResult> => {
+    let target = repositoryPath;
+    if (!target) {
+      const selected = await promptRepositoryPath("Open Git repository");
+      if (!selected) return { ok: false, error: "cancelled" };
+      target = selected;
+    }
+    try {
+      await rememberRepository(target);
+      setRepoTabs((current) => (current.includes(target) ? current : [...current, target]));
+      await refresh(target);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  }, [refresh]);
+
+  const closeActiveTab = useCallback(() => {
+    if (!path) return;
+    lastClosedTabRef.current = path;
+    setRepoTabs((current) => {
+      const next = current.filter((tab) => tab !== path);
+      if (next.length > 0) void refresh(next[next.length - 1]).catch(() => undefined);
+      else { setSummary(null); setCommits([]); setSelectedCommit(null); setChanges([]); setBranches([]); }
+      return next;
+    });
+  }, [path, refresh]);
+
+  const closeTab = useCallback((target: string) => {
+    lastClosedTabRef.current = target;
+    setRepoTabs((current) => {
+      const next = current.filter((tab) => tab !== target);
+      if (next.length > 0 && target === path) void refresh(next[next.length - 1]).catch(() => undefined);
+      return next;
+    });
+  }, [path, refresh]);
+
+  const selectTab = useCallback((index: number) => {
+    setRepoTabs((current) => {
+      const target = current[index];
+      if (target && target !== path) void refresh(target).catch(() => undefined);
+      return current;
+    });
+  }, [path, refresh]);
+
+  const zoom = useCallback((direction: "up" | "down" | "reset") => {
+    setZoomLevel((current) => {
+      const next = direction === "reset" ? 1 : Math.min(2, Math.max(0.6, current + (direction === "up" ? 0.1 : -0.1)));
+      document.documentElement.style.fontSize = `${Math.round(next * 100)}%`;
+      return next;
+    });
+  }, []);
+
+  const sagaActions: SagaActions = {
+    openRepo: async (repositoryPath) => { await rememberRepository(repositoryPath); setRepoTabs((current) => current.includes(repositoryPath) ? current : [...current, repositoryPath]); try { await refresh(repositoryPath); return { ok: true }; } catch (error) { return { ok: false, error: String(error) }; } },
+    promptOpenRepo: async () => { const selected = await promptRepositoryPath("Open Git repository"); if (!selected) return { ok: false, error: "cancelled" }; await rememberRepository(selected); setRepoTabs((current) => current.includes(selected) ? current : [...current, selected]); try { await refresh(selected); return { ok: true }; } catch (error) { return { ok: false, error: String(error) }; } },
+    refresh: async () => { if (!path) return { ok: false, error: "no repository open" }; try { await refresh(); return { ok: true }; } catch (error) { return { ok: false, error: String(error) }; } },
+    listKnownRepos: async () => workspaces[0]?.repositories.map((repository) => repository.path) ?? [],
+    selectBranch: async (name) => { if (!path) return { ok: false, error: "no repository open" }; try { const record = branches.find((branch) => branch.name === name); if (!record) return { ok: false, error: `branch not found: ${name}` }; if (record.remote) await api.checkoutRemoteBranch(path, name); else await api.switchBranch(path, name); await refresh(); return { ok: true }; } catch (error) { return { ok: false, error: String(error) }; } },
+    selectCommit: async (sha) => { const commit = commits.find((candidate) => candidate.id === sha || candidate.id.startsWith(sha)); if (!commit) return { ok: false, error: `commit not found: ${sha}` }; setSelectedCommit(commit); setView("history"); return { ok: true }; },
+    runSearch: async (query, mode = "message") => { if (!path) return { ok: false, error: "no repository open" }; try { const results = await api.historyQuery(path, { query, mode }); setSelectedCommit(results[0] ?? null); setView("history"); setMessage(`Found ${results.length} commit(s) matching “${query}”`); return { ok: true, result: results.length }; } catch (error) { return { ok: false, error: String(error) }; } },
+    toggleLeftPanel: () => setSidebarCollapsed((value) => !value),
+    toggleDetailPanel: () => { if (selectedCommit) setView("history"); else pushToast("Select a commit first — details show in the history view", "info"); },
+    closeModals: () => { setPalette(false); setCloneOpen(false); setGitLogOpen(false); setKeybindingsOpen(false); },
+    openPreferences: (section) => { if (section === "protocol") pushToast("Deep links: chrono://repo?path=… — registered in the desktop build", "info"); else setConnectionOpen(true); },
+    openErrorLog: async () => { setGitLogOpen(true); return; },
+    showToast: (message, kind = "info") => pushToast(message, kind),
+    hideToasts: () => clearToasts(),
+    openRepoTab,
+    closeActiveTab,
+    selectNextTab: () => selectTab(Math.min(repoTabs.length - 1, Math.max(0, repoTabs.indexOf(path)) + 1)),
+    selectPreviousTab: () => selectTab(Math.max(0, (repoTabs.indexOf(path) < 0 ? 0 : repoTabs.indexOf(path) - 1))),
+    selectTabIndex: (index) => selectTab(index),
+    toggleTabDropdown: () => pushToast(`Open repositories: ${repoTabs.join(", ") || "none"}`, "info"),
+    reopenClosedTab: () => { const last = lastClosedTabRef.current; if (!last) return; setRepoTabs((current) => (current.includes(last) ? current : [...current, last])); void refresh(last).catch(() => undefined); },
+    toggleFuzzyFinder: () => setPalette((value) => !value),
+    openKeyBindingsModal: () => setKeybindingsOpen(true),
+    zoom,
+    openExternal: async (target, p) => { const targetPath = p || path; if (!targetPath) return { ok: false, error: "no repository path" }; try { const desktop = (window as unknown as { chronoDesktop?: { openPath?: (kind: string, dir: string) => Promise<string> } }).chronoDesktop; if (desktop?.openPath) { const result = await desktop.openPath(target, targetPath); return { ok: true, result }; } pushToast(`Open ${target} at ${targetPath}`, "info"); return { ok: true, result: targetPath }; } catch (error) { return { ok: false, error: String(error) }; } },
+    createTerminalTab: async (repoPath) => { setTerminalOpen(true); requestAnimationFrame(() => terminalRef.current?.createTab(repoPath || path || undefined)); return { ok: true }; },
+    closeActiveTerminalTab: () => terminalRef.current?.closeActiveTab(),
+    selectNextTerminalTab: () => terminalRef.current?.selectNextTab(),
+    selectPreviousTerminalTab: () => terminalRef.current?.selectPreviousTab(),
+    selectTerminalTabByIndex: (index) => terminalRef.current?.selectTabIndex(index),
+    toggleTerminalPanel: () => setTerminalOpen((value) => !value),
+  };
+
+  // Register the GitKraken-compatible saga registry once; expose actions to it.
+  useEffect(() => {
+    for (const [name, handler] of Object.entries(buildSagaHandlers())) sagaBus.register(name, handler);
+    setSagaActions(sagaActions);
+    return () => setSagaActions(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Deep-link entry points: Electron IPC (chrono:deep-link), desktop bridge, web ?chrono=… fallback.
+  useEffect(() => {
+    const dispatchUri = (uri: string) => { void sagaBus.dispatch("DeepLink.handleOpenDeepLink", { uri }); };
+    const onWindowEvent = (event: Event) => { const detail = (event as CustomEvent).detail; if (typeof detail === "string") dispatchUri(detail); else if (detail?.uri) dispatchUri(String(detail.uri)); };
+    window.addEventListener("chrono:deep-link", onWindowEvent);
+    const desktop = (window as unknown as { chronoDesktop?: { onDeepLink?: (cb: (uri: string) => void) => () => void } }).chronoDesktop;
+    const offDesktop = desktop?.onDeepLink ? desktop.onDeepLink((uri) => dispatchUri(uri)) : undefined;
+    // Surface saga failures as toasts so deep-link/IPC errors are visible.
+    const offBus = sagaBus.on((event) => { if (event.kind === "failure") pushToast(`Saga ${event.name} failed: ${event.error}`, "error"); });
+    const params = new URLSearchParams(window.location.search);
+    const chronoParam = params.get("chrono");
+    if (chronoParam) {
+      // Forward every query parameter except the command marker itself.
+      const forwarded = [...params.entries()].filter(([key]) => key !== "chrono").map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`).join("&");
+      dispatchUri(`chrono://${chronoParam}${forwarded ? `?${forwarded}` : ""}`);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    return () => { window.removeEventListener("chrono:deep-link", onWindowEvent); offDesktop?.(); offBus(); };
+  }, []);
 
   const commands = useMemo<Command[]>(() => [
     { id: "open", title: "Open repository", category: "File", keywords: ["folder", "repo"], run: () => void openRepository() },
@@ -294,6 +438,16 @@ export default function App() {
           </div>
         </header>
 
+        {repoTabs.length > 0 && (
+          <RepoTabs
+            tabs={repoTabs.map((tabPath) => ({ id: tabPath, path: tabPath, name: tabPath.split("/").filter(Boolean).pop() || tabPath }))}
+            activeId={path || null}
+            onSelect={(id) => void refresh(id)}
+            onClose={(id) => closeTab(id)}
+            onNew={() => void openRepoTab()}
+          />
+        )}
+
         {path && operationActive && (
           <OperationBanner
             state={operation}
@@ -388,6 +542,12 @@ export default function App() {
 
       <CommandPalette open={palette} commands={commands} onClose={() => setPalette(false)} />
       <CloneDialog openDialog={cloneOpen} busy={busy} onClose={() => setCloneOpen(false)} onClone={submitClone} />
+
+      {/* v6 GitKraken-style additions: integrated terminal, git executor log, keybindings, toasts */}
+      <TerminalPanel ref={terminalRef} open={terminalOpen} repositoryPath={path || undefined} />
+      <GitLogModal open={gitLogOpen} onClose={() => setGitLogOpen(false)} />
+      <KeyBindingsModal open={keybindingsOpen} onClose={() => setKeybindingsOpen(false)} onZoom={(direction) => zoom(direction)} />
+      <ToastHost />
     </div>
   );
 }

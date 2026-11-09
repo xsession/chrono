@@ -400,3 +400,15 @@ export type WorktreeSummary = {
   dirtyCount: number;
   conflictCount: number;
 };
+
+export type GitLogEntry = {
+  id: string;
+  commandId: string;
+  args: string[];
+  cwd: string;
+  exitCode: number | null;
+  durationMs: number;
+  startedAt: string;
+  stdoutTail: string;
+  stderrTail: string;
+};

@@ -35,6 +35,7 @@ import type {
   RepositorySummary,
   WorkflowRequest,
   Workspace,
+  GitLogEntry,
 } from "./types";
 
 const API_URL_KEY = "chrono.apiUrl";
@@ -150,4 +151,9 @@ export const api = {
     repository: string,
     token: string,
   ) => invoke<PullRequestRecord[]>("list_pull_requests", { provider, baseUrl, owner, repository, token }),
+  // v6 saga bridge (GitKraken RE §11.2): external-control surface for deep links / CLI / Electron IPC.
+  invokeSaga: (name: string, args: Record<string, unknown> = {}) =>
+    invoke<{ ok: boolean; result?: unknown; error?: string }>("saga_invoke", { name, args }),
+  // v6 git executor log (GitKraken RE §6: GIT_EXECUTOR_COMMAND_ID correlation).
+  gitLog: (limit = 200) => invoke<GitLogEntry[]>("git_log", { limit }),
 };

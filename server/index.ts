@@ -14,11 +14,14 @@ import { AppError, statusCodeFor } from "./src/lib/errors.ts";
 import * as backend from "./src/backend.ts";
 import * as conflictCenter from "./src/conflictCenter.ts";
 import * as insights from "./src/insights.ts";
+import { invokeServerSaga } from "./src/sagas.ts";
+import { attachTerminalServer } from "./src/terminal.ts";
 import * as operationState from "./src/operationState.ts";
 import * as rebasePlanner from "./src/rebasePlanner.ts";
 import { listPullRequests } from "./src/provider.ts";
 import * as repo from "./src/repo.ts";
 import { loadWorkspaces, saveWorkspaces, type Workspace } from "./src/workspaces.ts";
+import { recentGitCommands } from "./src/lib/gitLog.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
@@ -190,6 +193,16 @@ const routes: Record<string, Handler> = {
   contributors: (body) =>
     insights.contributors(bodyPath(body), num(body.maxCommits ?? 20000, "maxCommits")),
   worktree_summaries: (body) => insights.worktreeSummaries(bodyPath(body)),
+
+  // v6 git executor log (GitKraken RE §6): recent correlated git invocations.
+  git_log: async (body) => recentGitCommands(num(body.limit ?? 200, "limit")),
+
+  // Saga bridge (GitKraken RE §11.2): headless external-control surface.
+  saga_invoke: async (body) => {
+    const name = str(body.name, "name");
+    const args = typeof body.args === "object" && body.args !== null ? (body.args as Record<string, unknown>) : {};
+    return invokeServerSaga(name, args);
+  },
 
   list_tags: (body) => repo.listTags(bodyPath(body)),
   create_tag: (body) =>
@@ -400,6 +413,9 @@ const server = http.createServer((request, response) => {
     if (!served) sendJson(response, 404, { error: `not found: ${url.pathname}` });
   });
 });
+
+// v6 integrated terminal (GitKraken RE §TerminalPanel): PTY sessions over WebSocket.
+attachTerminalServer(server);
 
 server.listen(PORT, HOST, () => {
   console.log(`Chrono Next API listening on http://${HOST}:${PORT}`);

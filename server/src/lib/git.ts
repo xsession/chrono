@@ -9,6 +9,7 @@
 
 import { execFile } from "node:child_process";
 import { AppError } from "./errors.ts";
+import { recordGitCommand } from "./gitLog.ts";
 
 export interface GitOutput {
   stdout: string;
@@ -41,6 +42,8 @@ export function runGit(
   extraEnv: Record<string, string> = {},
 ): Promise<GitOutput> {
   return new Promise((resolve) => {
+    const startedAt = new Date().toISOString();
+    const start = performance.now();
     execFile(
       "git",
       spawnArgs(path, args),
@@ -49,10 +52,21 @@ export function runGit(
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv },
       },
       (error, stdout, stderr) => {
+        const code = resolveCode(error);
+        // v6 executor log (GitKraken RE §6): correlate every git invocation.
+        recordGitCommand({
+          args,
+          cwd: path,
+          exitCode: code,
+          durationMs: performance.now() - start,
+          startedAt,
+          stdoutTail: stdout ?? "",
+          stderrTail: stderr ?? "",
+        });
         resolve({
           stdout: stdout ?? "",
           stderr: stderr ?? "",
-          code: resolveCode(error),
+          code,
         });
       },
     );

@@ -12,6 +12,25 @@ export type Command = {
   disabled?: boolean;
 };
 
+// GitKraken RE §FuzzyFinder — subsequence matching with word-start / run bonuses.
+function scoreFuzzy(needle: string, haystack: string): number {
+  let score = 0;
+  let hayIdx = 0;
+  let prevMatch = -2;
+  for (const ch of needle) {
+    if (ch === " ") continue; // spaces separate terms instead of requiring a literal char
+    const found = haystack.indexOf(ch, hayIdx);
+    if (found === -1) return -1;
+    let gain = 1;
+    if (hayIdx === 0 || haystack[found - 1] === " ") gain += 4; // word-boundary hit
+    if (found === prevMatch + 1) gain += 3; // consecutive run
+    score += gain - Math.floor(found / 8); // slight penalty for late positions
+    hayIdx = found + 1;
+    prevMatch = found;
+  }
+  return score;
+}
+
 type Props = { open: boolean; commands: Command[]; onClose: () => void };
 
 export function CommandPalette({ open, commands, onClose }: Props) {
@@ -23,8 +42,11 @@ export function CommandPalette({ open, commands, onClose }: Props) {
     const needle = query.trim().toLowerCase();
     const enabled = commands.filter((command) => !command.disabled);
     if (!needle) return enabled;
-    return enabled.filter((command) => [command.title, command.category || "", ...(command.keywords || [])]
-      .join(" ").toLowerCase().includes(needle));
+    return enabled
+      .map((command) => ({ command, score: scoreFuzzy(needle, [command.title, command.category || "", ...(command.keywords || [])].join(" ").toLowerCase()) }))
+      .filter((entry) => entry.score >= 0)
+      .sort((a, b) => b.score - a.score)
+      .map((entry) => entry.command);
   }, [commands, query]);
 
   useEffect(() => {
