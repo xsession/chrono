@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, Dispatch, SetStateAction } from "react";
-import type { FileChange } from "../types";
+import type { CommitDraft, CommitDraftOptions, FileChange } from "../types";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
 import { WorkingDiffView } from "./WorkingDiffView";
@@ -9,8 +9,10 @@ type Props = {
   changes: FileChange[];
   repositoryPath: string;
   onStage: (paths: string[]) => Promise<void>;
+  onStageHunks: (file: string, hunks: number[]) => Promise<void>;
   onUnstage: (paths: string[]) => Promise<void>;
   onCommit: (message: string) => Promise<void>;
+  onDraftCommit: (options: CommitDraftOptions) => Promise<CommitDraft>;
   operationActive?: boolean;
   onResolveConflicts?: () => void;
 };
@@ -24,9 +26,10 @@ type GroupProps = {
   diffPath: string | null;
   onDiff: (path: string) => void;
   tone?: "danger" | "normal";
+  selectable?: boolean;
 };
 
-function ChangeGroup({ title, hint, items, selected, onToggle, diffPath, onDiff, tone = "normal" }: GroupProps) {
+function ChangeGroup({ title, hint, items, selected, onToggle, diffPath, onDiff, tone = "normal", selectable = true }: GroupProps) {
   if (!items.length) return null;
   return (
     <section className={`ux-change-group ${tone === "danger" ? "is-danger" : ""}`}>
@@ -38,7 +41,7 @@ function ChangeGroup({ title, hint, items, selected, onToggle, diffPath, onDiff,
         {items.map((change) => (
           <div key={`${title}-${change.path}`} className={`ux-change-row${diffPath === change.path ? " is-diffing" : ""}`}>
             <label className="ux-change-row-label" title={`Toggle ${change.path}`}>
-              <input type="checkbox" checked={selected.has(change.path)} onChange={() => onToggle(change.path)} />
+              <input type="checkbox" checked={selected.has(change.path)} disabled={!selectable} onChange={() => onToggle(change.path)} />
               <span className="ux-status-code" aria-label={`Git status ${change.indexStatus}${change.worktreeStatus}`}>{change.indexStatus}{change.worktreeStatus}</span>
               <span className="ux-change-path" title={change.path}>{change.path}</span>
             </label>
@@ -59,13 +62,28 @@ function ChangeGroup({ title, hint, items, selected, onToggle, diffPath, onDiff,
   );
 }
 
-export function StatusPanel({ changes, repositoryPath, onStage, onUnstage, onCommit, operationActive = false, onResolveConflicts }: Props) {
+export function StatusPanel({ changes, repositoryPath, onStage, onStageHunks, onUnstage, onCommit, onDraftCommit, operationActive = false, onResolveConflicts }: Props) {
   const [selectedStageable, setSelectedStageable] = useState<Set<string>>(new Set());
   const [selectedStaged, setSelectedStaged] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
-  const [pending, setPending] = useState<"stage" | "unstage" | "commit" | null>(null);
+  const [pending, setPending] = useState<"stage" | "unstage" | "commit" | "draft" | null>(null);
   const [commitWidth, setCommitWidth] = useState(350);
   const [diffFile, setDiffFile] = useState<string | null>(null);
+  const [draftNotice, setDraftNotice] = useState("");
+  const [draftStyle, setDraftStyle] = useState<CommitDraftOptions["style"]>("conventional");
+  const [issueReference, setIssueReference] = useState("");
+
+  const messageQuality = useMemo(() => {
+    const subject = message.split(/\r?\n/, 1)[0]?.trim() ?? "";
+    const conventional = /^(feat|fix|docs|test|chore|refactor|perf|build|ci|style|revert)(\([^)]+\))?:\s+\S/.test(subject);
+    const hasIssue = !issueReference.trim() || message.includes(issueReference.trim());
+    return [
+      { label: "Subject present", good: subject.length > 0 },
+      { label: "Subject ≤ 72 characters", good: subject.length <= 72 },
+      ...(draftStyle === "conventional" ? [{ label: "Conventional prefix", good: conventional }] : []),
+      ...(issueReference.trim() ? [{ label: "Issue reference included", good: hasIssue }] : []),
+    ];
+  }, [draftStyle, issueReference, message]);
 
   const grouped = useMemo(() => {
     const conflicts = changes.filter((change) => change.conflicted);
@@ -73,6 +91,16 @@ export function StatusPanel({ changes, repositoryPath, onStage, onUnstage, onCom
     const unstaged = changes.filter((change) => !change.conflicted && (change.worktreeStatus !== " " || change.indexStatus === "?"));
     return { conflicts, staged, unstaged };
   }, [changes]);
+
+  // A refresh can remove or reclassify files while this panel stays mounted.
+  // Drop stale selections so the action buttons never target paths that are
+  // no longer in the corresponding staging set.
+  useEffect(() => {
+    const stageable = new Set(changes.filter((change) => !change.conflicted).map((change) => change.path));
+    const staged = new Set(grouped.staged.map((change) => change.path));
+    setSelectedStageable((current) => new Set([...current].filter((path) => stageable.has(path))));
+    setSelectedStaged((current) => new Set([...current].filter((path) => staged.has(path))));
+  }, [changes, grouped.staged]);
 
   const toggleIn = (setter: Dispatch<SetStateAction<Set<string>>>, path: string) => {
     setter((current) => {
@@ -122,7 +150,7 @@ export function StatusPanel({ changes, repositoryPath, onStage, onUnstage, onCom
         )}
 
         <div className="ux-change-groups">
-          <ChangeGroup title="Conflicts" hint="Resolve before continuing the Git operation" items={grouped.conflicts} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} diffPath={diffFile} onDiff={setDiffFile} tone="danger" />
+          <ChangeGroup title="Conflicts" hint="Resolve before continuing the Git operation" items={grouped.conflicts} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} diffPath={diffFile} onDiff={setDiffFile} tone="danger" selectable={false} />
           <ChangeGroup title="Staged" hint="Included in the next commit" items={grouped.staged} selected={selectedStaged} onToggle={(path) => toggleIn(setSelectedStaged, path)} diffPath={diffFile} onDiff={setDiffFile} />
           <ChangeGroup title="Unstaged" hint="Working directory changes" items={grouped.unstaged} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} diffPath={diffFile} onDiff={setDiffFile} />
           {!changes.length && (
@@ -134,7 +162,7 @@ export function StatusPanel({ changes, repositoryPath, onStage, onUnstage, onCom
           )}
         </div>
 
-        {diffFile && <WorkingDiffView repositoryPath={repositoryPath} file={diffFile} onClose={() => setDiffFile(null)} />}
+        {diffFile && <WorkingDiffView repositoryPath={repositoryPath} file={diffFile} onClose={() => setDiffFile(null)} onStageHunks={onStageHunks} />}
       </section>
 
       <SplitHandle
@@ -148,15 +176,46 @@ export function StatusPanel({ changes, repositoryPath, onStage, onUnstage, onCom
           <h2>{grouped.staged.length ? `${grouped.staged.length} staged file${grouped.staged.length === 1 ? "" : "s"}` : "Nothing staged"}</h2>
         </header>
         <label className="ux-field-label" htmlFor="commit-message">Commit message</label>
+        <div className="ux-commit-options" aria-label="Commit drafting options">
+          <label><span>Style</span><select value={draftStyle} onChange={(event) => setDraftStyle(event.target.value as CommitDraftOptions["style"])}><option value="conventional">Conventional</option><option value="plain">Plain</option></select></label>
+          <label><span>Issue reference</span><input value={issueReference} onChange={(event) => setIssueReference(event.target.value)} placeholder="#123 or PROJ-123" spellCheck={false} /></label>
+        </div>
+        <div className="ux-commit-assist">
+          <button
+            type="button"
+            className="ux-button"
+            disabled={operationActive || !grouped.staged.length || grouped.conflicts.length > 0 || pending !== null}
+            onClick={async () => {
+              setPending("draft");
+              setDraftNotice("Drafting from staged changes…");
+              try {
+                const draft = await onDraftCommit({ style: draftStyle, issueReference: issueReference.trim() || undefined });
+                setMessage(draft.message);
+                setIssueReference(draft.issueReference || issueReference);
+                setDraftNotice(draft.source === "ollama" ? `Local model: ${draft.model || "Ollama"}` : "Offline local draft");
+              } catch (error) {
+                setDraftNotice(String(error));
+              } finally {
+                setPending(null);
+              }
+            }}
+          >
+            {pending === "draft" ? "Drafting…" : "Draft with local AI"}
+          </button>
+          <span title="Uses loopback Ollama when available, otherwise a deterministic offline draft.">{draftNotice || "Loopback model when available · offline fallback"}</span>
+        </div>
         <textarea
           id="commit-message"
           value={message}
-          onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setMessage(event.target.value)}
+          onChange={(event: ChangeEvent<HTMLTextAreaElement>) => { setMessage(event.target.value); setDraftNotice(""); }}
           placeholder="Summary\n\nOptional description…"
         />
         <div className="ux-commit-meta">
           <span>{message.trim().split(/\s+/).filter(Boolean).length} words</span>
           <span>{message.length} characters</span>
+        </div>
+        <div className="ux-commit-quality" aria-label="Commit message quality checks">
+          {messageQuality.map((check) => <span key={check.label} className={check.good ? "is-good" : "is-warn"}><i>{check.good ? "✓" : "!"}</i>{check.label}</span>)}
         </div>
         <button
           className="ux-primary-button"
@@ -166,6 +225,7 @@ export function StatusPanel({ changes, repositoryPath, onStage, onUnstage, onCom
             try {
               await onCommit(message.trim());
               setMessage("");
+              setDraftNotice("");
             } finally {
               setPending(null);
             }

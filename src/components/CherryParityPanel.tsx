@@ -73,6 +73,10 @@ export function CherryParityPanel() {
     });
   };
 
+  const clickWidgetButton = () => {
+    setScriptLog((current) => ["Button clicked", ...current].slice(0, 8));
+  };
+
   return (
     <div
       className={`cherry-workbench ${dockPreset}`}
@@ -109,7 +113,7 @@ export function CherryParityPanel() {
         </div>
         <canvas ref={canvasRef} width={520} height={220} />
         <div className="cherry-widget-grid">
-          <button>Button</button>
+          <button onClick={clickWidgetButton}>Button</button>
           <label><input type="checkbox" defaultChecked /> Toggle</label>
           <label>Slider <input type="range" defaultValue="42" /></label>
           <div className="cherry-stat">Frames <strong>{frames}</strong></div>

@@ -13,8 +13,8 @@ type Props = {
   onClose: () => void;
 };
 
-/** Inline diff of one commit file, shown beneath the file list in the
- *  commit inspector. Fetches lazily and caches per commit+file. */
+/** Inline diff of one commit file, docked above the History rows. Fetches
+ *  lazily and keeps the file selection in the commit inspector. */
 export function CommitDiffView({ repositoryPath, commit, file, additions, deletions, binary, onClose }: Props) {
   const [diff, setDiff] = useState<CommitFileDiff | null>(null);
   const [failed, setFailed] = useState(false);

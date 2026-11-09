@@ -30,9 +30,12 @@ Browser (React 19)  ──fetch /api/<command>──▶  Node HTTP server (TypeS
   - `server/src/conflictCenter.ts` — three-way Conflict Center (index stages 1/2/3)
   - `server/src/rebasePlanner.ts` — interactive rebase planner (pick/reword/edit/
     squash/fixup/drop, `--update-refs`, todo injected via GIT_SEQUENCE_EDITOR)
-  - `server/src/insights.ts` — search, compare, file/line history, blame,
-    contributors, worktrees
+  - `server/src/insights.ts` — search, compare, range-diff review, repository
+    health, file/line history, blame, contributors, worktrees
+  - `server/src/commitWriter.ts` — local-first staged-diff commit drafting
+    with optional loopback Ollama and deterministic offline fallback
   - `server/src/provider.ts` — pull requests (GitHub/GitLab/Gitea/Forgejo)
+    with the Git Intelligence pull-request triage tab and remote auto-detection
   - `server/src/workspaces.ts` — workspace persistence (`~/.chrono-next/workspaces.json`)
 - `src/` — the React UI.
   - `src/graph.ts` — commit-graph layout engine (topological depth + lane
@@ -50,6 +53,33 @@ Browser (React 19)  ──fetch /api/<command>──▶  Node HTTP server (TypeS
 - Git 2.38+ recommended (required for rebase `--update-refs`)
 - Electron desktop: nothing extra (the starter installs it)
 - Android companion: JDK 17+ and the Android SDK
+
+The Git Intelligence view includes offline history search/compare/range review,
+repository-health, file history/blame/contributor/activity views plus a
+provider-aware pull-request triage surface. Range review compares two patch
+series versions from a common base using Git's native `range-diff`; health
+metrics are read-only until an explicit object scan is requested.
+It detects SSH and HTTPS remotes, supports GitHub, GitLab, Gitea and Forgejo,
+and keeps entered provider tokens in memory only. File history now includes a
+revision viewer with previous/next navigation, root-revision previews and
+unified two-revision diffs. The Changes view also has a local commit-writing
+assistant: it can use Ollama on `127.0.0.1:11434` when available and otherwise
+creates a conservative offline draft from the staged index. Drafts support
+Conventional Commit or plain imperative style plus safe `#123`/`PROJECT-123`
+issue references. The Worktrees view reports dirty-file and conflict counts
+for every linked checkout and can open a selected worktree. Changes also
+supports selecting individual unstaged text hunks for the index, while commit
+quality checks provide live subject/style/reference feedback without blocking
+manual commits. Set
+`CHRONO_LOCAL_AI_MODEL` to change the default model (`qwen2.5:3b`).
+
+History also supports persisted graph scope (all refs, current branch, or a
+local branch) and guarded reset-to-selected-commit actions for soft, mixed and
+hard reset modes. The History graph also provides persisted per-reference
+visibility controls for hiding or soloing local and remote branches. Large
+history windows keep their complete graph layout and page navigation while
+mounting only an overscanned viewport of rows, so thousands of commits remain
+comfortable to browse.
 
 ## Run (web)
 
@@ -119,6 +149,7 @@ npm run test:markers   # pure TS unit tests (conflict marker parsing)
 npm run test:graph     # commit-graph layout engine unit tests
 npm run test:git       # shell smoke tests against real temp Git repositories
 npm run test:api       # boots the API server and exercises every /api route
+npm run test:ui-contract # verifies every visible view/control remains wired
 ```
 
 The shell smoke tests create temporary Git repositories and do not modify your own repositories.

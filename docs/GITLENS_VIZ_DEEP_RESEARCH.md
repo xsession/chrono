@@ -55,7 +55,7 @@ patch, working-tree diff, revision diff, commit activity** (this wave).
 | Minimap (experimental) | hidden by default, shown while searching; left=newest; ref/HEAD/stash color markers | ✗ — roadmap (nice-to-have) |
 | Type-ahead reference finder | press `/`, type, `↑↓` to step; abbreviated paths (`d/f/foo`) | ✗ — roadmap (high value, cheap) |
 | Branch/tag detail sheet | tracking status, PRs/issues, sync/rebase/merge actions; tag sheet compares against previous tag | ✗ — roadmap (branch sheet is cheap: upstream + ahead/behind + compare-with-base actions) |
-| Focus Branch | scope graph to one branch's history | ✓ via history filter (branch) — could surface as first-class control |
+| Focus Branch | scope graph to one branch's history | ✓ persisted all/current/local-branch scope; full per-ref hide/solo remains roadmap |
 | Graph visibility toggles | current branch only / all local / remote-only / tags / stashes / dim merges | partial: Changes toggle; ref visibility = roadmap |
 | Full context menus | right-click commit/branch/tag/author: compare, branch, merge, rebase, cherry-pick, revert, stash, push | ✗ — roadmap (big UX win) |
 
@@ -124,8 +124,11 @@ roadmap (d3-scale squarify, ~1 day).
 
 Chrono: ✓ worktree CRUD + WIP rows, stashes. **This wave: tags UI, merge
 (no-ff/squash/ff-only), branch delete, clean untracked, export, patches.**
-PR panel already exists via `listPullRequests` for GitHub-style remotes;
-in-graph PR merge = roadmap.
+PR triage is now exposed through Git Intelligence: Chrono detects SSH/HTTPS
+remotes, supports GitHub/GitLab/Gitea/Forgejo settings, filters normalized PRs
+by state/query, and opens provider review pages. In-graph PR merge remains
+roadmap because provider-specific mutation and permission semantics should be
+explicit rather than hidden behind a generic button.
 
 ### 2.7 Rebase
 Interactive editor with drag reorder, conflict pre-warning ("which commits

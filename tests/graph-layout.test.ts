@@ -267,8 +267,19 @@ function rowOf(result, id: string) {
   assert.equal(ys.length, 3);
   assert.ok(ys[0] < ys[1] && ys[1] < ys[2], "pill ys ordered");
   assert.ok(ys[0] >= 0 && ys[2] + 12 <= ROW_H, "pill ys within the row");
+  assert.equal(graphLabelYs(4).length, 3, "ref pills are capped to the row height");
   // A commit with no refs at all gets no pills.
   assert.equal(graphLabels("c2", branches, "c1").length, 0);
+
+  const anchored = graphLabels(
+    "c1",
+    branches,
+    "c1",
+    [],
+    [{ ref: "stash@{0}", message: "graph stash", target: "c1" }],
+    [{ path: "/tmp/feature", branch: "feature/x", head: "c1" }],
+  );
+  assert.deepEqual(anchored.slice(-2).map((label) => [label.name, label.kind]), [["stash@{0}", "stash"], ["wt:feature/x", "worktree"]]);
 }
 
 console.log("graph layout: all assertions passed");

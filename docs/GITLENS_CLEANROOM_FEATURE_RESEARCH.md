@@ -78,7 +78,7 @@ This supports both "what do I have that main does not?" and "what would this bra
 
 GitLens File History supports rename following, all-branch scope and line-history switching. Line History tracks a selected line range. Revision navigation can move between file revisions and compare a revision with previous/next/working versions.[6][9]
 
-**Chrono implication:** file evolution should be available even though Chrono is not a source-code editor. The first implementation provides file history and `git log -L` line-range history in Git Intelligence. A later revision viewer should add previous/next navigation and a proper two-revision diff viewer.
+**Chrono implication:** file evolution should be available even though Chrono is not a source-code editor. Git Intelligence provides file history and `git log -L` line-range history, plus a revision viewer with previous/next navigation, root-revision content previews and a proper two-revision diff viewer.
 
 ### 1.6 Blame and authorship
 
@@ -130,12 +130,12 @@ GitLens 19 specifically emphasizes keyboard navigability in the graph. Search re
 | Changes/diffstat column | High | **Implemented** | Batch load + toggle |
 | Commit details file list | High | **Implemented** | On-demand |
 | Pinned searches | Medium | **Implemented locally** | Stored in browser local storage |
-| Branch focus/solo/hide | High | Planned | Best next graph-density feature |
+| Branch focus/solo/hide | High | **Implemented** | History supports all/current/local-branch scope plus persisted per-local/per-remote-ref hide and solo controls |
 | Tags/remotes side graph rail | Medium-high | Planned | Needs structured refs API |
-| Revision prev/next diff | High | Planned | Needs file revision viewer |
+| Revision prev/next diff | High | **Implemented** | File-history viewer loads parent-to-selected diffs and previews root revisions |
 | Autolinks | Medium-high | Planned | Provider/custom patterns |
 | Remote URL actions | High | Planned | GitHub/GitLab/Gitea/Forgejo already fit project direction |
-| PR Launchpad | Medium-high | Partial foundation | Existing normalized PR API; needs triage UI |
+| PR Launchpad | Medium-high | **Implemented first slice** | Provider-aware triage UI, remote auto-detection, state/query filters and direct review links; merge/review mutation remains explicit provider work |
 | WIP copy patch / move to worktree | High | Planned | Requires patch generation/apply safety layer |
 | Co-author picker | Medium | Planned | Contributor data now provides source |
 | Multi-diff review | High | Planned | Needs reusable diff viewer |
@@ -207,8 +207,8 @@ v5 follows this model. Worktree WIP summaries load in the History view because t
 
 1. **Branch focus / solo / hide.** Large histories need a way to reduce reference noise. GitLens' Solo/Hide and focused graph scope are strong patterns.[10]
 2. **Graph-quality DAG.** Chrono's current history lane is still intentionally minimal. A true parent-lane renderer should precede more graph ornaments.
-3. **Reusable diff viewer.** Search, comparison, file history, commit details and PR review all need one efficient text/binary diff surface.
-4. **Revision navigation.** Previous/next revision controls become straightforward once the diff viewer exists.
+3. **Reusable diff viewer.** Search, comparison, file history, commit details and PR review still need one shared text/binary diff surface; History and File History now have focused diff surfaces.
+4. **Revision navigation.** Implemented for File History; the next step is to reuse the same surface in comparison and pull-request review.
 
 ### P1 — provider-aware context
 
