@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, getApiConnection, saveApiConnection } from "./api";
 import { Capacitor } from "@capacitor/core";
 import type { BranchRecord, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
+import { HISTORY_PAGE_SIZE, addHistoryPage, summarizeHistoryWindow, type HistorySegment } from "./historyWindow";
 import { RepositorySidebar, type RepositoryView } from "./components/RepositorySidebar";
 import { CommitGraph } from "./components/CommitGraph";
 import { StatusPanel } from "./components/StatusPanel";
@@ -61,7 +62,16 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([emptyWorkspace]);
   const [path, setPath] = useState("");
   const [summary, setSummary] = useState<RepositorySummary | null>(null);
-  const [commits, setCommits] = useState<CommitRecord[]>([]);
+  const [historySegments, setHistorySegments] = useState<HistorySegment[]>([]);
+  const [historyLoadingDirection, setHistoryLoadingDirection] = useState<"older" | "newer" | null>(null);
+
+  // Bounded sliding history window (see src/historyWindow.ts): offsets are
+  // positions in `git log --all --date-order` (0 = newest commits).
+  const historyWindow = useMemo(() => summarizeHistoryWindow(historySegments), [historySegments]);
+  const commits = historyWindow.commits;
+  const historyHasMore = historyWindow.hasOlder;
+  const historyHasNewer = historyWindow.hasNewer;
+  const historyLoading = historyLoadingDirection !== null;
   const [selectedCommit, setSelectedCommit] = useState<CommitRecord | null>(null);
   const [changes, setChanges] = useState<FileChange[]>([]);
   const [branches, setBranches] = useState<BranchRecord[]>([]);
@@ -208,6 +218,28 @@ export default function App() {
     }
   }, [path, refresh]);
 
+  // Working-tree / operation state derived for header pills and panels.
+  const conflictCount = changes.filter((change) => change.conflicted).length;
+  const dirtyCount = changes.length;
+  const operationActive = operation.operation !== null;
+
+  const runOperationAction = useCallback(async (action: RepositoryOperationAction): Promise<boolean> => {
+    if (!path) return false;
+    setBusy(true);
+    setMessage(`${action}…`);
+    try {
+      await api.workflow(path, { operation: action, args: [] });
+      await refresh();
+      setMessage(`${action} completed`);
+      return true;
+    } catch (error) {
+      setMessage(String(error));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [path, refresh]);
+
   const copyCommitSha = useCallback(async (commit: string) => {
     try {
       await navigator.clipboard?.writeText(commit);
@@ -229,6 +261,22 @@ export default function App() {
     if (!branch?.trim()) return;
     await runRepositoryAction(`Create branch ${branch.trim()}`, async () => {
       await api.createBranchAt(path, branch.trim(), commit.id);
+    });
+  }, [path, runRepositoryAction]);
+
+  const createTagAt = useCallback(async (commit: CommitRecord) => {
+    if (!path) return;
+    const name = window.prompt(`Create tag at ${commit.id.slice(0, 8)} — “${commit.subject}”`, "");
+    if (!name?.trim()) return;
+    await runRepositoryAction(`Tag ${name.trim()}`, async () => {
+      await api.createTag(path, name.trim(), commit.id, `Created from Chrono at ${new Date().toISOString()}`);
+    });
+  }, [path, runRepositoryAction]);
+
+  const resetToCommit = useCallback(async (commit: CommitRecord, mode: "soft" | "mixed" | "hard") => {
+    if (!path) return;
+    await runRepositoryAction(`Reset to ${commit.id.slice(0, 8)} (${mode})`, async () => {
+      await api.resetTo(path, commit.id, mode);
     });
   }, [path, runRepositoryAction]);
 
@@ -292,7 +340,7 @@ export default function App() {
     setRepoTabs((current) => {
       const next = current.filter((tab) => tab !== path);
       if (next.length > 0) void refresh(next[next.length - 1]).catch(() => undefined);
-      else { setSummary(null); setCommits([]); setSelectedCommit(null); setChanges([]); setBranches([]); }
+      else { setSummary(null); setHistorySegments([]); setSelectedCommit(null); setChanges([]); setBranches([]); }
       return next;
     });
   }, [path, refresh]);
@@ -510,17 +558,21 @@ export default function App() {
             </div>
           )}
 
-          {path && view === "conflicts" && conflictCount > 0 && (
-            <ConflictCenter
+          {path && view === "changes" && (
+            <StatusPanel
+              changes={changes}
               repositoryPath={path}
-              onStage={async (files) => { await api.stage(path, files); await refresh(); }}
+              onStage={async (paths) => { await api.stage(path, paths); await refresh(); }}
               onStageHunks={async (file, hunks) => { await api.stageHunks(path, file, hunks); await refresh(); }}
-              onUnstage={async (files) => { await api.unstage(path, files); await refresh(); }}
-              onDraftCommit={(options: CommitDraftOptions) => api.draftCommit(path, "auto", undefined, options)}
+              onUnstage={async (paths) => { await api.unstage(path, paths); await refresh(); }}
+              onCommit={async (message) => { await api.commit(path, message); await refresh(); }}
+              onDraftCommit={(options) => api.draftCommit(path, "auto", undefined, options)}
               operationActive={operationActive}
               onResolveConflicts={() => setView("conflicts")}
-              onCommit={async (commitMessage) => { await api.commit(path, commitMessage); await refresh(); }}
             />
+          )}
+          {path && view === "conflicts" && conflictCount > 0 && (
+            <ConflictCenter repositoryPath={path} operation={operation.operation} onRepositoryChanged={() => refresh()} />
           )}
           {path && view === "history" && <CommitGraph repositoryPath={path} commits={commits} branches={branches} headSha={summary?.head ?? undefined} selected={selectedCommit} onSelect={setSelectedCommit} onCopyCommit={copyCommitSha} onCommitAction={runCommitAction} onCreateBranchAt={createBranchAt} onCreateTagAt={createTagAt} onResetTo={resetToCommit} actionBusy={busy || operationActive} onOpenWorktree={refresh} historyHasNewer={historyHasNewer} historyHasMore={historyHasMore} historyLoading={historyLoading} historyLoadingDirection={historyLoadingDirection} onLoadNewer={loadNewerHistory} onLoadMore={loadOlderHistory} />}
           {path && view === "branches" && (
@@ -570,17 +622,6 @@ export default function App() {
           {view === "cherry" && <CherryParityPanel />}
         </section>
       </main>
-
-      <footer className="ux-statusbar">
-        <span className={message.toLowerCase().includes("error") ? "is-error" : ""}>{message}</span>
-        <span>{busy ? <><i className="ux-spinner" />Working…</> : path ? `${summary?.head?.slice(0, 8) || "no HEAD"} · ${changes.length ? `${changes.length} changed` : "clean"}` : "Ready"}</span>
-      </footer>
-
-      <CommandPalette open={palette} commands={commands} onClose={() => setPalette(false)} />
-      <CloneDialog openDialog={cloneOpen} busy={busy} onClose={() => setCloneOpen(false)} onClone={submitClone} />
-    </div>
-  );
-}
 
       <footer className="ux-statusbar">
         <span className={message.toLowerCase().includes("error") ? "is-error" : ""}>{message}</span>
