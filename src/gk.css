@@ -377,3 +377,13 @@
 .gk-compare-meta b { color: var(--gk-green); font-weight: 600; } .gk-compare-meta i { color: var(--gk-red); font-style: normal; }
 .gk-compare-files { flex: 1; min-height: 0; overflow: auto; padding: 6px 8px; }
 .gk-compare-hint { margin: 0; padding: 8px 12px; border-top: 1px solid var(--gk-line); color: var(--gk-grey); font-size: 10.5px; }
+
+/* History header inside the GitKraken workspace: one compact row, and
+   nothing above the commit grid may be flex-shrunk (the worktree WIP strip
+   was squashed to ~13px on large repos). */
+.ux-history-list > :not(.ux-commit-grid) { flex-shrink: 0; }
+.gk-workspace .ux-history-list > .ux-view-toolbar { flex-wrap: nowrap; min-height: 38px; padding: 4px 8px; gap: 8px; }
+.gk-workspace .ux-view-toolbar > div:first-child { flex: none; }
+.gk-workspace .ux-history-toolbar-actions { flex: 1 1 auto; align-items: center; gap: 4px; }
+.gk-workspace .ux-history-toolbar-actions .ux-search-field { width: auto; flex: 1 1 140px; min-width: 110px; max-width: 300px; }
+.gk-workspace .ux-history-toolbar-actions .ux-filter-mode { max-width: 130px; }

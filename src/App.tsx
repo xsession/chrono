@@ -254,7 +254,7 @@ export default function App() {
     setBusy(true);
     setMessage(`${action}…`);
     try {
-      await api.workflow(path, { operation: action, args: [] });
+      await api.controlOperation(path, action);
       await refresh();
       setMessage(`${action} completed`);
       return true;
@@ -347,7 +347,7 @@ export default function App() {
 
   const quickPop = useCallback(() => runRepositoryAction("Pop stash", () => api.workflow(path, { operation: "stash_pop", args: [] })), [path, runRepositoryAction]);
 
-  const selectRevision = useCallback((sha: string) => {
+  const selectRevision = useCallback(async (sha: string) => {
     const commit = commits.find((candidate) => candidate.id === sha);
     setView("history");
     setWipSelected(false);
@@ -355,10 +355,31 @@ export default function App() {
     if (commit) {
       setSelectedCommit(commit);
       setScrollTo({ id: commit.id, nonce: Date.now() });
-    } else {
-      pushToast(`Commit ${sha.slice(0, 8)} is outside the loaded history window`, "info");
+      return;
     }
-  }, [commits]);
+    // Outside the loaded window: load the history page that contains it
+    // (GitKraken jumps straight to the commit instead of refusing).
+    if (!path) return;
+    const requestId = ++historyRequestRef.current;
+    setHistoryLoadingDirection("older");
+    try {
+      const offset = await api.commitOffset(path, sha);
+      if (offset === null) { pushToast(`Commit ${sha.slice(0, 8)} is not reachable from any ref`, "info"); return; }
+      const start = Math.max(0, offset - Math.floor(HISTORY_PAGE_SIZE / 3));
+      const page = await api.historyPage(path, String(start), HISTORY_PAGE_SIZE);
+      if (requestId !== historyRequestRef.current) return;
+      const target = page.commits.find((candidate) => candidate.id === sha) ?? null;
+      setHistorySegments([{ offset: start, page }]);
+      if (target) {
+        setSelectedCommit(target);
+        setScrollTo({ id: target.id, nonce: Date.now() });
+      }
+    } catch (error) {
+      pushToast(`Cannot jump to ${sha.slice(0, 8)}: ${String(error).replace(/^Error: /, "")}`, "error");
+    } finally {
+      if (requestId === historyRequestRef.current) setHistoryLoadingDirection(null);
+    }
+  }, [commits, path]);
 
   const graphExtraActions = useMemo<GraphExtraAction[]>(() => [
     { id: "checkout", label: "Checkout this commit (detached)", onSelect: (commit) => runRepositoryAction(`Checkout ${commit.id.slice(0, 8)}`, () => api.workflow(path, { operation: "checkout_tag", args: [commit.id] })) },

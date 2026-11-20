@@ -484,3 +484,18 @@ export async function diffCommitFiles(inputPath: string, from: string, to: strin
   const output = await checkedStdout(inputPath, ["diff", "--numstat", "--no-renames", from.trim(), to.trim()]);
   return parseNumstat(output);
 }
+
+// ---------------------------------------------------------------------------
+// Position of a commit in the all-refs date-ordered history (the same order
+// as repository_history_page), so the UI can jump to commits outside the
+// currently loaded history window.
+// ---------------------------------------------------------------------------
+
+export async function commitOffset(inputPath: string, revision: string): Promise<number | null> {
+  const rev = revision.trim();
+  if (!rev || rev.startsWith("-") || rev.includes("\0")) throw invalidError("invalid revision");
+  const sha = (await checkedStdout(inputPath, ["rev-parse", "--verify", `${rev}^{commit}`])).trim();
+  const list = await checkedStdout(inputPath, ["rev-list", "--all", "--date-order"]);
+  const index = list.split("\n").indexOf(sha);
+  return index >= 0 ? index : null;
+}

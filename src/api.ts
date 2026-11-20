@@ -205,6 +205,7 @@ export const api = {
     invoke<CommandResult>("tag_action", { path, action, name, remote }),
   remoteAction: (path: string, action: RemoteAction, name: string, value: string | null = null) =>
     invoke<CommandResult>("remote_action", { path, action, name, value }),
+  commitOffset: (path: string, revision: string) => invoke<number | null>("commit_offset", { path, revision }),
   diffCommitFiles: (path: string, from: string, to: string) =>
     invoke<CommitFileChange[]>("diff_commit_files", { path, from, to }),
   stashFiles: (path: string, ref: string) => invoke<StashFile[]>("stash_files", { path, ref }),

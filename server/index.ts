@@ -274,10 +274,11 @@ const routes: Record<string, Handler> = {
 
   repository_operation_state: (body) => operationState.repositoryOperationState(bodyPath(body)),
   control_repository_operation: (body) =>
-    operationState.controlRepositoryOperation(
-      bodyPath(body),
-      str(body.action, "action") as operationState.OperationAction,
-    ),
+    gk.journaled(bodyPath(body), `${String(body.action).replace(/^./, (c) => c.toUpperCase())} operation`, "keep", () =>
+      operationState.controlRepositoryOperation(
+        bodyPath(body),
+        str(body.action, "action") as operationState.OperationAction,
+      )),
 
   stage_paths: (body) => backend.stagePaths(bodyPath(body), strArray(body.files, "files")),
   unstage_paths: (body) => backend.unstagePaths(bodyPath(body), strArray(body.files, "files")),
@@ -358,6 +359,7 @@ const routes: Record<string, Handler> = {
     gk.tagAction(bodyPath(body), str(body.action, "action") as gk.TagAction, typeof body.name === "string" ? body.name : "", optStr(body.remote)),
   remote_action: (body) =>
     gk.remoteAction(bodyPath(body), str(body.action, "action") as gk.RemoteAction, str(body.name, "name"), optStr(body.value)),
+  commit_offset: (body) => gk.commitOffset(bodyPath(body), str(body.revision, "revision")),
   diff_commit_files: (body) => gk.diffCommitFiles(bodyPath(body), str(body.from, "from"), str(body.to, "to")),
   stash_files: (body) => gk.stashFiles(bodyPath(body), str(body.ref, "ref")),
 

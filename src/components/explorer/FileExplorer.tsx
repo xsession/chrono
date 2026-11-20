@@ -57,6 +57,12 @@ function kindLabel(entry: ExplorerEntry): string {
   return dot > 0 ? `${entry.name.slice(dot + 1).toUpperCase()} file` : "File";
 }
 
+const ROW_HEIGHT = 24;
+const VIRTUALIZE_AFTER = 200;
+const OVERSCAN = 20;
+/** header (26px) + optional ".." parent row; close enough for scroll math */
+const ROW_OFFSET = 26;
+
 const parentOf = (path: string) => (path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "");
 
 /** Overlay icon: file/folder glyph with the TortoiseGit status badge. */
@@ -142,6 +148,20 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
   const history = useRef<string[]>([]);
   const menu = useContextMenu();
   const listRef = useRef<HTMLDivElement | null>(null);
+  // Row virtualization: large folders (node_modules, asset dumps) keep only
+  // the visible rows mounted. Rows have a fixed 24px height.
+  const [viewport, setViewport] = useState({ top: 0, height: 800 });
+  useEffect(() => {
+    const element = listRef.current;
+    if (!element) return;
+    const update = () => setViewport((current) => (current.top === element.scrollTop && current.height === element.clientHeight ? current : { top: element.scrollTop, height: element.clientHeight }));
+    update();
+    element.addEventListener("scroll", update, { passive: true });
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    observer?.observe(element);
+    return () => { element.removeEventListener("scroll", update); observer?.disconnect(); };
+  }, []);
+  useEffect(() => { if (listRef.current) listRef.current.scrollTop = 0; }, [dir]);
 
   const refreshAll = () => setLocalTick((value) => value + 1);
   const exec = useCallback(async (label: string, action: () => Promise<unknown>) => {
@@ -193,10 +213,19 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
     return [...list].sort((a, b) => {
       const byDir = rank(a) - rank(b);
       if (byDir) return byDir;
+      if (sort.key === "name") return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) * sort.dir;
       const av = value(a); const bv = value(b);
       return (av < bv ? -1 : av > bv ? 1 : 0) * sort.dir || a.name.localeCompare(b.name);
     });
   }, [listing, filter, settings, sort]);
+
+  const windowed = useMemo(() => {
+    const total = entries.length;
+    if (total <= VIRTUALIZE_AFTER) return { start: 0, end: total, topSpacer: 0, bottomSpacer: 0 };
+    const first = Math.max(0, Math.floor((viewport.top - ROW_OFFSET) / ROW_HEIGHT) - OVERSCAN);
+    const last = Math.min(total, Math.ceil((viewport.top + viewport.height) / ROW_HEIGHT) + OVERSCAN);
+    return { start: first, end: last, topSpacer: first * ROW_HEIGHT, bottomSpacer: (total - last) * ROW_HEIGHT };
+  }, [entries.length, viewport]);
 
   const byPath = useMemo(() => new Map((listing?.entries ?? []).map((entry) => [entry.path, entry])), [listing]);
   const selectedEntries = selection.map((path) => byPath.get(path)).filter((entry): entry is ExplorerEntry => Boolean(entry));
@@ -422,7 +451,15 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
       const paths = entries.map((entry) => entry.path);
       const at = paths.indexOf(selection[selection.length - 1] ?? "");
       const next = paths[Math.max(0, Math.min(paths.length - 1, at + (event.key === "ArrowDown" ? 1 : -1)))];
-      if (next) { setSelection([next]); setAnchor(next); listRef.current?.querySelector(`[data-path="${CSS.escape(next)}"]`)?.scrollIntoView({ block: "nearest" }); }
+      if (next) {
+        setSelection([next]); setAnchor(next);
+        const list = listRef.current;
+        if (list) {
+          const top = ROW_OFFSET + paths.indexOf(next) * ROW_HEIGHT;
+          if (top < list.scrollTop + ROW_OFFSET) list.scrollTop = top - ROW_OFFSET;
+          else if (top + ROW_HEIGHT > list.scrollTop + list.clientHeight) list.scrollTop = top + ROW_HEIGHT - list.clientHeight;
+        }
+      }
     } else if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
       event.preventDefault();
       const rect = listRef.current?.getBoundingClientRect();
@@ -482,7 +519,8 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
               <span className="tg-name"><span className="tg-icon is-dir"><Icon name="folder" /></span>..</span><span /><span /><span>Parent folder</span><span />
             </div>
           )}
-          {entries.map((entry) => {
+          {windowed.topSpacer > 0 && <div style={{ height: windowed.topSpacer }} aria-hidden="true" />}
+          {entries.slice(windowed.start, windowed.end).map((entry) => {
             const isSelected = selection.includes(entry.path);
             return (
               <div
@@ -508,6 +546,7 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
               </div>
             );
           })}
+          {windowed.bottomSpacer > 0 && <div style={{ height: windowed.bottomSpacer }} aria-hidden="true" />}
           {listing && entries.length === 0 && !error && <div className="gk-empty">{filter ? "No items match the search." : "This folder is empty."}</div>}
         </div>
       </div>

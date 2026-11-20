@@ -203,6 +203,9 @@ export async function listDirectory(inputPath: string, dirInput: string): Promis
     childAggregate.set(child, current);
   }
   const ignoredSet = new Set(ignoredDirs);
+  // Listing inside an ignored directory: git reports only the ignored
+  // ancestor ("!! node_modules/"), so every unversioned child is ignored too.
+  const insideIgnored = dir !== "" && ignoredDirs.some((ignored) => dir === ignored || dir.startsWith(`${ignored}/`));
 
   const entries: ExplorerEntry[] = [];
   const seen = new Set<string>();
@@ -220,13 +223,14 @@ export async function listDirectory(inputPath: string, dirInput: string): Promis
     let changedCount = 0;
     if (type === "dir") {
       const aggregate = childAggregate.get(dirent.name);
-      if (ignoredSet.has(rel)) overlay = "ignored";
+      if (ignoredSet.has(rel) || (insideIgnored && !trackedChildren.has(dirent.name))) overlay = "ignored";
       else if (aggregate && aggregate.worst !== "untracked") overlay = aggregate.worst;
       else if (!trackedChildren.has(dirent.name)) overlay = aggregate ? "untracked" : "unversioned-dir";
       else overlay = "normal"; // tracked folder whose only changes are unversioned files
       changedCount = aggregate?.count ?? 0;
     } else {
       overlay = overlayFor(record, trackedFiles.has(dirent.name) || gitlinks.has(rel));
+      if (insideIgnored && overlay === "untracked") overlay = "ignored";
       if (record) changedCount = 1;
     }
     entries.push({
