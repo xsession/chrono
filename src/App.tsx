@@ -28,6 +28,14 @@ import { setSagaActions, type SagaActions } from "./sagas/actions";
 import type { SagaResult } from "./sagas/bus";
 import { pushToast, clearToasts } from "./toastBus";
 import { GitIntelligencePanel } from "./components/GitIntelligencePanel";
+import { GkToolbar } from "./components/gk/GkToolbar";
+import { GkLeftPanel } from "./components/gk/GkLeftPanel";
+import { GkWipPanel } from "./components/gk/GkWipPanel";
+import { WorkingDiffView } from "./components/WorkingDiffView";
+import { FileExplorer } from "./components/explorer/FileExplorer";
+import { DialogHost, askConfirm, askText } from "./components/DialogHost";
+import type { GraphExtraAction } from "./components/CommitGraph";
+import type { PullMode, PushOptions, UndoState } from "./types";
 
 const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
 
@@ -80,7 +88,19 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("Ready");
   const [palette, setPalette] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("chrono.sidebar") === "collapsed");
+  useEffect(() => { localStorage.setItem("chrono.sidebar", sidebarCollapsed ? "collapsed" : "expanded"); }, [sidebarCollapsed]);
+
+  // GitKraken parity state: undo journal, pull default, WIP node, left panel refresh.
+  const [undoState, setUndoState] = useState<UndoState | null>(null);
+  const [pullMode, setPullMode] = useState<PullMode>(() => (localStorage.getItem("chrono.gk.pullMode") as PullMode | null) ?? "ff-only");
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [stashCount, setStashCount] = useState(0);
+  const [wipSelected, setWipSelected] = useState(false);
+  const [wipDiff, setWipDiff] = useState<string | null>(null);
+  const [scrollTo, setScrollTo] = useState<{ id: string; nonce: number } | null>(null);
+  const [explorerFocus, setExplorerFocus] = useState<{ path: string; nonce: number } | null>(null);
+  const [leftPanelOpen, setLeftPanelOpen] = useState(() => localStorage.getItem("chrono.gk.leftPanel") !== "hidden");
   const [cloneOpen, setCloneOpen] = useState(false);
   const historyRequestRef = useRef(0);
 
@@ -105,12 +125,13 @@ export default function App() {
     setHistoryLoadingDirection(null);
     setBusy(true);
     try {
-      const [nextSummary, nextHistory, nextChanges, nextBranches, nextOperation] = await Promise.all([
+      const [nextSummary, nextHistory, nextChanges, nextBranches, nextOperation, nextUndo] = await Promise.all([
         api.summary(repositoryPath),
         api.historyPage(repositoryPath),
         api.status(repositoryPath),
         api.branches(repositoryPath),
-        api.operationState(repositoryPath)
+        api.operationState(repositoryPath),
+        api.undoState(repositoryPath).catch(() => null)
       ]);
       if (requestId !== historyRequestRef.current) return;
       setPath(repositoryPath);
@@ -120,6 +141,9 @@ export default function App() {
       setChanges(nextChanges);
       setBranches(nextBranches);
       setOperation(nextOperation);
+      setUndoState(nextUndo);
+      setRefreshKey((value) => value + 1);
+      if (nextChanges.length === 0) { setWipSelected(false); setWipDiff(null); }
       setMessage(`Refreshed ${nextSummary.name}`);
     } catch (error) {
       setMessage(String(error));
@@ -213,6 +237,8 @@ export default function App() {
       setMessage(`${label} completed`);
     } catch (error) {
       setMessage(String(error));
+      pushToast(`${label} failed: ${String(error).replace(/^Error: /, "")}`, "error", 9000);
+      await refresh(path).catch(() => undefined);
     } finally {
       setBusy(false);
     }
@@ -280,9 +306,85 @@ export default function App() {
     });
   }, [path, runRepositoryAction]);
 
+  // ---------------------------------------------------------------------------
+  // GitKraken toolbar actions
+  // ---------------------------------------------------------------------------
+  const runUndo = useCallback(async (direction: "undo" | "redo") => {
+    if (!path) return;
+    setBusy(true);
+    try {
+      const result = direction === "undo" ? await api.undo(path) : await api.redo(path);
+      pushToast(result, "success");
+      setMessage(result);
+      await refresh(path);
+    } catch (error) {
+      pushToast(String(error).replace(/^Error: /, ""), "error", 9000);
+    } finally {
+      setBusy(false);
+    }
+  }, [path, refresh]);
+
+  const runPull = useCallback((mode: PullMode) => {
+    const label = mode === "fetch" ? "Fetch" : mode === "rebase" ? "Pull (rebase)" : "Pull";
+    void runRepositoryAction(label, () => api.pull(path, mode));
+  }, [path, runRepositoryAction]);
+
+  const runPush = useCallback(async (options: PushOptions) => {
+    if (options.force && !(await askConfirm("Force push", `Force push ${summary?.branch ?? "HEAD"} with --force-with-lease? Remote commits not present locally will be overwritten.`, { confirm: "Force push", danger: true }))) return;
+    await runRepositoryAction(options.force ? "Force push" : "Push", () => api.push(path, options));
+  }, [path, runRepositoryAction, summary?.branch]);
+
+  const quickBranch = useCallback(async () => {
+    const name = await askText("Create branch", `New branch from ${summary?.branch ?? "HEAD"} (checked out immediately)`, "");
+    if (name?.trim()) await runRepositoryAction(`Create branch ${name.trim()}`, () => api.createBranch(path, name.trim()));
+  }, [path, runRepositoryAction, summary?.branch]);
+
+  const quickStash = useCallback(async () => {
+    const note = await askText("Stash changes", "Stash message (optional)", "");
+    if (note === null) return;
+    await runRepositoryAction("Stash", () => api.workflow(path, { operation: "stash_push", args: note.trim() ? [note.trim()] : [] }));
+  }, [path, runRepositoryAction]);
+
+  const quickPop = useCallback(() => runRepositoryAction("Pop stash", () => api.workflow(path, { operation: "stash_pop", args: [] })), [path, runRepositoryAction]);
+
+  const selectRevision = useCallback((sha: string) => {
+    const commit = commits.find((candidate) => candidate.id === sha);
+    setView("history");
+    setWipSelected(false);
+    setWipDiff(null);
+    if (commit) {
+      setSelectedCommit(commit);
+      setScrollTo({ id: commit.id, nonce: Date.now() });
+    } else {
+      pushToast(`Commit ${sha.slice(0, 8)} is outside the loaded history window`, "info");
+    }
+  }, [commits]);
+
+  const graphExtraActions = useMemo<GraphExtraAction[]>(() => [
+    { id: "checkout", label: "Checkout this commit (detached)", onSelect: (commit) => runRepositoryAction(`Checkout ${commit.id.slice(0, 8)}`, () => api.workflow(path, { operation: "checkout_tag", args: [commit.id] })) },
+    { id: "copy-msg", label: "Copy commit message", onSelect: async (commit) => { try { await navigator.clipboard.writeText(commit.subject); pushToast("Message copied", "success", 2000); } catch { pushToast(commit.subject); } } },
+    { id: "rebase", label: "Interactive rebase from here…", onSelect: () => setView("rebase") },
+    { id: "patch", label: "Save commit as patch", onSelect: async (commit) => {
+      try {
+        const patch = await api.createPatch(path, `${commit.id}~1`, commit.id).catch(() => api.createPatch(path, commit.id, ""));
+        const bytes = Uint8Array.from(atob(patch.base64), (char) => char.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: "text/x-diff" }));
+        const anchor = document.createElement("a"); anchor.href = url; anchor.download = patch.name; anchor.click(); URL.revokeObjectURL(url);
+      } catch (error) { pushToast(String(error), "error"); }
+    } },
+    { id: "browse", label: "Browse files at this revision", onSelect: () => setView("repo") },
+    { id: "explorer", label: "Open working copy explorer", onSelect: () => setView("explorer") },
+  ], [path, runRepositoryAction]);
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const modifier = event.ctrlKey || event.metaKey;
+      const typing = event.target instanceof HTMLElement && (event.target.tagName === "INPUT" || event.target.tagName === "TEXTAREA" || event.target.isContentEditable);
+      if (modifier && !typing && path && !event.shiftKey && event.key.toLowerCase() === "z") { event.preventDefault(); void runUndo("undo"); return; }
+      if (modifier && !typing && path && (event.key.toLowerCase() === "y" || (event.shiftKey && event.key.toLowerCase() === "z"))) { event.preventDefault(); void runUndo("redo"); return; }
+      if (modifier && !event.shiftKey && event.key.toLowerCase() === "p") { event.preventDefault(); setPalette(true); return; }
+      if (modifier && !event.shiftKey && event.key.toLowerCase() === "j") { event.preventDefault(); setLeftPanelOpen((value) => { localStorage.setItem("chrono.gk.leftPanel", value ? "hidden" : "shown"); return !value; }); return; }
+      if (modifier && path && event.key === "4") { event.preventDefault(); setView("explorer"); return; }
       if (modifier && event.shiftKey && event.key.toLowerCase() === "p") {
         event.preventDefault();
         setPalette(true);
@@ -305,14 +407,14 @@ export default function App() {
         setView(event.key === "1" ? "changes" : event.key === "2" ? "history" : "branches");
         return;
       }
-      if (event.key === "F5" && path) {
+      if (event.key === "F5" && path && view !== "explorer") {
         event.preventDefault();
         void refresh();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [path, refresh]);
+  }, [path, refresh, runUndo, view]);
 
   // ---------------------------------------------------------------------------
   // v6 multi-repo tabs (GitKraken RE §Tabs) + saga bridge wiring (§11.2)
@@ -437,8 +539,21 @@ export default function App() {
     { id: "clone", title: "Clone repository", category: "File", keywords: ["remote", "url"], run: () => void cloneRepository() },
     { id: "refresh", title: "Refresh repository", category: "Repository", shortcut: "F5", disabled: !path, run: () => void refresh() },
     { id: "fetch", title: "Fetch all remotes", category: "Remote", disabled: !path, run: () => void runRepositoryAction("Fetch", () => api.fetch(path)) },
-    { id: "pull", title: "Pull current branch (fast-forward only)", category: "Remote", disabled: !path || operationActive, run: () => void runRepositoryAction("Pull", () => api.pull(path)) },
-    { id: "push", title: "Push current branch", category: "Remote", disabled: !path || operationActive, run: () => void runRepositoryAction("Push", () => api.push(path)) },
+    { id: "pull", title: "Pull current branch (fast-forward only)", category: "Remote", disabled: !path || operationActive, run: () => runPull("ff-only") },
+    { id: "pull-ff", title: "Pull (fast-forward if possible)", category: "Remote", disabled: !path || operationActive, run: () => runPull("ff") },
+    { id: "pull-rebase", title: "Pull (rebase)", category: "Remote", disabled: !path || operationActive, run: () => runPull("rebase") },
+    { id: "push", title: "Push current branch", category: "Remote", disabled: !path || operationActive, run: () => void runPush({}) },
+    { id: "push-force", title: "Force push (with lease)", category: "Remote", disabled: !path || operationActive, run: () => void runPush({ force: true }) },
+    { id: "undo", title: undoState?.undoLabel ? `Undo ${undoState.undoLabel}` : "Undo", category: "Edit", shortcut: "Ctrl+Z", disabled: !undoState?.canUndo, run: () => void runUndo("undo") },
+    { id: "redo", title: undoState?.redoLabel ? `Redo ${undoState.redoLabel}` : "Redo", category: "Edit", shortcut: "Ctrl+Y", disabled: !undoState?.canRedo, run: () => void runUndo("redo") },
+    { id: "new-branch", title: "Create branch", category: "Branch", disabled: !path, run: () => void quickBranch() },
+    { id: "stash", title: "Stash all changes", category: "Stash", disabled: !path || dirtyCount === 0, run: () => void quickStash() },
+    { id: "pop", title: "Pop latest stash", category: "Stash", disabled: !path, run: () => void quickPop() },
+    { id: "wip", title: "Review & commit changes (WIP)", category: "Commit", disabled: !path || dirtyCount === 0, run: () => { setView("history"); setWipSelected(true); } },
+    { id: "explorer", title: "Open working copy explorer (TortoiseGit)", category: "View", shortcut: "Ctrl+4", keywords: ["tortoise", "files", "overlay", "shell"], disabled: !path, run: () => setView("explorer") },
+    { id: "terminal", title: "Toggle terminal", category: "View", shortcut: "Ctrl+T", run: () => setTerminalOpen((value) => !value) },
+    { id: "left-panel", title: "Toggle reference panel", category: "View", shortcut: "Ctrl+J", run: () => setLeftPanelOpen((value) => !value) },
+    ...branches.filter((branch) => !branch.remote && !branch.current).map<Command>((branch) => ({ id: `checkout-${branch.name}`, title: `Checkout ${branch.name}`, category: "Branch", keywords: ["switch"], disabled: !path, run: () => void runRepositoryAction(`Checkout ${branch.name}`, () => api.switchBranch(path, branch.name)) })),
     { id: "operation-continue", title: "Continue current Git operation", category: "Operation", disabled: !operation.canContinue, run: () => void runOperationAction("continue") },
     { id: "operation-skip", title: "Skip current commit", category: "Operation", disabled: !operation.canSkip, run: () => void runOperationAction("skip") },
     { id: "conflicts", title: "Open Conflict Center", category: "Operation", keywords: ["merge", "resolve", "three-way"], disabled: !path || conflictCount === 0, run: () => setView("conflicts") },
@@ -454,7 +569,7 @@ export default function App() {
     { id: "recovery", title: "Open recovery & maintenance", category: "Repository", keywords: ["reflog", "fsck", "lfs"], disabled: !path, run: () => setView("recovery") },
     { id: "sidebar", title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar", category: "View", shortcut: "Ctrl+B", run: () => setSidebarCollapsed((value) => !value) },
     { id: "cherry", title: "Open UI workbench", category: "Developer", run: () => setView("cherry") }
-  ], [conflictCount, operation.canContinue, operation.canSkip, operationActive, path, refresh, runOperationAction, runRepositoryAction, sidebarCollapsed]);
+  ], [branches, conflictCount, dirtyCount, operation.canContinue, operation.canSkip, operationActive, path, quickBranch, quickPop, quickStash, refresh, runOperationAction, runPull, runPush, runRepositoryAction, runUndo, sidebarCollapsed, undoState]);
 
   const currentBranch = summary?.branch || "Detached HEAD";
 
@@ -505,26 +620,38 @@ export default function App() {
       />
 
       <main className={`ux-main${operationActive ? " has-operation" : ""}`}>
-        <header className="ux-repository-header">
-          <div className="ux-branch-context">
-            <span className="ux-branch-icon"><Icon name="branch" /></span>
-            <div><small>Current branch</small><strong>{path ? currentBranch : "—"}</strong></div>
-            {summary?.dirty && <span className="ux-dirty-pill">{dirtyCount} changed</span>}
-            {conflictCount > 0 && <button className="ux-conflict-pill" onClick={() => setView("conflicts")}><Icon name="warning" />{conflictCount} conflicts</button>}
+        <GkToolbar
+          path={path}
+          summary={summary}
+          branches={branches}
+          busy={busy}
+          operationActive={operationActive}
+          undo={undoState}
+          dirtyCount={dirtyCount}
+          stashCount={stashCount}
+          terminalOpen={terminalOpen}
+          pullMode={pullMode}
+          onPullModeChange={(mode) => { setPullMode(mode); localStorage.setItem("chrono.gk.pullMode", mode); }}
+          onUndo={() => void runUndo("undo")}
+          onRedo={() => void runUndo("redo")}
+          onPull={runPull}
+          onPush={(options) => void runPush(options)}
+          onBranch={() => void quickBranch()}
+          onStash={() => void quickStash()}
+          onPop={() => void quickPop()}
+          onTerminal={() => setTerminalOpen((value) => !value)}
+          onExplorer={() => setView("explorer")}
+          onSearch={() => setPalette(true)}
+          onSwitchBranch={(branch) => void runRepositoryAction(`Checkout ${branch.name}`, () => (branch.remote ? api.checkoutRemoteBranch(path, branch.name) : api.switchBranch(path, branch.name)))}
+          onOpenRepository={() => void openRepoTab()}
+        />
+        {path && (dirtyCount > 0 || conflictCount > 0) && view !== "history" && view !== "changes" && (
+          <div className="gk-dirty-banner">
+            <span>{summary?.dirty && <><b>{dirtyCount}</b> uncommitted change{dirtyCount === 1 ? "" : "s"}</>}{conflictCount > 0 && <> · <b>{conflictCount}</b> conflicts</>}</span>
+            <button type="button" className="gk-link-button" onClick={() => { setView("history"); setWipSelected(true); }}>Review &amp; commit</button>
+            {conflictCount > 0 && <button type="button" className="gk-link-button" onClick={() => setView("conflicts")}>Resolve conflicts</button>}
           </div>
-
-          <div className="ux-sync-summary" aria-label="Remote status">
-            <span title="Commits behind upstream"><Icon name="download" />{summary?.behind ?? 0}</span>
-            <span title="Commits ahead of upstream"><Icon name="upload" />{summary?.ahead ?? 0}</span>
-          </div>
-
-          <div className="ux-repo-actions" role="toolbar" aria-label="Repository actions">
-            <button className="ux-icon-button" disabled={!path || busy} onClick={() => void refresh()} title="Refresh (F5)" aria-label="Refresh repository"><Icon name="refresh" /></button>
-            <button className="ux-button" disabled={!path || busy} onClick={() => void runRepositoryAction("Fetch", () => api.fetch(path))}><Icon name="download" />Fetch</button>
-            <button className="ux-button" disabled={!path || busy || operationActive} onClick={() => void runRepositoryAction("Pull", () => api.pull(path))} title={operationActive ? "Finish or abort the current Git operation first" : undefined}>Pull</button>
-            <button className="ux-primary-button compact" disabled={!path || busy || operationActive} onClick={() => void runRepositoryAction("Push", () => api.push(path))} title={operationActive ? "Finish or abort the current Git operation first" : undefined}><Icon name="upload" />Push</button>
-          </div>
-        </header>
+        )}
 
         {repoTabs.length > 0 && (
           <RepoTabs
@@ -574,7 +701,67 @@ export default function App() {
           {path && view === "conflicts" && conflictCount > 0 && (
             <ConflictCenter repositoryPath={path} operation={operation.operation} onRepositoryChanged={() => refresh()} />
           )}
-          {path && view === "history" && <CommitGraph repositoryPath={path} commits={commits} branches={branches} headSha={summary?.head ?? undefined} selected={selectedCommit} onSelect={setSelectedCommit} onCopyCommit={copyCommitSha} onCommitAction={runCommitAction} onCreateBranchAt={createBranchAt} onCreateTagAt={createTagAt} onResetTo={resetToCommit} actionBusy={busy || operationActive} onOpenWorktree={refresh} historyHasNewer={historyHasNewer} historyHasMore={historyHasMore} historyLoading={historyLoading} historyLoadingDirection={historyLoadingDirection} onLoadNewer={loadNewerHistory} onLoadMore={loadOlderHistory} />}
+          {path && view === "history" && (
+            <div className={`gk-workspace${leftPanelOpen ? "" : " no-left"}`}>
+              {leftPanelOpen && (
+                <GkLeftPanel
+                  repositoryPath={path}
+                  refreshKey={refreshKey}
+                  busy={busy}
+                  run={runRepositoryAction}
+                  onSelectRevision={selectRevision}
+                  onOpenRepository={(target) => void openRepoTab(target)}
+                  onStartRebase={() => setView("rebase")}
+                  onOpenPullRequests={() => setView("insights")}
+                  onStashCount={setStashCount}
+                />
+              )}
+              <CommitGraph
+                repositoryPath={path} commits={commits} branches={branches} headSha={summary?.head ?? undefined}
+                selected={selectedCommit}
+                onSelect={(commit) => { setWipSelected(false); setWipDiff(null); setSelectedCommit(commit); }}
+                onCopyCommit={copyCommitSha} onCommitAction={runCommitAction} onCreateBranchAt={createBranchAt} onCreateTagAt={createTagAt} onResetTo={resetToCommit}
+                actionBusy={busy || operationActive} onOpenWorktree={refresh}
+                historyHasNewer={historyHasNewer} historyHasMore={historyHasMore} historyLoading={historyLoading} historyLoadingDirection={historyLoadingDirection} onLoadNewer={loadNewerHistory} onLoadMore={loadOlderHistory}
+                wipNode={{ count: dirtyCount, conflicts: conflictCount, branch: summary?.branch ?? null, selected: wipSelected, onSelect: () => setWipSelected(true) }}
+                scrollTo={scrollTo}
+                extraActions={graphExtraActions}
+                overlay={wipSelected && wipDiff ? (
+                  <div className="gk-center-overlay">
+                    <WorkingDiffView repositoryPath={path} file={wipDiff} onClose={() => setWipDiff(null)} onStageHunks={async (file, hunks) => { await api.stageHunks(path, file, hunks); await refresh(); }} />
+                  </div>
+                ) : undefined}
+                inspector={wipSelected && dirtyCount > 0 ? (
+                  <GkWipPanel
+                    repositoryPath={path}
+                    branch={summary?.branch ?? null}
+                    changes={changes}
+                    busy={busy}
+                    operationActive={operationActive}
+                    run={runRepositoryAction}
+                    openDiff={wipDiff}
+                    onOpenDiff={(file) => setWipDiff((current) => (current === file ? null : file))}
+                    onResolveConflicts={() => setView("conflicts")}
+                    onShowInExplorer={(file) => { setExplorerFocus({ path: file, nonce: Date.now() }); setView("explorer"); }}
+                    onFileHistory={() => setView("insights")}
+                  />
+                ) : undefined}
+              />
+            </div>
+          )}
+          {path && view === "explorer" && (
+            <FileExplorer
+              repositoryPath={path}
+              refreshKey={refreshKey}
+              branches={branches}
+              currentBranch={summary?.branch ?? null}
+              busy={busy}
+              run={runRepositoryAction}
+              onNavigate={(next) => setView(next)}
+              onOpenTerminal={(dir) => { setTerminalOpen(true); requestAnimationFrame(() => terminalRef.current?.createTab(dir ? `${path.replace(/[\\/]$/, "")}/${dir}` : path)); }}
+              focus={explorerFocus}
+            />
+          )}
           {path && view === "branches" && (
             <BranchPanel
               branches={branches}
@@ -636,6 +823,7 @@ export default function App() {
       <GitLogModal open={gitLogOpen} onClose={() => setGitLogOpen(false)} />
       <KeyBindingsModal open={keybindingsOpen} onClose={() => setKeybindingsOpen(false)} onZoom={(direction) => zoom(direction)} />
       <ToastHost />
+      <DialogHost />
     </div>
   );
 }

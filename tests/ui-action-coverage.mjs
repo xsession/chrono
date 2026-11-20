@@ -66,5 +66,21 @@ for (const route of ["list_tags", "create_tag", "delete_tag", "merge_branch", "w
   must("server/index.ts", `${route}:`, `server exposes ${route}`);
 }
 
+for (const route of ["undo_state", "undo_action", "redo_action", "last_commit_message", "discard_paths", "branch_action", "tag_action", "remote_action", "stash_files", "explorer_list", "explorer_action", "explorer_properties", "explorer_diff_files", "explorer_diff_previous", "explorer_patch", "explorer_open"]) {
+  must("server/index.ts", `${route}:`, `server exposes ${route}`);
+}
+for (const control of ["onUndo", "onRedo", "onPull", "onPush", "onBranch", "onStash", "onPop", "onTerminal", "onExplorer"]) {
+  must("src/components/gk/GkToolbar.tsx", control, `GitKraken toolbar binds ${control}`);
+}
+for (const control of ["LOCAL", "REMOTE", "WORKTREES", "STASHES", "TAGS", "SUBMODULES", "PULL REQUESTS", "onDrop", "merge_into_current", "rebase_current_onto", "fast_forward", "delete_remote"]) {
+  must("src/components/gk/GkLeftPanel.tsx", control, `GitKraken left panel binds ${control}`);
+}
+for (const control of ["Stage all changes", "Unstage all changes", "Amend previous commit", "api.discard", "api.commit"]) {
+  must("src/components/gk/GkWipPanel.tsx", control, `WIP panel binds ${control}`);
+}
+for (const control of ["Git Sync…", "Git Commit ->", "Diff with previous version", "Show log", "Show Reflog", "Check for modifications", "Blame", "Resolve…", "Revert…", "Clean up…", "Switch/Checkout…", "Merge…", "Create Branch…", "Create Tag…", "Export…", "Stash Save", "Stash Pop", "Add…", "Add to ignore list", "Delete (keep local)", "Rename…", "Revert to revision…", "Assume unchanged", "Skip worktree", "LFS", "Submodule Update…", "Create Patch…", "Apply Patch…", "Properties"]) {
+  must("src/components/explorer/FileExplorer.tsx", control, `TortoiseGit menu has ${control}`);
+}
+
 console.log(`\n${checks} UI contract checks, ${failures} failures`);
 process.exitCode = failures ? 1 : 0;

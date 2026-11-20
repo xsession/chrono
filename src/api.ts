@@ -44,6 +44,20 @@ import type {
   WorkflowRequest,
   Workspace,
   GitLogEntry,
+  PullMode,
+  PushOptions,
+  CommitOptions,
+  UndoState,
+  BranchActionRequest,
+  TagAction,
+  RemoteAction,
+  StashFile,
+  ExplorerListing,
+  ExplorerActionRequest,
+  ExplorerActionResult,
+  ExplorerProperties,
+  FilePairDiff,
+  PreviousVersionDiff,
 } from "./types";
 
 const API_URL_KEY = "chrono.apiUrl";
@@ -148,12 +162,12 @@ export const api = {
     invoke<CommandResult>("control_repository_operation", { path, action }),
   stage: (path: string, files: string[]) => invoke<void>("stage_paths", { path, files }),
   unstage: (path: string, files: string[]) => invoke<void>("unstage_paths", { path, files }),
-  commit: (path: string, message: string) => invoke<string>("create_commit", { path, message }),
+  commit: (path: string, message: string, options: CommitOptions = {}) => invoke<string>("create_commit", { path, message, ...options }),
   draftCommit: (path: string, mode: CommitDraftMode = "auto", model?: string, options: CommitDraftOptions = {}) =>
     invoke<CommitDraft>("draft_commit_message", { path, mode, ...(model ? { model } : {}), ...options }),
   fetch: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("fetch_repository", { path, ...auth }),
-  pull: (path: string) => invoke<CommandResult>("pull_repository", { path }),
-  push: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("push_repository", { path, ...auth }),
+  pull: (path: string, mode: PullMode = "ff-only") => invoke<CommandResult>("pull_repository", { path, mode }),
+  push: (path: string, options: PushOptions & AuthRequest = {}) => invoke<CommandResult>("push_repository", { path, ...options }),
   clone: (request: CloneRequest) => invoke<RepositorySummary>("clone_repository", request),
   switchBranch: (path: string, branch: string) => invoke<void>("switch_branch", { path, branch }),
   checkoutRemoteBranch: (path: string, branch: string) => invoke<void>("checkout_remote_branch", { path, branch }),
@@ -177,4 +191,27 @@ export const api = {
     invoke<{ ok: boolean; result?: unknown; error?: string }>("saga_invoke", { name, args }),
   // v6 git executor log (GitKraken RE §6: GIT_EXECUTOR_COMMAND_ID correlation).
   gitLog: (limit = 200) => invoke<GitLogEntry[]>("git_log", { limit }),
+
+  // GitKraken parity
+  undoState: (path: string) => invoke<UndoState>("undo_state", { path }),
+  undo: (path: string) => invoke<string>("undo_action", { path }),
+  redo: (path: string) => invoke<string>("redo_action", { path }),
+  lastCommitMessage: (path: string) => invoke<string>("last_commit_message", { path }),
+  discard: (path: string, files: string[] | "all") =>
+    invoke<CommandResult>("discard_paths", files === "all" ? { path, all: true } : { path, files }),
+  branchAction: (path: string, request: BranchActionRequest) => invoke<CommandResult>("branch_action", { path, ...request }),
+  tagAction: (path: string, action: TagAction, name: string, remote: string | null = null) =>
+    invoke<CommandResult>("tag_action", { path, action, name, remote }),
+  remoteAction: (path: string, action: RemoteAction, name: string, value: string | null = null) =>
+    invoke<CommandResult>("remote_action", { path, action, name, value }),
+  stashFiles: (path: string, ref: string) => invoke<StashFile[]>("stash_files", { path, ref }),
+
+  // TortoiseGit explorer
+  explorerList: (path: string, dir: string) => invoke<ExplorerListing>("explorer_list", { path, dir }),
+  explorerAction: (path: string, request: ExplorerActionRequest) => invoke<ExplorerActionResult>("explorer_action", { path, ...request }),
+  explorerProperties: (path: string, file: string) => invoke<ExplorerProperties>("explorer_properties", { path, file }),
+  explorerDiffFiles: (path: string, left: string, right: string) => invoke<FilePairDiff>("explorer_diff_files", { path, left, right }),
+  explorerDiffPrevious: (path: string, file: string) => invoke<PreviousVersionDiff>("explorer_diff_previous", { path, file }),
+  explorerPatch: (path: string, files: string[]) => invoke<{ name: string; text: string }>("explorer_patch", { path, files }),
+  explorerOpen: (path: string, file: string, mode: "open" | "reveal" | "terminal") => invoke<string>("explorer_open", { path, file, mode }),
 };

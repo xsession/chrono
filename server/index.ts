@@ -19,6 +19,8 @@ import { invokeServerSaga } from "./src/sagas.ts";
 import { attachTerminalServer } from "./src/terminal.ts";
 import * as operationState from "./src/operationState.ts";
 import * as rebasePlanner from "./src/rebasePlanner.ts";
+import * as explorer from "./src/explorer.ts";
+import * as gk from "./src/gkOps.ts";
 import { listPullRequests } from "./src/provider.ts";
 import * as repo from "./src/repo.ts";
 import { loadWorkspaces, saveWorkspaces, type Workspace } from "./src/workspaces.ts";
@@ -31,6 +33,10 @@ const PORT = Number.parseInt(process.env.CHRONO_PORT ?? "1421", 10);
 const HOST = process.env.CHRONO_HOST ?? "127.0.0.1";
 const API_TOKEN = process.env.CHRONO_API_TOKEN ?? "";
 const ALLOWED_ORIGIN = process.env.CHRONO_ALLOWED_ORIGIN ?? "";
+
+function isLoopbackHost(): boolean {
+  return HOST === "127.0.0.1" || HOST === "localhost" || HOST === "::1";
+}
 
 // ---------------------------------------------------------------------------
 // Request helpers
@@ -228,7 +234,7 @@ const routes: Record<string, Handler> = {
     repo.createTag(bodyPath(body), str(body.name, "name"), str(body.revision, "revision"), typeof body.message === "string" ? body.message : ""),
   delete_tag: (body) => repo.deleteTag(bodyPath(body), str(body.name, "name")),
   merge_branch: (body) =>
-    repo.mergeBranch(bodyPath(body), str(body.branch, "branch"), (body.strategy === "ff-only" ? "ff-only" : body.strategy === "squash" ? "squash" : "no-ff")),
+    gk.journaled(bodyPath(body), `Merge ${String(body.branch)}`, "keep", () => repo.mergeBranch(bodyPath(body), str(body.branch, "branch"), (body.strategy === "ff-only" ? "ff-only" : body.strategy === "squash" ? "squash" : "no-ff"))),
   working_tree_diff: (body) => repo.workingTreeDiff(bodyPath(body), str(body.file, "file")),
   unstaged_file_diff: (body) => repo.unstagedFileDiff(bodyPath(body), str(body.file, "file")),
   stage_hunks: (body) => repo.stageHunks(bodyPath(body), str(body.file, "file"), numArray(body.hunks, "hunks")),
@@ -260,7 +266,11 @@ const routes: Record<string, Handler> = {
 
   stage_paths: (body) => backend.stagePaths(bodyPath(body), strArray(body.files, "files")),
   unstage_paths: (body) => backend.unstagePaths(bodyPath(body), strArray(body.files, "files")),
-  create_commit: (body) => backend.createCommit(bodyPath(body), str(body.message, "message")),
+  create_commit: (body) =>
+    gk.journaled(bodyPath(body), body.amend === true ? "Amend commit" : "Commit", "soft", () =>
+      body.amend === true || body.signoff === true || body.noVerify === true
+        ? gk.commit(bodyPath(body), { message: typeof body.message === "string" ? body.message : "", amend: body.amend === true, signoff: body.signoff === true, noVerify: body.noVerify === true })
+        : backend.createCommit(bodyPath(body), str(body.message, "message"))),
   draft_commit_message: (body) => {
     const mode = body.mode ?? "auto";
     if (mode !== "auto" && mode !== "rules" && mode !== "ollama") {
@@ -277,12 +287,15 @@ const routes: Record<string, Handler> = {
       username: optStr(body.username),
       token: optStr(body.token),
     }),
-  pull_repository: (body) => backend.pullRepository(bodyPath(body)),
+  pull_repository: (body) => {
+    const mode = typeof body.mode === "string" ? body.mode : "ff-only";
+    if (mode !== "fetch" && mode !== "ff" && mode !== "ff-only" && mode !== "rebase") throw new AppError("invalid", "pull mode must be fetch, ff, ff-only or rebase");
+    return gk.journaled(bodyPath(body), `Pull (${mode})`, "keep", () => gk.pull(bodyPath(body), mode));
+  },
   push_repository: (body) =>
-    backend.pushRepository(bodyPath(body), {
-      username: optStr(body.username),
-      token: optStr(body.token),
-    }),
+    body.force === true || body.setUpstream === true || body.tags === true || optStr(body.remote) || optStr(body.branch)
+      ? gk.push(bodyPath(body), { remote: optStr(body.remote), branch: optStr(body.branch), force: body.force === true, setUpstream: body.setUpstream === true, tags: body.tags === true })
+      : gk.push(bodyPath(body), {}),
   clone_repository: (body) =>
     backend.cloneRepository({
       url: str(body.url, "url"),
@@ -290,22 +303,78 @@ const routes: Record<string, Handler> = {
       username: optStr(body.username),
       token: optStr(body.token),
     }),
-  switch_branch: (body) => backend.switchBranch(bodyPath(body), str(body.branch, "branch")),
-  checkout_remote_branch: (body) => backend.checkoutRemoteBranch(bodyPath(body), str(body.branch, "branch")),
-  create_branch: (body) => backend.createBranch(bodyPath(body), str(body.branch, "branch")),
-  create_branch_at: (body) => backend.createBranchAt(bodyPath(body), str(body.branch, "branch"), str(body.revision, "revision")),
+  switch_branch: (body) => gk.journaled(bodyPath(body), `Checkout ${String(body.branch)}`, "keep", () => backend.switchBranch(bodyPath(body), str(body.branch, "branch"))),
+  checkout_remote_branch: (body) => gk.journaled(bodyPath(body), `Checkout ${String(body.branch)}`, "keep", () => backend.checkoutRemoteBranch(bodyPath(body), str(body.branch, "branch"))),
+  create_branch: (body) => gk.journaled(bodyPath(body), `Create branch ${String(body.branch)}`, "keep", () => backend.createBranch(bodyPath(body), str(body.branch, "branch"))),
+  create_branch_at: (body) => gk.journaled(bodyPath(body), `Create branch ${String(body.branch)}`, "keep", () => backend.createBranchAt(bodyPath(body), str(body.branch, "branch"), str(body.revision, "revision"))),
   reset_to_commit: (body) => {
     const mode = body.mode;
     if (mode !== "soft" && mode !== "mixed" && mode !== "hard") throw new AppError("invalid", "reset mode must be soft, mixed or hard");
-    return backend.resetTo(bodyPath(body), str(body.revision, "revision"), mode);
+    return gk.journaled(bodyPath(body), `Reset ${mode} to ${String(body.revision).slice(0, 8)}`, "keep", () => backend.resetTo(bodyPath(body), str(body.revision, "revision"), mode));
   },
   delete_branch: (body) =>
-    repo.deleteBranch(bodyPath(body), str(body.branch, "branch"), body.force === true),
-  run_workflow: (body) =>
-    backend.runWorkflow(bodyPath(body), {
-      operation: str(body.operation, "operation"),
-      args: strArray(body.args ?? [], "args"),
-    }),
+    gk.journaled(bodyPath(body), `Delete branch ${String(body.branch)}`, "keep", () => repo.deleteBranch(bodyPath(body), str(body.branch, "branch"), body.force === true)),
+  run_workflow: (body) => {
+    const request = { operation: str(body.operation, "operation"), args: strArray(body.args ?? [], "args") };
+    const journal = ["cherry_pick", "revert", "checkout_tag", "stash_pop", "continue", "abort", "skip"].includes(request.operation);
+    return journal
+      ? gk.journaled(bodyPath(body), request.operation.replace(/_/g, " "), "keep", () => backend.runWorkflow(bodyPath(body), request))
+      : backend.runWorkflow(bodyPath(body), request);
+  },
+
+
+  // GitKraken parity: undo/redo journal, branch/tag/remote actions, WIP helpers.
+  undo_state: (body) => gk.undoState(bodyPath(body)),
+  undo_action: (body) => gk.undo(bodyPath(body)),
+  redo_action: (body) => gk.redo(bodyPath(body)),
+  last_commit_message: (body) => gk.lastCommitMessage(bodyPath(body)),
+  discard_paths: (body) =>
+    gk.discard(bodyPath(body), body.all === true ? null : strArray(body.files, "files")),
+  branch_action: (body) =>
+    gk.journaled(bodyPath(body), `${str(body.action, "action").replace(/_/g, " ")} ${String(body.branch)}`, "keep", () =>
+      gk.branchAction(bodyPath(body), {
+        action: str(body.action, "action") as gk.BranchAction,
+        branch: str(body.branch, "branch"),
+        target: optStr(body.target),
+        newName: optStr(body.newName),
+        remote: optStr(body.remote),
+      })),
+  tag_action: (body) =>
+    gk.tagAction(bodyPath(body), str(body.action, "action") as gk.TagAction, typeof body.name === "string" ? body.name : "", optStr(body.remote)),
+  remote_action: (body) =>
+    gk.remoteAction(bodyPath(body), str(body.action, "action") as gk.RemoteAction, str(body.name, "name"), optStr(body.value)),
+  stash_files: (body) => gk.stashFiles(bodyPath(body), str(body.ref, "ref")),
+
+  // TortoiseGit explorer: overlays, context-menu actions, properties, diffs.
+  explorer_list: (body) => explorer.listDirectory(bodyPath(body), typeof body.dir === "string" ? body.dir : ""),
+  explorer_action: (body) => {
+    const action = str(body.action, "action") as explorer.ExplorerAction;
+    const request: explorer.ExplorerActionRequest = {
+      action,
+      files: strArray(body.files ?? [], "files"),
+      message: typeof body.message === "string" ? body.message : undefined,
+      newName: optStr(body.newName) ?? undefined,
+      revision: optStr(body.revision) ?? undefined,
+      scope: body.scope === "root" ? "root" : "local",
+      cleanMode: body.cleanMode === "ignored" || body.cleanMode === "all" ? body.cleanMode : "untracked",
+      dryRun: body.dryRun === true,
+      amend: body.amend === true,
+      destination: optStr(body.destination) ?? undefined,
+    };
+    const journal = action === "commit" || action === "checkout_revision";
+    return journal
+      ? gk.journaled(bodyPath(body), action === "commit" ? (request.amend ? "Amend commit" : "Commit") : "Revert to revision", action === "commit" ? "soft" : "keep", () => explorer.runAction(bodyPath(body), request))
+      : explorer.runAction(bodyPath(body), request);
+  },
+  explorer_properties: (body) => explorer.properties(bodyPath(body), typeof body.file === "string" ? body.file : ""),
+  explorer_diff_files: (body) => explorer.diffTwoFiles(bodyPath(body), str(body.left, "left"), str(body.right, "right")),
+  explorer_diff_previous: (body) => explorer.diffWithPrevious(bodyPath(body), str(body.file, "file")),
+  explorer_patch: (body) => explorer.workingPatch(bodyPath(body), strArray(body.files, "files")),
+  explorer_open: (body) => {
+    if (!isLoopbackHost()) throw new AppError("unsupported", "opening files on the server host is only allowed when Chrono listens on localhost");
+    const mode = body.mode === "reveal" ? "reveal" : body.mode === "terminal" ? "terminal" : "open";
+    return explorer.openOnHost(bodyPath(body), typeof body.file === "string" ? body.file : "", mode);
+  },
 
   load_workspaces: async () => loadWorkspaces(),
   save_workspaces: async (body) => {

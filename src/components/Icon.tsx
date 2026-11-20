@@ -25,7 +25,28 @@ export type IconName =
   | "upload"
   | "users"
   | "warning"
-  | "worktree";
+  | "worktree"
+  | "folder"
+  | "folderOpen"
+  | "undo"
+  | "redo"
+  | "terminal"
+  | "plus"
+  | "trash"
+  | "tag"
+  | "pop"
+  | "more"
+  | "cloud"
+  | "lock"
+  | "chevronDown"
+  | "copy"
+  | "external"
+  | "commit"
+  | "filter"
+  | "diff"
+  | "ignore"
+  | "patch"
+  | "info";
 
 type Props = SVGProps<SVGSVGElement> & { name: IconName };
 
@@ -54,6 +75,27 @@ const paths: Record<IconName, ReactNode> = {
   upload: <><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 4h14"/></>,
   users: <><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 20a6 6 0 0 1 12 0M14 15a5 5 0 0 1 7 5"/></>,
   warning: <><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17h.01"/></>,
+  folder: <path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1Z"/>,
+  folderOpen: <><path d="M3 6a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v2"/><path d="M3 19 5.5 10H22l-2.5 9Z"/></>,
+  undo: <><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></>,
+  redo: <><path d="m15 14 5-5-5-5"/><path d="M20 9H9a5 5 0 0 0 0 10h3"/></>,
+  terminal: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/></>,
+  plus: <path d="M12 5v14M5 12h14"/>,
+  trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></>,
+  tag: <><path d="M3 12V4h8l10 10-8 8Z"/><circle cx="7.5" cy="7.5" r="1.5"/></>,
+  pop: <><path d="M4 13h16v7H4z"/><path d="M12 3v9M8 7l4-4 4 4"/></>,
+  more: <><circle cx="5" cy="12" r="1.2" fill="currentColor"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/><circle cx="19" cy="12" r="1.2" fill="currentColor"/></>,
+  cloud: <path d="M7 18a4 4 0 0 1-.6-8A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9Z"/>,
+  lock: <><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></>,
+  chevronDown: <path d="m6 9 6 6 6-6"/>,
+  copy: <><rect x="8" y="8" width="12" height="12" rx="1.5"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></>,
+  external: <><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></>,
+  commit: <><circle cx="12" cy="12" r="3.5"/><path d="M3 12h5.5M15.5 12H21"/></>,
+  filter: <path d="M4 5h16l-6 7v6l-4 2v-8Z"/>,
+  diff: <><path d="M6 3v12M3 6h6M15 18h6"/><path d="M14 4h4a2 2 0 0 1 2 2v6M10 20H6a2 2 0 0 1-2-2v-1"/></>,
+  ignore: <><circle cx="12" cy="12" r="8"/><path d="m6.5 6.5 11 11"/></>,
+  patch: <><rect x="4" y="8" width="16" height="8" rx="4" transform="rotate(-45 12 12)"/><path d="M11 11h.01M13 13h.01M11 13h.01M13 11h.01"/></>,
+  info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></>,
   worktree: <><path d="M4 5h6v6H4zM14 13h6v6h-6z"/><path d="M10 8h4a3 3 0 0 1 3 3v2M7 11v3a3 3 0 0 0 3 3h4"/></>
 };
 

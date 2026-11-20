@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { BranchRecord, CommitDetails, CommitRecord, HistoryChangeStat, StashRef, TagRecord, WorktreeSummary } from "../types";
 import { api } from "../api";
@@ -11,7 +12,11 @@ import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
 import { CommitDiffView } from "./CommitDiffView";
 import { reachableCommitIds, referenceKey, visibleRefCommitIds } from "../refVisibility";
-import { visibleHistoryRows } from "../historyWindow";
+import { HISTORY_ROW_HEIGHT, visibleHistoryRows } from "../historyWindow";
+
+/** GitKraken "// WIP" node shown above the newest commit. */
+export type GraphWip = { count: number; conflicts: number; branch: string | null; selected: boolean; onSelect: () => void };
+export type GraphExtraAction = { id: string; label: string; danger?: boolean; disabled?: boolean; onSelect: (commit: CommitRecord) => void | Promise<void> };
 
 type Props = {
   repositoryPath: string;
@@ -33,6 +38,16 @@ type Props = {
   historyLoadingDirection?: "older" | "newer" | null;
   onLoadNewer?: () => void | Promise<void>;
   onLoadMore?: () => void | Promise<void>;
+  /** GitKraken WIP row (uncommitted changes) rendered above the graph */
+  wipNode?: GraphWip | null;
+  /** replaces the commit inspector (e.g. the WIP commit panel) */
+  inspector?: ReactNode;
+  /** scroll the graph to this commit when the nonce changes */
+  scrollTo?: { id: string; nonce: number } | null;
+  /** additional commit context-menu actions */
+  extraActions?: GraphExtraAction[];
+  /** overlay rendered over the history rows (e.g. a working-tree diff) */
+  overlay?: ReactNode;
 };
 
 type HighlightMode = "all" | "current" | "selected";
@@ -136,7 +151,7 @@ function RowGraph({
   );
 }
 
-export function CommitGraph({ repositoryPath, commits, branches, headSha, selected, onSelect, onCopyCommit, onCommitAction, onCreateBranchAt, onCreateTagAt, onResetTo, actionBusy = false, onOpenWorktree, historyHasNewer = false, historyHasMore = false, historyLoading = false, historyLoadingDirection = null, onLoadNewer, onLoadMore }: Props) {
+export function CommitGraph({ repositoryPath, commits, branches, headSha, selected, onSelect, onCopyCommit, onCommitAction, onCreateBranchAt, onCreateTagAt, onResetTo, actionBusy = false, onOpenWorktree, historyHasNewer = false, historyHasMore = false, historyLoading = false, historyLoadingDirection = null, onLoadNewer, onLoadMore, wipNode = null, inspector, scrollTo = null, extraActions = [], overlay }: Props) {
   const [query, setQuery] = useState("");
   const [filterMode, setFilterMode] = useState<FilterMode>("message");
   const [filterBusy, setFilterBusy] = useState(false);
@@ -387,6 +402,16 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     );
   }, [display.length, filteredCommits, historyHasNewer, historyViewport]);
 
+  useEffect(() => {
+    if (!scrollTo) return;
+    const element = historyGridRef.current;
+    const index = display.findIndex((entry) => entry.kind === "commit" && entry.item.commit.id === scrollTo.id);
+    if (!element || index < 0) return;
+    const target = Math.max(0, index * HISTORY_ROW_HEIGHT - element.clientHeight / 2 + HISTORY_ROW_HEIGHT);
+    element.scrollTo({ top: target, behavior: "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollTo?.nonce]);
+
   const updateHistoryViewport = () => {
     const element = historyGridRef.current;
     if (!element) return;
@@ -445,7 +470,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     return () => { cancelled = true; };
   }, [repositoryPath]);
 
-  const wip = worktrees.filter((worktree) => worktree.dirtyCount > 0 || worktree.conflictCount > 0);
+  const wip = worktrees.filter((worktree) => !worktree.isMain && (worktree.dirtyCount > 0 || worktree.conflictCount > 0));
   const gridTemplate = showChanges
     ? `${graphColWidth}px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px`
     : `${graphColWidth}px minmax(220px, 1fr) minmax(100px, .28fr) 118px 132px`;
@@ -455,7 +480,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   } : undefined;
 
   return (
-    <div className="ux-history-view" style={{ gridTemplateColumns: `minmax(560px, 1fr) 6px ${inspectorWidth}px` }}>
+    <div className="ux-history-view" style={{ gridTemplateColumns: `minmax(380px, 1fr) 6px minmax(260px, ${inspectorWidth}px)` }}>
       <section className="ux-history-list" aria-label="Commit history">
         <header className="ux-view-toolbar">
           <div><h2>History</h2><span>{commits.length} commits in window{historyHasNewer || historyHasMore ? " · paged" : ""}{filteredCommits !== null ? ` · ${activeCommits.length} match` : ""}</span></div>
@@ -521,6 +546,10 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
             <button type="button" role="menuitem" disabled={actionBusy || !onCommitAction} onClick={() => runContextAction(() => onCommitAction?.("revert", contextMenu.commit))}>Revert</button>
             <button type="button" role="menuitem" disabled={actionBusy || !onCreateBranchAt} onClick={() => runContextAction(() => onCreateBranchAt?.(contextMenu.commit))}>Create branch here</button>
             <button type="button" role="menuitem" disabled={actionBusy || !onCreateTagAt} onClick={() => runContextAction(() => onCreateTagAt?.(contextMenu.commit))}>Create tag here</button>
+            {extraActions.length > 0 && <div className="ux-context-divider" />}
+            {extraActions.map((action) => (
+              <button key={action.id} type="button" role="menuitem" className={action.danger ? "is-danger" : undefined} disabled={actionBusy || action.disabled} onClick={() => runContextAction(() => action.onSelect(contextMenu.commit))}>{action.label}</button>
+            ))}
             <div className="ux-context-divider" />
             <span className="ux-context-label">Reset current branch to this commit</span>
             <button type="button" role="menuitem" disabled={actionBusy || !onResetTo} onClick={() => runContextAction(() => onResetTo?.(contextMenu.commit, "soft"))}>Reset soft</button>
@@ -550,6 +579,17 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
             </button>
           ))}
         </div>}
+
+        {wipNode && wipNode.count > 0 && (
+          <button type="button" className={`gk-wip-row${wipNode.selected ? " is-selected" : ""}${wipNode.conflicts ? " has-conflicts" : ""}`} onClick={wipNode.onSelect} aria-pressed={wipNode.selected} title="Uncommitted changes — click to stage and commit">
+            <span className="gk-wip-node" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 28 28"><circle cx="14" cy="14" r="8" /></svg></span>
+            <span className="gk-wip-label">// WIP</span>
+            <span className="gk-wip-meta">{wipNode.branch ? <>on <b>{wipNode.branch}</b> · </> : null}{wipNode.count} file{wipNode.count === 1 ? "" : "s"} changed{wipNode.conflicts ? ` · ${wipNode.conflicts} conflicted` : ""}</span>
+            <span className="gk-wip-hint">Click to review &amp; commit</span>
+          </button>
+        )}
+
+        {overlay}
 
         {diffFile && details && details.files.some((file) => file.path === diffFile) && (() => {
           const file = details.files.find((candidate) => candidate.path === diffFile)!;
@@ -688,8 +728,8 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
 
       <SplitHandle label="Resize commit inspector" onDelta={(delta) => setInspectorWidth((width) => Math.min(780, Math.max(300, width - delta)))} />
 
-      <aside className="ux-inspector" aria-label="Commit details">
-        {selected ? <>
+      <aside className={`ux-inspector${inspector ? " gk-inspector-override" : ""}`} aria-label="Commit details">
+        {inspector ? inspector : selected ? <>
           <header className="ux-inspector-header"><span className="ux-eyebrow">Selected commit</span><h2>{selected.subject}</h2></header>
           <dl className="ux-metadata-list"><dt>Commit</dt><dd><code>{selected.id}</code></dd><dt>Author</dt><dd>{selected.authorName}<small>{selected.authorEmail}</small></dd><dt>Date</dt><dd>{formatDate(selected.authoredAt)}</dd><dt>Parents</dt><dd>{selected.parents.length ? selected.parents.map((parent) => <code key={parent}>{parent.slice(0, 10)}</code>) : "Root commit"}</dd></dl>
           <section className="ux-inspector-section ux-inspector-actions">

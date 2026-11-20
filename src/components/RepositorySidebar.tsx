@@ -5,6 +5,7 @@ export type RepositoryView =
   | "conflicts"
   | "changes"
   | "history"
+  | "explorer"
   | "branches"
   | "refs"
   | "rebase"
@@ -56,7 +57,8 @@ export function RepositorySidebar({
   const navigation: NavItem[] = [
     ...(conflictCount > 0 ? [{ id: "conflicts" as RepositoryView, label: "Conflict Center", icon: "warning" as IconName, badge: conflictCount, critical: true }] : []),
     { id: "changes", label: "Changes", icon: "changes", badge: changeCount },
-    { id: "history", label: "History", icon: "history" },
+    { id: "history", label: "Graph", icon: "history" },
+    { id: "explorer", label: "Explorer (TortoiseGit)", icon: "folder" },
     { id: "branches", label: "Branches", icon: "branch" },
     { id: "refs", label: "References", icon: "list" },
     { id: "rebase", label: "Interactive rebase", icon: "layers" },

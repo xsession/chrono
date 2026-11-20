@@ -1,0 +1,428 @@
+import { useEffect, useMemo, useState } from "react";
+import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import { api } from "../../api";
+import type { BranchRef, RefGroups, RemoteRecord, StashFile, TagRecord } from "../../types";
+import { Icon, type IconName } from "../Icon";
+import { useContextMenu, type MenuItem } from "../ContextMenu";
+import { askChoice, askConfirm, askFields, askText } from "../DialogHost";
+import { pushToast } from "../../toastBus";
+
+type Props = {
+  repositoryPath: string;
+  refreshKey: number;
+  busy: boolean;
+  /** run a mutating action, then refresh the repository */
+  run: (label: string, action: () => Promise<unknown>) => Promise<void>;
+  onSelectRevision: (sha: string) => void;
+  onOpenRepository: (path: string) => void;
+  onStartRebase: () => void;
+  onOpenPullRequests: () => void;
+  onStashCount?: (count: number) => void;
+};
+
+type SectionId = "local" | "remote" | "worktrees" | "stashes" | "tags" | "submodules" | "prs";
+const COLLAPSE_KEY = "chrono.gk.leftPanel.collapsed";
+
+function loadCollapsed(): Set<SectionId> {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? "[]") as SectionId[]); } catch { return new Set(); }
+}
+
+type TreeNode = { name: string; full: string; children: Map<string, TreeNode>; branch: BranchRef | null };
+
+function buildTree(branches: BranchRef[], prefix = ""): TreeNode {
+  const root: TreeNode = { name: "", full: prefix, children: new Map(), branch: null };
+  for (const branch of branches) {
+    const parts = branch.name.split("/");
+    let node = root;
+    parts.forEach((part, index) => {
+      const full = parts.slice(0, index + 1).join("/");
+      let child = node.children.get(part);
+      if (!child) { child = { name: part, full, children: new Map(), branch: null }; node.children.set(part, child); }
+      if (index === parts.length - 1) child.branch = branch;
+      node = child;
+    });
+  }
+  return root;
+}
+
+const copy = async (text: string) => {
+  try { await navigator.clipboard.writeText(text); pushToast(`Copied ${text}`, "success", 2500); }
+  catch { pushToast(text, "info"); }
+};
+
+/** GitKraken-style left panel: LOCAL / REMOTE / WORKTREES / STASHES / TAGS /
+ *  SUBMODULES / PULL REQUESTS with folder-grouped branch trees, ahead/behind
+ *  counters, filter, context menus and drag-and-drop merge/rebase. */
+export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRevision, onOpenRepository, onStartRebase, onOpenPullRequests, onStashCount }: Props) {
+  const [refs, setRefs] = useState<RefGroups | null>(null);
+  const [remotes, setRemotes] = useState<RemoteRecord[]>([]);
+  const [filter, setFilter] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<SectionId>>(loadCollapsed);
+  const [closedFolders, setClosedFolders] = useState<Set<string>>(new Set());
+  const [dragOver, setDragOver] = useState<string | null>(null);
+  const [openStash, setOpenStash] = useState<string | null>(null);
+  const [stashFiles, setStashFiles] = useState<StashFile[] | null>(null);
+  const menu = useContextMenu();
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.refGroups(repositoryPath), api.remotes(repositoryPath).catch(() => [])])
+      .then(([groups, remoteList]) => {
+        if (cancelled) return;
+        setRefs(groups);
+        setRemotes(remoteList);
+        onStashCount?.(groups.stashes.length);
+      })
+      .catch(() => { if (!cancelled) setRefs(null); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repositoryPath, refreshKey]);
+
+  useEffect(() => {
+    if (!openStash) { setStashFiles(null); return; }
+    let cancelled = false;
+    api.stashFiles(repositoryPath, openStash).then((files) => { if (!cancelled) setStashFiles(files); }).catch(() => { if (!cancelled) setStashFiles([]); });
+    return () => { cancelled = true; };
+  }, [openStash, repositoryPath, refreshKey]);
+
+  const toggleSection = (id: SectionId) => setCollapsed((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...next]));
+    return next;
+  });
+
+  const needle = filter.trim().toLowerCase();
+  const matches = (value: string) => !needle || value.toLowerCase().includes(needle);
+  const local = useMemo(() => (refs?.branches ?? []).filter((branch) => !branch.remote && matches(branch.name)), [refs, needle]);
+  const remoteBranches = useMemo(() => (refs?.branches ?? []).filter((branch) => branch.remote && matches(`${branch.remote}/${branch.name}`)), [refs, needle]);
+  const current = refs?.branches.find((branch) => !branch.remote && branch.current) ?? null;
+  const tags = (refs?.tags ?? []).filter((tag) => matches(tag.name));
+  const stashes = (refs?.stashes ?? []).filter((stash) => matches(stash.message));
+  const worktrees = (refs?.worktrees ?? []).filter((worktree) => matches(`${worktree.branch ?? ""} ${worktree.path}`));
+  const submodules = (refs?.submodules ?? []).filter((submodule) => matches(submodule.path));
+  const fullName = (branch: BranchRef) => (branch.remote ? `${branch.remote}/${branch.name}` : branch.name);
+
+  // ------------------------------------------------------------------ actions
+  const checkout = (branch: BranchRef) => run(`Checkout ${fullName(branch)}`, () => (branch.remote ? api.checkoutRemoteBranch(repositoryPath, fullName(branch)) : api.switchBranch(repositoryPath, branch.name)));
+  const createBranchAt = async (revision: string, label: string) => {
+    const name = await askText(`Create branch at ${label}`, "Branch name", "");
+    if (name?.trim()) await run(`Create branch ${name.trim()}`, () => api.createBranchAt(repositoryPath, name.trim(), revision));
+  };
+  const createTagAt = async (revision: string, label: string) => {
+    const values = await askFields(`Create tag at ${label}`, [{ name: "name", label: "Tag name" }, { name: "message", label: "Message (optional — makes an annotated tag)", multiline: true }]);
+    if (values?.name.trim()) await run(`Tag ${values.name.trim()}`, () => api.createTag(repositoryPath, values.name.trim(), revision, values.message));
+  };
+  const resetCurrent = async (revision: string, label: string, mode: "soft" | "mixed" | "hard") => {
+    if (mode === "hard" && !(await askConfirm("Hard reset", `Reset ${current?.name ?? "HEAD"} to ${label}? Uncommitted changes will be discarded.`, { confirm: "Reset hard", danger: true }))) return;
+    await run(`Reset ${mode} to ${label}`, () => api.resetTo(repositoryPath, revision, mode));
+  };
+
+  const resetSubmenu = (revision: string, label: string): MenuItem => ({
+    id: "reset", label: `Reset ${current?.name ?? "HEAD"} to this commit`, icon: "history", disabled: busy,
+    submenu: [
+      { id: "soft", label: "Soft — keep all changes staged", onSelect: () => resetCurrent(revision, label, "soft") },
+      { id: "mixed", label: "Mixed — keep working copy, reset index", onSelect: () => resetCurrent(revision, label, "mixed") },
+      { id: "hard", label: "Hard — discard all changes", danger: true, onSelect: () => resetCurrent(revision, label, "hard") },
+    ],
+  });
+
+  const localMenu = (branch: BranchRef): MenuItem[] => {
+    const isCurrent = branch.current;
+    const remoteChoices = (refs?.branches ?? []).filter((candidate) => candidate.remote);
+    return [
+      { id: "checkout", label: `Checkout ${branch.name}`, icon: "check", disabled: busy || isCurrent, onSelect: () => checkout(branch) },
+      ...(branch.upstream ? [
+        { id: "pull", label: isCurrent ? "Pull (fast-forward only)" : `Fast-forward ${branch.name} to ${branch.upstream}`, icon: "download" as IconName, disabled: busy || branch.behind === 0, onSelect: () => run(`Pull ${branch.name}`, () => api.branchAction(repositoryPath, { action: "pull_branch", branch: branch.name })) },
+      ] : []),
+      { id: "push", label: branch.upstream ? `Push ${branch.name}` : `Push ${branch.name} and set upstream`, icon: "upload", disabled: busy, onSelect: () => run(`Push ${branch.name}`, () => api.branchAction(repositoryPath, { action: "push", branch: branch.name })) },
+      { kind: "separator", id: "s1" },
+      ...(!isCurrent && current ? [
+        { id: "merge", label: `Merge ${branch.name} into ${current.name}`, disabled: busy, onSelect: () => run(`Merge ${branch.name}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: branch.name })) },
+        { id: "rebase", label: `Rebase ${current.name} onto ${branch.name}`, disabled: busy, onSelect: () => run(`Rebase onto ${branch.name}`, () => api.branchAction(repositoryPath, { action: "rebase_current_onto", branch: branch.name })) },
+        { id: "ff", label: `Fast-forward ${current.name} to ${branch.name}`, disabled: busy, onSelect: () => run(`Fast-forward to ${branch.name}`, () => api.branchAction(repositoryPath, { action: "fast_forward", branch: current.name, target: branch.name })) },
+      ] as MenuItem[] : []),
+      { id: "irebase", label: "Interactive rebase…", icon: "layers", disabled: busy, onSelect: onStartRebase },
+      { kind: "separator", id: "s2" },
+      { id: "branch", label: "Create branch here", icon: "branch", disabled: busy, onSelect: () => createBranchAt(branch.target, branch.name) },
+      { id: "tag", label: "Create tag here", icon: "tag", disabled: busy, onSelect: () => createTagAt(branch.target, branch.name) },
+      resetSubmenu(branch.target, branch.name),
+      { kind: "separator", id: "s3" },
+      { id: "upstream", label: "Set upstream", icon: "cloud", disabled: busy || remoteChoices.length === 0, submenu: [
+        ...remoteChoices.map<MenuItem>((remote) => ({ id: `up-${fullName(remote)}`, label: fullName(remote), checked: branch.upstream === fullName(remote), onSelect: () => run(`Set upstream ${fullName(remote)}`, () => api.branchAction(repositoryPath, { action: "set_upstream", branch: branch.name, target: fullName(remote) })) })),
+        ...(branch.upstream ? [{ kind: "separator", id: "us" } as MenuItem, { id: "unset", label: "Unset upstream", onSelect: () => run("Unset upstream", () => api.branchAction(repositoryPath, { action: "unset_upstream", branch: branch.name })) }] : []),
+      ] },
+      { id: "rename", label: `Rename ${branch.name}…`, disabled: busy, onSelect: async () => {
+        const name = await askText(`Rename ${branch.name}`, "New name", branch.name);
+        if (name?.trim() && name.trim() !== branch.name) await run(`Rename ${branch.name}`, () => api.branchAction(repositoryPath, { action: "rename", branch: branch.name, newName: name.trim() }));
+      } },
+      { id: "delete", label: `Delete ${branch.name}`, icon: "trash", danger: true, disabled: busy || isCurrent, onSelect: async () => {
+        const choice = await askChoice(`Delete ${branch.name}?`, [
+          { value: "safe", label: "Delete", description: "Refuses when the branch is not fully merged." },
+          { value: "force", label: "Force delete", description: "Deletes even unmerged commits (undo is available).", danger: true },
+        ]);
+        if (choice) await run(`Delete ${branch.name}`, () => api.deleteBranch(repositoryPath, branch.name, choice === "force"));
+      } },
+      { kind: "separator", id: "s4" },
+      { id: "copy", label: "Copy branch name", icon: "copy", onSelect: () => copy(branch.name) },
+      { id: "copysha", label: "Copy commit SHA", icon: "copy", onSelect: () => copy(branch.target) },
+    ];
+  };
+
+  const remoteMenu = (branch: BranchRef): MenuItem[] => {
+    const name = fullName(branch);
+    return [
+      { id: "checkout", label: `Checkout ${name}`, icon: "check", disabled: busy, onSelect: () => checkout(branch) },
+      ...(current ? [
+        { id: "merge", label: `Merge ${name} into ${current.name}`, disabled: busy, onSelect: () => run(`Merge ${name}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: name })) },
+        { id: "rebase", label: `Rebase ${current.name} onto ${name}`, disabled: busy, onSelect: () => run(`Rebase onto ${name}`, () => api.branchAction(repositoryPath, { action: "rebase_current_onto", branch: name })) },
+        { id: "ff", label: `Fast-forward ${current.name} to ${name}`, disabled: busy, onSelect: () => run(`Fast-forward to ${name}`, () => api.branchAction(repositoryPath, { action: "fast_forward", branch: current.name, target: name })) },
+      ] as MenuItem[] : []),
+      { kind: "separator", id: "s1" },
+      { id: "branch", label: "Create branch here", icon: "branch", disabled: busy, onSelect: () => createBranchAt(branch.target, name) },
+      { id: "tag", label: "Create tag here", icon: "tag", disabled: busy, onSelect: () => createTagAt(branch.target, name) },
+      { kind: "separator", id: "s2" },
+      { id: "delete", label: `Delete ${name} from ${branch.remote}`, icon: "trash", danger: true, disabled: busy, onSelect: async () => {
+        if (await askConfirm("Delete remote branch", `Delete ${branch.name} on ${branch.remote}? This affects everyone using the remote.`, { confirm: "Delete remote branch", danger: true })) {
+          await run(`Delete ${name}`, () => api.branchAction(repositoryPath, { action: "delete_remote", branch: name }));
+        }
+      } },
+      { id: "copy", label: "Copy branch name", icon: "copy", onSelect: () => copy(name) },
+    ];
+  };
+
+  const remoteHeaderMenu = (remote: RemoteRecord | null): MenuItem[] => remote ? [
+    { id: "fetch", label: `Fetch ${remote.name}`, icon: "download", disabled: busy, onSelect: () => run(`Fetch ${remote.name}`, () => api.remoteAction(repositoryPath, "fetch", remote.name)) },
+    { id: "prune", label: `Prune ${remote.name}`, disabled: busy, onSelect: () => run(`Prune ${remote.name}`, () => api.remoteAction(repositoryPath, "prune", remote.name)) },
+    { kind: "separator", id: "s" },
+    { id: "url", label: "Edit URL…", disabled: busy, onSelect: async () => { const url = await askText(`Edit ${remote.name} URL`, "URL", remote.fetchUrl); if (url?.trim()) await run("Set remote URL", () => api.remoteAction(repositoryPath, "set_url", remote.name, url.trim())); } },
+    { id: "rename", label: "Rename…", disabled: busy, onSelect: async () => { const name = await askText(`Rename ${remote.name}`, "New name", remote.name); if (name?.trim() && name.trim() !== remote.name) await run("Rename remote", () => api.remoteAction(repositoryPath, "rename", remote.name, name.trim())); } },
+    { id: "remove", label: `Remove ${remote.name}`, icon: "trash", danger: true, disabled: busy, onSelect: async () => { if (await askConfirm("Remove remote", `Remove ${remote.name} and its remote-tracking branches?`, { confirm: "Remove", danger: true })) await run("Remove remote", () => api.remoteAction(repositoryPath, "remove", remote.name)); } },
+    { id: "copy", label: "Copy URL", icon: "copy", onSelect: () => copy(remote.fetchUrl) },
+  ] : [];
+
+  const addRemote = async () => {
+    const values = await askFields("Add remote", [{ name: "name", label: "Name", initial: remotes.length ? "" : "origin" }, { name: "url", label: "URL", placeholder: "https://github.com/owner/repo.git" }]);
+    if (values?.name.trim() && values.url.trim()) await run(`Add remote ${values.name.trim()}`, () => api.remoteAction(repositoryPath, "add", values.name.trim(), values.url.trim()));
+  };
+
+  const tagMenu = (tag: TagRecord): MenuItem[] => [
+    { id: "checkout", label: `Checkout ${tag.name} (detached)`, icon: "check", disabled: busy, onSelect: () => run(`Checkout ${tag.name}`, () => api.workflow(repositoryPath, { operation: "checkout_tag", args: [tag.name] })) },
+    { id: "branch", label: "Create branch here", icon: "branch", disabled: busy, onSelect: () => createBranchAt(tag.target, tag.name) },
+    { kind: "separator", id: "s" },
+    { id: "push", label: `Push ${tag.name} to ${remotes[0]?.name ?? "origin"}`, icon: "upload", disabled: busy || !remotes.length, onSelect: () => run(`Push tag ${tag.name}`, () => api.tagAction(repositoryPath, "push", tag.name, remotes[0]?.name ?? null)) },
+    { id: "delete", label: `Delete ${tag.name} locally`, icon: "trash", danger: true, disabled: busy, onSelect: async () => { if (await askConfirm("Delete tag", `Delete local tag ${tag.name}?`, { confirm: "Delete", danger: true })) await run(`Delete tag ${tag.name}`, () => api.deleteTag(repositoryPath, tag.name)); } },
+    { id: "delete-remote", label: `Delete ${tag.name} from ${remotes[0]?.name ?? "origin"}`, danger: true, disabled: busy || !remotes.length, onSelect: async () => { if (await askConfirm("Delete remote tag", `Delete tag ${tag.name} on ${remotes[0]?.name}?`, { confirm: "Delete", danger: true })) await run(`Delete remote tag ${tag.name}`, () => api.tagAction(repositoryPath, "delete_remote", tag.name, remotes[0]?.name ?? null)); } },
+    { id: "copy", label: "Copy tag name", icon: "copy", onSelect: () => copy(tag.name) },
+  ];
+
+  // --------------------------------------------------------- drag and drop
+  const onDragStart = (event: ReactDragEvent, branch: BranchRef) => {
+    event.dataTransfer.setData("application/x-chrono-branch", fullName(branch));
+    event.dataTransfer.effectAllowed = "move";
+  };
+  const onDrop = async (event: ReactDragEvent, target: BranchRef) => {
+    event.preventDefault();
+    setDragOver(null);
+    const source = event.dataTransfer.getData("application/x-chrono-branch");
+    if (!source || source === fullName(target) || target.remote) return;
+    const choices = target.current
+      ? [
+          { value: "merge", label: `Merge ${source} into ${target.name}` },
+          { value: "rebase", label: `Rebase ${target.name} onto ${source}` },
+          { value: "ff", label: `Fast-forward ${target.name} to ${source}` },
+        ]
+      : [
+          { value: "checkout-merge", label: `Checkout ${target.name} and merge ${source}` },
+          { value: "ff", label: `Fast-forward ${target.name} to ${source}` },
+          { value: "reset", label: `Reset ${target.name} to ${source}`, danger: true, description: "Moves the branch pointer (undo is available)." },
+        ];
+    const choice = await askChoice(`Drop ${source} onto ${target.name}`, choices);
+    if (choice === "merge") await run(`Merge ${source}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: source }));
+    else if (choice === "rebase") await run(`Rebase onto ${source}`, () => api.branchAction(repositoryPath, { action: "rebase_current_onto", branch: source }));
+    else if (choice === "ff") await run(`Fast-forward ${target.name}`, () => api.branchAction(repositoryPath, { action: "fast_forward", branch: target.name, target: source }));
+    else if (choice === "checkout-merge") await run(`Merge ${source} into ${target.name}`, () => api.branchAction(repositoryPath, { action: "checkout_and_merge", branch: source, target: target.name }));
+    else if (choice === "reset") await run(`Reset ${target.name}`, () => api.branchAction(repositoryPath, { action: "force_to_commit", branch: target.name, target: source }));
+  };
+
+  // ------------------------------------------------------------- rendering
+  const branchRow = (branch: BranchRef, label: string, depth: number) => {
+    const key = fullName(branch);
+    return (
+      <div
+        key={key}
+        className={`gk-ref-row${branch.current ? " is-current" : ""}${dragOver === key ? " is-drop" : ""}`}
+        style={{ paddingLeft: 10 + depth * 12 }}
+        role="treeitem"
+        tabIndex={0}
+        draggable
+        onDragStart={(event) => onDragStart(event, branch)}
+        onDragOver={(event) => { if (!branch.remote) { event.preventDefault(); setDragOver(key); } }}
+        onDragLeave={() => setDragOver((value) => (value === key ? null : value))}
+        onDrop={(event) => void onDrop(event, branch)}
+        onClick={() => onSelectRevision(branch.target)}
+        onDoubleClick={() => { if (!branch.current) void checkout(branch); }}
+        onKeyDown={(event) => { if (event.key === "Enter") onSelectRevision(branch.target); }}
+        onContextMenu={(event) => menu.open(event, branch.remote ? remoteMenu(branch) : localMenu(branch), key)}
+        title={`${key} → ${branch.target.slice(0, 8)}${branch.upstream ? ` · tracking ${branch.upstream}` : ""}\nClick: show in graph · Double-click: checkout · Drag onto a branch: merge/rebase`}
+      >
+        {branch.current ? <Icon name="check" className="gk-ref-check" /> : <Icon name={branch.remote ? "cloud" : "branch"} />}
+        <span className="gk-ref-name">{label}</span>
+        {(branch.ahead > 0 || branch.behind > 0) && (
+          <span className="gk-ref-track">{branch.behind > 0 && <span>↓{branch.behind}</span>}{branch.ahead > 0 && <span>↑{branch.ahead}</span>}</span>
+        )}
+      </div>
+    );
+  };
+
+  const renderTree = (node: TreeNode, depth: number, scope: string): ReactNode[] => {
+    const rows: ReactNode[] = [];
+    const children = [...node.children.values()].sort((a, b) => (a.children.size && !a.branch ? 0 : 1) - (b.children.size && !b.branch ? 0 : 1) || a.name.localeCompare(b.name));
+    for (const child of children) {
+      if (child.children.size > 0) {
+        const folderKey = `${scope}:${child.full}`;
+        const open = needle !== "" || !closedFolders.has(folderKey);
+        rows.push(
+          <button key={folderKey} type="button" className="gk-ref-folder" style={{ paddingLeft: 10 + depth * 12 }} onClick={() => setClosedFolders((current) => { const next = new Set(current); if (next.has(folderKey)) next.delete(folderKey); else next.add(folderKey); return next; })}>
+            <Icon name={open ? "chevronDown" : "chevronRight"} /><Icon name={open ? "folderOpen" : "folder"} /><span>{child.name}</span>
+          </button>,
+        );
+        if (child.branch) rows.push(branchRow(child.branch, child.name, depth + 1));
+        if (open) rows.push(...renderTree(child, depth + 1, scope));
+      } else if (child.branch) {
+        rows.push(branchRow(child.branch, child.name, depth));
+      }
+    }
+    return rows;
+  };
+
+  const section = (id: SectionId, title: string, icon: IconName, count: number, body: ReactNode, extra?: { onAdd?: () => void; addTitle?: string; onContext?: (event: ReactMouseEvent) => void }) => {
+    const isCollapsed = collapsed.has(id);
+    return (
+      <section className={`gk-section${isCollapsed ? " is-collapsed" : ""}`} aria-label={title}>
+        <header onContextMenu={extra?.onContext}>
+          <button type="button" className="gk-section-toggle" onClick={() => toggleSection(id)} aria-expanded={!isCollapsed}>
+            <Icon name={isCollapsed ? "chevronRight" : "chevronDown"} />
+            <Icon name={icon} />
+            <span>{title}</span>
+            <em>{count}</em>
+          </button>
+          {extra?.onAdd && <button type="button" className="gk-section-add" title={extra.addTitle} aria-label={extra.addTitle} onClick={extra.onAdd}><Icon name="plus" /></button>}
+        </header>
+        {!isCollapsed && <div className="gk-section-body" role="tree">{body}</div>}
+      </section>
+    );
+  };
+
+  const remotesByName = new Map<string, BranchRef[]>();
+  for (const branch of remoteBranches) {
+    const list = remotesByName.get(branch.remote!) ?? [];
+    list.push(branch);
+    remotesByName.set(branch.remote!, list);
+  }
+  for (const remote of remotes) if (!remotesByName.has(remote.name) && matches(remote.name)) remotesByName.set(remote.name, []);
+
+  return (
+    <aside className="gk-left-panel" aria-label="References">
+      <div className="gk-left-filter">
+        <Icon name="filter" />
+        <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="Filter (branches, tags, stashes…)" aria-label="Filter references" />
+        {filter && <button type="button" onClick={() => setFilter("")} aria-label="Clear filter">✕</button>}
+      </div>
+      <div className="gk-left-scroll">
+        {!refs && <div className="ux-empty-state compact"><i className="ux-spinner" />Loading references…</div>}
+        {refs && <>
+          {section("local", "LOCAL", "repository", local.length, local.length ? renderTree(buildTree(local), 0, "local") : <div className="gk-empty">No local branches</div>, {
+            onAdd: async () => { const name = await askText("Create branch", "Branch name (created at HEAD and checked out)"); if (name?.trim()) await run(`Create branch ${name.trim()}`, () => api.createBranch(repositoryPath, name.trim())); },
+            addTitle: "Create branch",
+          })}
+          {section("remote", "REMOTE", "cloud", remoteBranches.length, (
+            <>{[...remotesByName.entries()].map(([remoteName, list]) => {
+              const remote = remotes.find((candidate) => candidate.name === remoteName) ?? null;
+              const key = `remote:${remoteName}`;
+              const open = needle !== "" || !closedFolders.has(key);
+              return (
+                <div key={remoteName}>
+                  <button type="button" className="gk-ref-folder gk-remote-folder" onClick={() => setClosedFolders((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onContextMenu={(event) => menu.open(event, remoteHeaderMenu(remote), remoteName)} title={remote?.fetchUrl}>
+                    <Icon name={open ? "chevronDown" : "chevronRight"} /><Icon name="cloud" /><span>{remoteName}</span><em>{list.length}</em>
+                  </button>
+                  {open && renderTree(buildTree(list), 1, key)}
+                </div>
+              );
+            })}{remotesByName.size === 0 && <div className="gk-empty">No remotes — use + to add one</div>}</>
+          ), { onAdd: addRemote, addTitle: "Add remote" })}
+          {section("worktrees", "WORKTREES", "worktree", worktrees.length, worktrees.map((worktree) => (
+            <div key={worktree.path} className={`gk-ref-row${worktree.isMain ? " is-current" : ""}`} role="treeitem" tabIndex={0} title={worktree.path}
+              onDoubleClick={() => onOpenRepository(worktree.path)}
+              onContextMenu={(event) => menu.open(event, [
+                { id: "open", label: "Open worktree", icon: "external", onSelect: () => onOpenRepository(worktree.path) },
+                { id: "show", label: "Show HEAD in graph", onSelect: () => onSelectRevision(worktree.head) },
+                { id: "copy", label: "Copy path", icon: "copy", onSelect: () => copy(worktree.path) },
+                { kind: "separator", id: "s" },
+                { id: "remove", label: "Remove worktree", icon: "trash", danger: true, disabled: worktree.isMain || busy, onSelect: async () => { if (await askConfirm("Remove worktree", `Remove the worktree at ${worktree.path}?`, { confirm: "Remove", danger: true })) await run("Remove worktree", () => api.workflow(repositoryPath, { operation: "worktree_remove", args: [worktree.path] })); } },
+              ], worktree.path)}
+              onClick={() => onSelectRevision(worktree.head)}>
+              <Icon name="worktree" />
+              <span className="gk-ref-name">{worktree.branch ?? worktree.head.slice(0, 8)}{worktree.isMain ? " (main)" : ""}</span>
+              {(worktree.dirtyCount > 0 || worktree.conflictCount > 0) && <span className="gk-ref-track"><span className={worktree.conflictCount ? "is-conflict" : ""}>{worktree.conflictCount ? `${worktree.conflictCount}!` : `✎${worktree.dirtyCount}`}</span></span>}
+            </div>
+          )), { onAdd: async () => {
+            const values = await askFields("Add worktree", [{ name: "location", label: "Folder (absolute path)" }, { name: "commit", label: "Branch or commit", initial: current?.name ?? "HEAD" }]);
+            if (values?.location.trim()) await run("Add worktree", () => api.workflow(repositoryPath, { operation: "worktree_add", args: [values.location.trim(), values.commit.trim() || "HEAD"] }));
+          }, addTitle: "Add worktree" })}
+          {section("stashes", "STASHES", "stash", stashes.length, stashes.map((stash) => (
+            <div key={stash.ref}>
+              <div className={`gk-ref-row${openStash === stash.ref ? " is-open" : ""}`} role="treeitem" tabIndex={0} title={`${stash.ref}: ${stash.message}`}
+                onClick={() => { setOpenStash(openStash === stash.ref ? null : stash.ref); onSelectRevision(stash.target); }}
+                onDoubleClick={() => void run(`Apply ${stash.ref}`, () => api.workflow(repositoryPath, { operation: "stash_apply", args: [stash.ref] }))}
+                onContextMenu={(event) => menu.open(event, [
+                  { id: "apply", label: "Apply stash", disabled: busy, onSelect: () => run(`Apply ${stash.ref}`, () => api.workflow(repositoryPath, { operation: "stash_apply", args: [stash.ref] })) },
+                  { id: "pop", label: "Pop stash", icon: "pop", disabled: busy, onSelect: () => run(`Pop ${stash.ref}`, () => api.workflow(repositoryPath, { operation: "stash_pop", args: [stash.ref] })) },
+                  { id: "branch", label: "Create branch from stash commit", icon: "branch", disabled: busy, onSelect: () => createBranchAt(stash.target, stash.ref) },
+                  { kind: "separator", id: "s" },
+                  { id: "drop", label: "Delete stash", icon: "trash", danger: true, disabled: busy, onSelect: async () => { if (await askConfirm("Delete stash", `Drop ${stash.ref} (“${stash.message}”)? This cannot be undone from Chrono.`, { confirm: "Delete", danger: true })) await run(`Drop ${stash.ref}`, () => api.workflow(repositoryPath, { operation: "stash_drop", args: [stash.ref] })); } },
+                ], stash.ref)}>
+                <Icon name="stash" />
+                <span className="gk-ref-name">{stash.message}</span>
+              </div>
+              {openStash === stash.ref && (
+                <div className="gk-stash-files">
+                  {!stashFiles ? <small>Loading…</small> : stashFiles.length === 0 ? <small>No files</small> : stashFiles.map((file) => (
+                    <div key={file.path} className="gk-stash-file" title={file.path}>
+                      <span className={`gk-status-dot is-${file.untracked ? "untracked" : "modified"}`} />
+                      <span>{file.path}</span>
+                      {file.additions !== null && <small><b>+{file.additions}</b> <i>−{file.deletions}</i></small>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )))}
+          {section("tags", "TAGS", "tag", tags.length, tags.map((tag) => (
+            <div key={tag.name} className="gk-ref-row" role="treeitem" tabIndex={0} title={`${tag.name}${tag.message ? ` — ${tag.message}` : ""}`}
+              onClick={() => onSelectRevision(tag.target)}
+              onContextMenu={(event) => menu.open(event, tagMenu(tag), tag.name)}>
+              <Icon name="tag" />
+              <span className="gk-ref-name">{tag.name}</span>
+            </div>
+          )), { onAdd: () => createTagAt("HEAD", "HEAD"), addTitle: "Create tag at HEAD" })}
+          {section("submodules", "SUBMODULES", "submodule", submodules.length, submodules.map((submodule) => (
+            <div key={submodule.path} className="gk-ref-row" role="treeitem" tabIndex={0} title={`${submodule.path} @ ${submodule.commit.slice(0, 8)} ${submodule.summary}`}
+              onDoubleClick={() => onOpenRepository(`${repositoryPath.replace(/[\\/]$/, "")}/${submodule.path}`)}
+              onContextMenu={(event) => menu.open(event, [
+                { id: "open", label: "Open submodule", icon: "external", onSelect: () => onOpenRepository(`${repositoryPath.replace(/[\\/]$/, "")}/${submodule.path}`) },
+                { id: "update", label: "Update (init + recursive)", disabled: busy, onSelect: () => run(`Update ${submodule.path}`, () => api.workflow(repositoryPath, { operation: "submodule_init_path", args: [submodule.path] })) },
+                { id: "copy", label: "Copy path", icon: "copy", onSelect: () => copy(submodule.path) },
+              ], submodule.path)}>
+              <Icon name="submodule" />
+              <span className="gk-ref-name">{submodule.path}</span>
+              {submodule.status.trim() && <span className="gk-ref-track"><span>{submodule.status === "-" ? "uninit" : submodule.status === "+" ? "changed" : submodule.status}</span></span>}
+            </div>
+          )), { onAdd: () => run("Update submodules", () => api.workflow(repositoryPath, { operation: "submodule_update", args: [] })), addTitle: "Update all submodules" })}
+          {section("prs", "PULL REQUESTS", "compare", 0, <button type="button" className="gk-ref-link" onClick={onOpenPullRequests}>Open pull request triage…</button>)}
+        </>}
+      </div>
+      {menu.element}
+    </aside>
+  );
+}

@@ -81,6 +81,24 @@ history windows keep their complete graph layout and page navigation while
 mounting only an overscanned viewport of rows, so thousands of commits remain
 comfortable to browse.
 
+## GitKraken-style workspace
+
+The Graph view follows GitKraken's layout:
+
+- **Toolbar:** repository and branch pickers, Undo / Redo, Pull▾ (Fetch All, fast-forward if possible, fast-forward only, rebase; the checked mode becomes the default), Push▾ (set upstream, with tags, force-with-lease), Branch, Stash, Pop, Explorer, Terminal and Search.
+- **Left panel:** LOCAL (folder-grouped, ahead/behind counts), REMOTE (per remote, add/edit/prune/remove), WORKTREES, STASHES (shows a stash's files inline), TAGS, SUBMODULES and PULL REQUESTS. It has a filter and full context menus. Drag a branch onto another branch to merge, rebase, fast-forward or reset it.
+- **`// WIP` node:** sits above the newest commit. Clicking it opens the commit panel: Unstaged and Staged lists (path or tree view), stage/unstage all, per-file menus (discard, stash, ignore, history, show in Explorer), a summary with a 72-character counter, a description, amend, sign-off and AI draft. Ctrl+Enter commits.
+- **Undo / Redo** (Ctrl+Z / Ctrl+Y): the server records the effect of each Chrono action on branches and HEAD (commit, checkout, branch create/delete, reset, merge, pull, cherry-pick, revert). Undo restores the previous state, using `reset --soft` for commits and `reset --keep` otherwise. Redo re-applies it. Both refuse to run if the repository was changed outside Chrono in the meantime.
+
+## TortoiseGit explorer
+
+The **Explorer (TortoiseGit)** view (Ctrl+4) is a Windows-Explorer-style browser of the working copy. It shows a folder tree, sortable details and TortoiseGit icon overlays (normal, modified, staged, added, deleted, conflicted, unversioned, ignored, plus assume-unchanged and skip-worktree flags). Right-clicking an item, a selection or the empty background opens the TortoiseGit shell menu:
+
+- **Top level:** Open, Open containing folder, Git terminal here, Git Sync…, Git Commit -> "branch"…, Git Diff / Add / Resolve (when relevant), Copy path, New folder/file, Properties.
+- **TortoiseGit ▸:** Pull, Fetch, Push · Diff, Diff with previous version, Diff later / Diff two files · Show log, Show Reflog, Browse References, Revision graph, Repo-browser, Check for modifications, Blame · Resolve (mine/theirs), Revert…, Clean up… · Switch/Checkout, Merge, Create Branch, Create Tag, Export · Rebase, Stash Save/Pop/List, Bisect · Add…, Add to ignore list (by name or extension, local or root .gitignore), Delete and add to ignore list, Delete (keep local), Rename (git mv), Delete, Revert to revision · Index flags (assume-unchanged, skip-worktree) · LFS (lock, unlock, track, locks, pull) · Submodule Update · Create Patch, Apply Patch · Settings, About.
+
+Keyboard: F5 refresh, F2 rename, Del delete, Backspace up a folder, Ctrl+A select all, Shift+F10 opens the menu. "Open" and "Open containing folder" run on the server host, so they only work when Chrono listens on localhost.
+
 ## Run (web)
 
 Easiest — the launchers install Node.js 22+ if it is missing, install npm

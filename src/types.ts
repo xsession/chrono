@@ -500,3 +500,169 @@ export type GitLogEntry = {
   stdoutTail: string;
   stderrTail: string;
 };
+
+// ---------------------------------------------------------------------------
+// GitKraken parity (undo/redo, pull/push modes, branch actions) and the
+// TortoiseGit explorer (overlay status + context-menu actions).
+// ---------------------------------------------------------------------------
+
+export type PullMode = "fetch" | "ff" | "ff-only" | "rebase";
+
+export type PushOptions = {
+  remote?: string | null;
+  branch?: string | null;
+  force?: boolean;
+  setUpstream?: boolean;
+  tags?: boolean;
+};
+
+export type CommitOptions = {
+  amend?: boolean;
+  signoff?: boolean;
+  noVerify?: boolean;
+};
+
+export type UndoState = {
+  canUndo: boolean;
+  canRedo: boolean;
+  undoLabel: string | null;
+  redoLabel: string | null;
+  history: Array<{ id: number; label: string; at: string }>;
+};
+
+export type BranchAction =
+  | "rename"
+  | "set_upstream"
+  | "unset_upstream"
+  | "push"
+  | "delete_remote"
+  | "merge_into_current"
+  | "rebase_current_onto"
+  | "fast_forward"
+  | "force_to_commit"
+  | "checkout_and_merge"
+  | "pull_branch";
+
+export type BranchActionRequest = {
+  action: BranchAction;
+  branch: string;
+  target?: string | null;
+  newName?: string | null;
+  remote?: string | null;
+};
+
+export type TagAction = "push" | "delete_remote" | "push_all";
+export type RemoteAction = "add" | "remove" | "rename" | "set_url" | "prune" | "fetch";
+
+export type StashFile = { path: string; additions: number | null; deletions: number | null; untracked: boolean };
+
+export type OverlayStatus =
+  | "normal"
+  | "modified"
+  | "staged"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "conflicted"
+  | "untracked"
+  | "ignored"
+  | "unversioned-dir";
+
+export type ExplorerEntry = {
+  name: string;
+  path: string;
+  type: "dir" | "file" | "submodule" | "symlink";
+  size: number | null;
+  modifiedAt: string | null;
+  status: OverlayStatus;
+  indexStatus: string;
+  worktreeStatus: string;
+  tracked: boolean;
+  assumeUnchanged: boolean;
+  skipWorktree: boolean;
+  missing: boolean;
+  changedCount: number;
+};
+
+export type ExplorerListing = {
+  root: string;
+  dir: string;
+  branch: string | null;
+  entries: ExplorerEntry[];
+};
+
+export type ExplorerAction =
+  | "add"
+  | "unstage"
+  | "revert"
+  | "delete"
+  | "remove_keep_local"
+  | "rename"
+  | "ignore_name"
+  | "ignore_ext"
+  | "ignore_and_remove"
+  | "resolve"
+  | "resolve_ours"
+  | "resolve_theirs"
+  | "assume_unchanged"
+  | "no_assume_unchanged"
+  | "skip_worktree"
+  | "no_skip_worktree"
+  | "clean"
+  | "stash_save"
+  | "checkout_revision"
+  | "lfs_lock"
+  | "lfs_unlock"
+  | "lfs_track"
+  | "submodule_update"
+  | "commit"
+  | "export"
+  | "new_folder"
+  | "new_file";
+
+export type ExplorerActionRequest = {
+  action: ExplorerAction;
+  files: string[];
+  message?: string;
+  newName?: string;
+  revision?: string;
+  scope?: "local" | "root";
+  cleanMode?: "untracked" | "ignored" | "all";
+  dryRun?: boolean;
+  amend?: boolean;
+  destination?: string;
+};
+
+export type ExplorerActionResult = CommandResult & { action: ExplorerAction; summary: string };
+
+export type ExplorerProperties = {
+  path: string;
+  absolutePath: string;
+  exists: boolean;
+  type: "dir" | "file" | "symlink" | "missing";
+  size: number | null;
+  modifiedAt: string | null;
+  mode: string | null;
+  blob: string | null;
+  tracked: boolean;
+  status: OverlayStatus;
+  lastCommit: CommitRecord | null;
+  firstCommit: CommitRecord | null;
+  commitCount: number;
+  attributes: Array<{ name: string; value: string }>;
+  ignoredBy: string | null;
+  lfs: boolean;
+  assumeUnchanged: boolean;
+  skipWorktree: boolean;
+};
+
+export type FilePairDiff = {
+  left: string;
+  right: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  hunks: CommitDiffHunk[];
+};
+
+export type PreviousVersionDiff = RevisionDiff & { from: string; to: string; subject: string };
