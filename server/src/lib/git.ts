@@ -7,6 +7,7 @@
 // All helpers set GIT_TERMINAL_PROMPT=0 so git never blocks on an interactive
 // credential prompt.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import { AppError } from "./errors.ts";
 import { recordGitCommand } from "./gitLog.ts";
@@ -31,8 +32,25 @@ function resolveCode(error: Error | null): number {
   return typeof code === "number" ? code : 1;
 }
 
+// Per-request diff display options (ignore whitespace, diff algorithm). The
+// HTTP layer runs viewer routes inside `withDiffOptions`; every `git diff`
+// spawned during that request gets the flags inserted after "diff".
+export type DiffOptions = { whitespace?: "all" | "change" | "eol" | "none"; algorithm?: "myers" | "minimal" | "patience" | "histogram" };
+const diffOptionsStore = new AsyncLocalStorage<string[]>();
+
+export function withDiffOptions<T>(options: DiffOptions | null | undefined, run: () => Promise<T>): Promise<T> {
+  const flags: string[] = [];
+  if (options?.whitespace === "all") flags.push("--ignore-all-space");
+  else if (options?.whitespace === "change") flags.push("--ignore-space-change");
+  else if (options?.whitespace === "eol") flags.push("--ignore-space-at-eol");
+  if (options?.algorithm && ["myers", "minimal", "patience", "histogram"].includes(options.algorithm)) flags.push(`--diff-algorithm=${options.algorithm}`);
+  return flags.length ? diffOptionsStore.run(flags, run) : run();
+}
+
 function spawnArgs(path: string | null, args: string[]): string[] {
-  return path ? ["-C", path, ...args] : [...args];
+  const flags = diffOptionsStore.getStore();
+  const effective = flags && (args[0] === "diff" || args[0] === "show") ? [args[0], ...flags, ...args.slice(1)] : args;
+  return path ? ["-C", path, ...effective] : [...effective];
 }
 
 // Run git and always resolve (never reject) with utf8 stdout/stderr and the exit code.

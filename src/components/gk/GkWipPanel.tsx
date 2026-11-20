@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { api } from "../../api";
-import type { FileChange } from "../../types";
+import type { CommitTemplate, ContributorRecord, FileChange, HookCommitResult } from "../../types";
 import { Icon } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askConfirm, askText } from "../DialogHost";
@@ -52,6 +52,27 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
   const [view, setView] = useState<"path" | "tree">(() => (localStorage.getItem(VIEW_KEY) === "tree" ? "tree" : "path"));
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const menu = useContextMenu();
+  const [templates, setTemplates] = useState<CommitTemplate[]>([]);
+  const [coAuthors, setCoAuthors] = useState<string[]>([]);
+  const [contributors, setContributors] = useState<ContributorRecord[] | null>(null);
+  const [coAuthorQuery, setCoAuthorQuery] = useState("");
+  const [showCoAuthors, setShowCoAuthors] = useState(false);
+  const [explanation, setExplanation] = useState<{ text: string; source: string } | null>(null);
+  const [explaining, setExplaining] = useState(false);
+
+  useEffect(() => { api.commitTemplates(repositoryPath).then(setTemplates).catch(() => setTemplates([])); }, [repositoryPath]);
+  useEffect(() => {
+    if (!showCoAuthors || contributors) return;
+    api.contributors(repositoryPath, 5000).then(setContributors).catch(() => setContributors([]));
+  }, [showCoAuthors, contributors, repositoryPath]);
+
+  const applyTemplate = (template: CommitTemplate) => {
+    const [first, ...rest] = template.text.split(/\r?\n/);
+    setSummary(first ?? "");
+    setDescription(rest.join("\n").replace(/^\n+/, ""));
+  };
+  const templateTrigger = summary.startsWith("t:") ? summary.slice(2).trim().toLowerCase() : null;
+  const templateMatches = templateTrigger === null ? [] : templates.filter((template) => template.name.toLowerCase().includes(templateTrigger));
 
   const unstaged = useMemo(() => changes.filter(isUnstaged), [changes]);
   const staged = useMemo(() => changes.filter(isStaged), [changes]);
@@ -69,17 +90,39 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
     return () => { cancelled = true; };
   }, [amend, repositoryPath]);
 
-  const message = [summary.trim(), description.trim()].filter(Boolean).join("\n\n");
+  const trailers = coAuthors.map((author) => `Co-authored-by: ${author}`).join("\n");
+  const message = [summary.trim(), description.trim(), trailers].filter(Boolean).join("\n\n");
   const canCommit = !busy && (staged.length > 0 || amend || unstaged.length > 0) && (summary.trim().length > 0 || amend) && conflicts === 0;
 
   const commit = async () => {
-    if (!canCommit) return;
+    if (!canCommit || templateTrigger !== null) return;
     const stageAllFirst = staged.length === 0 && !amend;
+    let failure: HookCommitResult | null = null;
+    let succeeded = false;
     await run(amend ? "Amend commit" : "Commit", async () => {
       if (stageAllFirst) await api.stage(repositoryPath, unstaged.map((change) => change.path));
-      await api.commit(repositoryPath, message, { amend, signoff });
+      const result = await api.commitWithHooks(repositoryPath, message, { amend, signoff });
+      if (!result.ok) { failure = result; throw new Error(result.hookFailed ? `${result.hookFailed} hook failed` : result.output.trim() || "commit failed"); }
+      succeeded = true;
     });
-    setSummary(""); setDescription(""); setAmend(false);
+    const failed = failure as HookCommitResult | null;
+    if (!succeeded && failed?.hookFailed) {
+      const bypass = await askConfirm(`${failed.hookFailed} hook failed (exit ${failed.exitCode})`, (
+        <div className="gk-hook-failure">
+          <p>The commit was not created. Fix the problem and commit again, or bypass the hooks for this one commit.</p>
+          <pre>{failed.output.replace(/\u001b\[[0-9;]*m/g, "") || "(no output)"}</pre>
+          <p className="gk-hook-warning">“Commit anyway” runs git commit --no-verify: pre-commit and commit-msg hooks are skipped.</p>
+        </div>
+      ), { confirm: "Commit anyway (--no-verify)", danger: true });
+      if (bypass) {
+        await run("Commit (hooks bypassed)", async () => {
+          const retry = await api.commitWithHooks(repositoryPath, message, { amend, signoff, noVerify: true });
+          if (!retry.ok) throw new Error(retry.output.trim() || "commit failed");
+          succeeded = true;
+        });
+      }
+    }
+    if (succeeded) { setSummary(""); setDescription(""); setAmend(false); setCoAuthors([]); setExplanation(null); }
   };
 
   const draft = async () => {
@@ -197,11 +240,23 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
             <button type="button" className={view === "path" ? "is-active" : ""} onClick={() => setViewMode("path")} title="Path view">Path</button>
             <button type="button" className={view === "tree" ? "is-active" : ""} onClick={() => setViewMode("tree")} title="Tree view">Tree</button>
           </div>
+          <button type="button" className="ux-icon-button" title="Explain my changes" aria-label="Explain my changes" disabled={explaining || changes.length === 0} onClick={async () => {
+            setExplaining(true);
+            try { setExplanation(await api.explain(repositoryPath, "working")); } catch (error) { pushToast(String(error), "error"); }
+            finally { setExplaining(false); }
+          }}>✨</button>
           <button type="button" className="ux-icon-button" title="Discard all changes" aria-label="Discard all changes" disabled={busy || changes.length === 0} onClick={async () => {
             if (await askConfirm("Discard all changes", "Reset every tracked file to HEAD and delete all untracked files? This cannot be undone.", { confirm: "Discard all", danger: true })) await run("Discard all changes", () => api.discard(repositoryPath, "all"));
           }}><Icon name="trash" /></button>
         </div>
       </header>
+
+      {explanation && (
+        <div className="gk-wip-explain">
+          <pre>{explanation.text}</pre>
+          <div><small>{explanation.source === "ollama" ? "local AI" : "offline summary"}</small><button type="button" className="gk-link-button" onClick={() => setExplanation(null)}>Dismiss</button></div>
+        </div>
+      )}
 
       {conflicts > 0 && (
         <button type="button" className="gk-wip-conflicts" onClick={onResolveConflicts}><Icon name="warning" />{conflicts} conflicted file{conflicts === 1 ? "" : "s"} — open Conflict Center</button>
@@ -230,10 +285,37 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
           <button type="button" className="gk-link-button" disabled={drafting || busy || changes.length === 0} onClick={() => void draft()} title="Draft a message from the staged diff (local AI or offline rules)">{drafting ? "Drafting…" : "✨ Draft message"}</button>
         </div>
         <div className="gk-summary-row">
-          <input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Commit summary" aria-label="Commit summary" maxLength={200} />
+          <input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Commit summary  (t: inserts a template)" aria-label="Commit summary" maxLength={200}
+            onKeyDown={(event) => { if (templateTrigger !== null && event.key === "Enter" && templateMatches[0]) { event.preventDefault(); applyTemplate(templateMatches[0]); } }} />
           <span className={summary.length > 72 ? "is-over" : ""}>{72 - summary.length}</span>
         </div>
+        {templateTrigger !== null && (
+          <div className="gk-template-popup" role="listbox" aria-label="Commit templates">
+            {templateMatches.map((template) => <button key={template.id} type="button" role="option" aria-selected="false" onClick={() => applyTemplate(template)}><strong>{template.name}</strong><small>{template.text.split("\n")[0]}</small></button>)}
+            {!templateMatches.length && <span className="gk-empty">No templates — add some in Settings → Commit templates.</span>}
+          </div>
+        )}
         <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Description" aria-label="Commit description" rows={4} />
+        <div className="gk-coauthors">
+          {coAuthors.map((author) => <span key={author} className="gk-chip">{author.replace(/ <.*$/, "")}<button type="button" aria-label={`Remove co-author ${author}`} onClick={() => setCoAuthors(coAuthors.filter((value) => value !== author))}>✕</button></span>)}
+          <button type="button" className="gk-link-button" onClick={() => setShowCoAuthors((value) => !value)}>{showCoAuthors ? "Done" : "+ Co-author"}</button>
+          {templates.length > 0 && <select className="gk-template-select" value="" aria-label="Insert commit template" onChange={(event) => { const template = templates.find((item) => item.id === event.target.value); if (template) applyTemplate(template); }}><option value="">Template…</option>{templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}</select>}
+        </div>
+        {showCoAuthors && (
+          <div className="gk-coauthor-picker">
+            <input autoFocus value={coAuthorQuery} onChange={(event) => setCoAuthorQuery(event.target.value)} placeholder="Search contributors or type Name <email>" aria-label="Co-author search"
+              onKeyDown={(event) => { if (event.key === "Enter" && /<[^>]+@[^>]+>/.test(coAuthorQuery)) { event.preventDefault(); setCoAuthors([...new Set([...coAuthors, coAuthorQuery.trim()])]); setCoAuthorQuery(""); } }} />
+            <div className="gk-coauthor-list">
+              {!contributors ? <span className="gk-empty"><i className="ux-spinner" />Loading contributors…</span> : contributors
+                .filter((person) => `${person.name} ${person.email}`.toLowerCase().includes(coAuthorQuery.toLowerCase()))
+                .slice(0, 8)
+                .map((person) => {
+                  const value = `${person.name} <${person.email}>`;
+                  return <button key={value} type="button" disabled={coAuthors.includes(value)} onClick={() => setCoAuthors([...coAuthors, value])}>{person.name}<small>{person.email} · {person.commits} commits</small></button>;
+                })}
+            </div>
+          </div>
+        )}
         <button type="button" className="gk-commit-button" disabled={!canCommit} onClick={() => void commit()} title="Ctrl+Enter">
           {conflicts ? "Resolve conflicts to commit"
             : amend ? "Amend previous commit"

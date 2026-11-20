@@ -12,7 +12,14 @@ import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
 import { CommitDiffView } from "./CommitDiffView";
 import { CommitCompareDiff, CommitCompareInspector } from "./gk/CommitCompare";
+import { CommitExtras, SignatureBadge, SIGNATURE_LABEL } from "./gk/CommitExtras";
+import { Linkified, useAutolinks } from "../autolinks";
+import { useContextMenu } from "./ContextMenu";
+import type { SignatureInfo } from "../types";
 import { reachableCommitIds, referenceKey, visibleRefCommitIds } from "../refVisibility";
+
+// Typed search operators (Sublime Merge / GitLens style): author: path: …
+const SEARCH_OPERATOR_RE = /(^|\s)-?(author|by|committer|message|msg|path|file|contents?|code|since|after|until|before|type|is|sha|commit|ref|branch|in):/i;
 import { HISTORY_ROW_HEIGHT, visibleHistoryRows } from "../historyWindow";
 
 /** GitKraken "// WIP" node shown above the newest commit. */
@@ -49,9 +56,11 @@ type Props = {
   extraActions?: GraphExtraAction[];
   /** overlay rendered over the history rows (e.g. a working-tree diff) */
   overlay?: ReactNode;
+  /** restore a file from a commit (or its parent) into the working tree */
+  onRestoreFile?: (revision: string, file: string) => void | Promise<void>;
 };
 
-type HighlightMode = "all" | "current" | "selected";
+type HighlightMode = "all" | "current" | "selected" | "fork";
 type FilterMode = "message" | "author" | "path";
 type GraphScope = "all" | "current" | `branch:${string}`;
 
@@ -161,7 +170,14 @@ function RowGraph({
   );
 }
 
-export function CommitGraph({ repositoryPath, commits, branches, headSha, selected, onSelect, onCopyCommit, onCommitAction, onCreateBranchAt, onCreateTagAt, onResetTo, actionBusy = false, onOpenWorktree, historyHasNewer = false, historyHasMore = false, historyLoading = false, historyLoadingDirection = null, onLoadNewer, onLoadMore, wipNode = null, inspector, scrollTo = null, extraActions = [], overlay }: Props) {
+export function CommitGraph({ repositoryPath, commits, branches, headSha, selected, onSelect, onCopyCommit, onCommitAction, onCreateBranchAt, onCreateTagAt, onResetTo, actionBusy = false, onOpenWorktree, historyHasNewer = false, historyHasMore = false, historyLoading = false, historyLoadingDirection = null, onLoadNewer, onLoadMore, wipNode = null, inspector, scrollTo = null, extraActions = [], overlay, onRestoreFile }: Props) {
+  const autolinkRules = useAutolinks(repositoryPath);
+  const fileMenu = useContextMenu();
+  const [signatures, setSignatures] = useState<Map<string, SignatureInfo>>(new Map());
+  const signatureRequested = useRef(new Set<string>());
+  const [forkInfo, setForkInfo] = useState<{ forkPoint: string | null; base: string | null } | null>(null);
+  const [searchDescription, setSearchDescription] = useState<string | null>(null);
+  useEffect(() => { setSignatures(new Map()); signatureRequested.current = new Set(); }, [repositoryPath]);
   const [query, setQuery] = useState("");
   const [filterMode, setFilterMode] = useState<FilterMode>("message");
   const [filterBusy, setFilterBusy] = useState(false);
@@ -170,7 +186,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   const [filterHistoryIndex, setFilterHistoryIndex] = useState<number | null>(null);
   const [highlightMode, setHighlightMode] = useState<HighlightMode>(() => {
     const stored = localStorage.getItem(HIGHLIGHT_STORAGE);
-    return stored === "current" || stored === "selected" ? stored : "all";
+    return stored === "current" || stored === "selected" || stored === "fork" ? stored : "all";
   });
   const [graphScope, setGraphScope] = useState<GraphScope>(() => {
     const stored = localStorage.getItem(GRAPH_SCOPE_STORAGE);
@@ -204,6 +220,13 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     setHighlightMode(mode);
     localStorage.setItem(HIGHLIGHT_STORAGE, mode);
   };
+
+  useEffect(() => {
+    if (highlightMode !== "fork") return;
+    let cancelled = false;
+    api.forkPoint(repositoryPath).then((value) => { if (!cancelled) setForkInfo({ forkPoint: value.forkPoint, base: value.base }); }).catch(() => { if (!cancelled) setForkInfo(null); });
+    return () => { cancelled = true; };
+  }, [highlightMode, repositoryPath, headSha]);
 
   const setScope = (scope: GraphScope) => {
     setGraphScope(scope);
@@ -269,6 +292,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   useEffect(() => {
     const needle = query.trim();
     if (!needle) {
+      setSearchDescription(null);
       setFilteredCommits(null);
       setFilterBusy(false);
       return;
@@ -277,7 +301,10 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     setFilterBusy(true);
     setFilterHistoryIndex(null);
     const timer = setTimeout(() => {
-      api.historyQuery(repositoryPath, { query: needle, mode: filterMode, limit: 300 })
+      const request = SEARCH_OPERATOR_RE.test(needle)
+        ? api.searchAdvanced(repositoryPath, needle, 500).then((result) => { if (!cancelled) setSearchDescription(result.description); return result.commits; })
+        : api.historyQuery(repositoryPath, { query: needle, mode: filterMode, limit: 300 }).then((rows) => { if (!cancelled) setSearchDescription(null); return rows; });
+      request
         .then((rows) => { if (!cancelled) setFilteredCommits(rows); })
         .catch(() => { if (!cancelled) setFilteredCommits([]); })
         .finally(() => { if (!cancelled) setFilterBusy(false); });
@@ -348,7 +375,14 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
       ? firstParentChain(graphCommits, currentBranch.target)
       : highlightMode === "selected" && selected
         ? firstParentChain(graphCommits, selected.id)
-        : null;
+        : highlightMode === "fork" && headSha && forkInfo?.forkPoint
+          ? (() => {
+              const base = reachableCommitIds(graphCommits, forkInfo.forkPoint!);
+              const mine = new Set([...reachableCommitIds(graphCommits, headSha)].filter((id) => !base.has(id)));
+              mine.add(forkInfo.forkPoint!);
+              return mine;
+            })()
+          : null;
 
   // Inline ref pills (GitEmber drawLabel) paint at the end of the lanes; rows
   // whose pills don't fit in the graph column overflow into the subject
@@ -426,6 +460,23 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     element.scrollTo({ top: target, behavior: "smooth" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollTo?.nonce]);
+
+  // Signature badges: verify only the rows on screen (each signed commit
+  // spawns gpg / ssh-keygen on the server), debounced while scrolling.
+  useEffect(() => {
+    const ids = display.slice(historyRowViewport.start, historyRowViewport.end)
+      .flatMap((entry) => (entry.kind === "commit" ? [entry.item.commit.id] : []))
+      .filter((id) => !signatureRequested.current.has(id));
+    if (selected && !signatureRequested.current.has(selected.id)) ids.push(selected.id);
+    if (!ids.length) return;
+    const timer = setTimeout(() => {
+      for (const id of ids) signatureRequested.current.add(id);
+      api.signatures(repositoryPath, ids).then((list) => {
+        setSignatures((current) => { const next = new Map(current); for (const info of list) next.set(info.commit, info); return next; });
+      }).catch(() => undefined);
+    }, 180);
+    return () => clearTimeout(timer);
+  }, [display, historyRowViewport.start, historyRowViewport.end, repositoryPath, selected]);
 
   const updateHistoryViewport = () => {
     const element = historyGridRef.current;
@@ -505,12 +556,13 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     <div className="ux-history-view" style={{ gridTemplateColumns: `minmax(380px, 1fr) 6px minmax(260px, ${inspectorWidth}px)` }}>
       <section className="ux-history-list" aria-label="Commit history">
         <header className="ux-view-toolbar">
-          <div><h2>History</h2><span>{commits.length} commits in window{historyHasNewer || historyHasMore ? " · paged" : ""}{filteredCommits !== null ? ` · ${activeCommits.length} match` : ""}</span></div>
+          <div><h2>History</h2><span>{commits.length} commits in window{historyHasNewer || historyHasMore ? " · paged" : ""}{filteredCommits !== null ? ` · ${activeCommits.length} match${searchDescription ? ` (${searchDescription})` : ""}` : ""}</span></div>
           <div className="ux-history-toolbar-actions">
             <div className="ux-highlight-modes" role="group" aria-label="Graph highlight mode">
               <button type="button" className={highlightMode === "all" ? " is-active" : ""} onClick={() => setHighlight("all")} title="Show all lanes in full color">All</button>
               <button type="button" className={highlightMode === "current" ? " is-active" : ""} disabled={!currentBranch} onClick={() => setHighlight("current")} title={`Highlight ${currentBranch?.name ?? "the current branch"}'s first-parent chain`}>Branch</button>
               <button type="button" className={highlightMode === "selected" ? " is-active" : ""} disabled={!selected} onClick={() => setHighlight("selected")} title="Highlight the selected commit's first-parent chain">Selected</button>
+              <button type="button" className={highlightMode === "fork" ? " is-active" : ""} disabled={!headSha} onClick={() => setHighlight("fork")} title={forkInfo?.base ? `Commits on ${currentBranch?.name ?? "HEAD"} since it forked from ${forkInfo.base}; older history is dimmed` : "Dim history before the current branch's fork point"}>Fork</button>
             </div>
             <select className="ux-filter-mode" value={graphScope} onChange={(event) => setScope(event.target.value as GraphScope)} aria-label="Graph scope" title="Show the complete graph or focus one branch">
               <option value="all">All branches</option>
@@ -551,7 +603,8 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                 value={query}
                 onChange={onFilterChange}
                 onKeyDown={onFilterKeyDown}
-                placeholder={filterMode === "path" ? "Filter by path · all refs" : filterMode === "author" ? "Filter by author · all refs" : "Filter by message · all refs"}
+                placeholder={filterMode === "path" ? "Filter by path · all refs" : filterMode === "author" ? "Filter by author · all refs" : "Search · author: path: contents: since: type:merge -message:"}
+                title="Operators: author: committer: message: -message: path: contents: since: until: type:merge|nomerge sha: ref:"
                 aria-label="Filter commits"
               />
             </label>
@@ -685,7 +738,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                   role="button"
                   tabIndex={0}
                   aria-pressed={isSelected}
-                  aria-label={`Select commit ${commit.subject}`}
+                  aria-label={`${item.isMerge ? "Merge commit" : "Commit"} ${commit.subject}, by ${commit.authorName}, ${formatDate(commit.authoredAt)}${allLabels.length ? `, refs ${allLabels.map((label) => label.name).join(", ")}` : ""}${isHead ? ", HEAD" : ""}${signatures.get(commit.id) && signatures.get(commit.id)!.status !== "N" ? `, ${SIGNATURE_LABEL[signatures.get(commit.id)!.status]?.text ?? "signed"}` : ""}`}
                   onClick={(event) => {
                     if ((event.ctrlKey || event.metaKey) && selected && selected.id !== commit.id && !inspector) {
                       setCompareWith(commit);
@@ -727,7 +780,8 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                     />
                   </span>
                   <span className="ux-commit-subject">
-                    <span className="ux-commit-subject-text">{commit.subject}</span>
+                    <span className="ux-commit-subject-text"><Linkified text={commit.subject} rules={autolinkRules} /></span>
+                    <SignatureBadge info={signatures.get(commit.id)} compact />
                     {clippedRefs > 0 && (
                       <span className="ux-graph-chip ux-graph-chip--muted" title={`${clippedRefs} more ref${clippedRefs === 1 ? "" : "s"} on this commit`}>+{clippedRefs}</span>
                     )}
@@ -767,7 +821,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
           <CommitCompareInspector repositoryPath={repositoryPath} from={compareSides.from} to={compareSides.to} openFile={compareFile} onOpenFile={setCompareFile} onSwap={() => setCompareSwapped((value) => !value)} onClose={() => { setCompareWith(null); setCompareFile(null); }} />
         ) : selected ? <>
           <header className="ux-inspector-header"><span className="ux-eyebrow">Selected commit</span><h2>{selected.subject}</h2></header>
-          <dl className="ux-metadata-list"><dt>Commit</dt><dd><code>{selected.id}</code></dd><dt>Author</dt><dd>{selected.authorName}<small>{selected.authorEmail}</small></dd><dt>Date</dt><dd>{formatDate(selected.authoredAt)}</dd><dt>Parents</dt><dd>{selected.parents.length ? selected.parents.map((parent) => <code key={parent}>{parent.slice(0, 10)}</code>) : "Root commit"}</dd></dl>
+          <dl className="ux-metadata-list"><dt>Commit</dt><dd><code>{selected.id}</code></dd><dt>Author</dt><dd>{selected.authorName}<small>{selected.authorEmail}</small></dd><dt>Date</dt><dd>{formatDate(selected.authoredAt)}</dd><dt>Parents</dt><dd>{selected.parents.length ? selected.parents.map((parent) => <code key={parent}>{parent.slice(0, 10)}</code>) : "Root commit"}</dd>{signatures.get(selected.id)?.status && signatures.get(selected.id)!.status !== "N" ? <><dt>Signed</dt><dd><SignatureBadge info={signatures.get(selected.id)} /></dd></> : null}</dl>
           <section className="ux-inspector-section ux-inspector-actions">
             <div className="ux-section-title"><strong>Commit actions</strong><span>Apply to the selected revision</span></div>
             <div className="ux-card-actions wrap">
@@ -788,7 +842,13 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                 <div className="ux-commit-file-list">{details.files.map((file, index) => {
                   const isDiffOpen = diffFile === file.path;
                   return (
-                    <button key={`${file.path}-${index}`} type="button" className={`ux-commit-file-row${isDiffOpen ? " is-open" : ""}`} title={`${file.path} — click to ${isDiffOpen ? "close" : "view"} diff`} onClick={() => setDiffFile(isDiffOpen ? null : file.path)} aria-expanded={isDiffOpen}>
+                    <button key={`${file.path}-${index}`} type="button" className={`ux-commit-file-row${isDiffOpen ? " is-open" : ""}`} title={`${file.path} — click to ${isDiffOpen ? "close" : "view"} diff · right-click for more`} onClick={() => setDiffFile(isDiffOpen ? null : file.path)} aria-expanded={isDiffOpen}
+                      onContextMenu={(event) => fileMenu.open(event, [
+                        { id: "diff", label: isDiffOpen ? "Close diff" : "View diff", icon: "diff", onSelect: () => setDiffFile(isDiffOpen ? null : file.path) },
+                        { id: "restore", label: "Restore this version to the working tree", icon: "history", disabled: !onRestoreFile, onSelect: () => onRestoreFile?.(selected.id, file.path) },
+                        { id: "restore-parent", label: "Restore the version before this commit", icon: "undo", disabled: !onRestoreFile || !selected.parents.length, onSelect: () => onRestoreFile?.(`${selected.id}^`, file.path) },
+                        { id: "copy", label: "Copy path", icon: "copy", onSelect: () => { void navigator.clipboard?.writeText(file.path); } },
+                      ], file.path)}>
                       <span title={file.path}>{file.path}</span>
                       {file.binary ? <small>binary</small> : <small><b>+{file.additions ?? 0}</b><i>−{file.deletions ?? 0}</i></small>}
                     </button>
@@ -798,7 +858,9 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               </>
             ) : <div className="ux-empty-state compact">Loading commit details…</div>}
           </section>
-          {details?.body && details.body.trim() !== details.subject.trim() && <section className="ux-inspector-section"><div className="ux-section-title"><strong>Message</strong></div><pre className="ux-commit-body">{details.body}</pre></section>}
+          {details?.body && details.body.trim() !== details.subject.trim() && <section className="ux-inspector-section"><div className="ux-section-title"><strong>Message</strong></div><pre className="ux-commit-body"><Linkified text={details.body} rules={autolinkRules} /></pre></section>}
+          <CommitExtras repositoryPath={repositoryPath} sha={selected.id} signature={signatures.get(selected.id)} />
+          {fileMenu.element}
         </> : <div className="ux-empty-state">Select a commit to inspect it.</div>}
       </aside>
     </div>

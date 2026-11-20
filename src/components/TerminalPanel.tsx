@@ -7,7 +7,7 @@ import "xterm/css/xterm.css";
 // xterm.js renders it. Closing the panel kills all sessions.
 
 export interface TerminalPanelHandle {
-  createTab: (cwd?: string) => void;
+  createTab: (cwd?: string, command?: string) => void;
   closeActiveTab: () => void;
   selectNextTab: () => void;
   selectPreviousTab: () => void;
@@ -29,6 +29,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, { open: boolean; re
   const termsRef = useRef<Map<string, Terminal>>(new Map());
   const createdRef = useRef<Set<string>>(new Set());
   const cwdByTab = useRef<Map<string, string>>(new Map());
+  const pendingCommand = useRef(new Map<string, string>());
   const activeRef = useRef<string | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const tabSeq = useRef(0);
@@ -72,6 +73,8 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, { open: boolean; re
       try { frame = JSON.parse(String(event.data)); } catch { return; }
       if (frame.type === "ready") {
         const id = String(frame.id);
+        const command = pendingCommand.current.get(id);
+        if (command) { pendingCommand.current.delete(id); setTimeout(() => send({ type: "input", id, data: `${command}\r` }), 150); }
         ensureTerm(id)?.focus();
         fitActive();
       } else if (frame.type === "output") {
@@ -96,10 +99,11 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, { open: boolean; re
   }, [open, ensureTerm, fitActive, send]);
 
   // --- tab management --------------------------------------------------------
-  const createTab = useCallback((cwd?: string) => {
+  const createTab = useCallback((cwd?: string, command?: string) => {
     tabSeq.current += 1;
     const id = `t${Date.now().toString(36)}-${tabSeq.current}`;
     if (cwd) cwdByTab.current.set(id, cwd);
+    if (command) pendingCommand.current.set(id, command);
     setTabs((current) => [...current, { id, title: `${cwd ? (cwd.split("/").pop() ?? "shell") : "shell"} #${tabSeq.current}` }]);
     setActiveId(id);
   }, []);
@@ -137,7 +141,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, { open: boolean; re
   }, [open, tabs.length]);
 
   useImperativeHandle(ref, () => ({
-    createTab: (cwd?: string) => { if (!open) return; createTab(cwd); },
+    createTab: (cwd?: string, command?: string) => { createTab(cwd, command); },
     closeActiveTab: () => { const id = activeRef.current; if (id) closeTab(id); },
     selectNextTab: () => setTabs((current) => {
       setActiveId((active) => current[(Math.max(0, current.findIndex((t) => t.id === active)) + 1) % Math.max(1, current.length)].id);

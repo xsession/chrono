@@ -3,6 +3,7 @@ import { api } from "../../api";
 import type { CommitFileChange, CommitRecord, RevisionDiff } from "../../types";
 import { DiffHunks } from "../DiffHunks";
 import { Icon } from "../Icon";
+import { ImageDiff, isImagePath } from "../ImageDiff";
 
 /** GitKraken-style comparison of two commits selected with Ctrl+click:
  *  the changed files between them, and the diff of the chosen file. */
@@ -77,7 +78,8 @@ export function CommitCompareDiff({ repositoryPath, from, to, file, onClose }: {
             <button className="ux-icon-button" onClick={onClose} title="Close diff" aria-label="Close diff">✕</button>
           </span>
         </header>
-        {error ? <div className="ux-empty-state compact">{error}</div>
+        {isImagePath(file) ? <ImageDiff repositoryPath={repositoryPath} file={file} before={from} after={to} />
+          : error ? <div className="ux-empty-state compact">{error}</div>
           : !diff ? <div className="ux-empty-state compact"><i className="ux-spinner" />Loading diff…</div>
           : diff.binary ? <div className="ux-empty-state compact">Binary file — no text diff available.</div>
           : diff.hunks.length ? <DiffHunks hunks={diff.hunks} /> : <div className="ux-empty-state compact">No text changes.</div>}

@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { CommitFileDiff } from "../types";
 import { api } from "../api";
 import { Icon } from "./Icon";
+import { DiffHunks } from "./DiffHunks";
+import { ImageDiff, isImagePath } from "./ImageDiff";
 
 type Props = {
   repositoryPath: string;
@@ -23,7 +25,7 @@ export function CommitDiffView({ repositoryPath, commit, file, additions, deleti
     let cancelled = false;
     setDiff(null);
     setFailed(false);
-    if (binary) return;
+    if (binary && !isImagePath(file)) return;
     api.commitFileDiff(repositoryPath, commit, file)
       .then((value) => { if (!cancelled) setDiff(value); })
       .catch(() => { if (!cancelled) setFailed(true); });
@@ -44,26 +46,13 @@ export function CommitDiffView({ repositoryPath, commit, file, additions, deleti
           <button className="ux-icon-button" onClick={onClose} title="Close diff" aria-label="Close diff">✕</button>
         </span>
       </header>
-      {binary ? <div className="ux-empty-state compact"><Icon name="file" />Binary file — no text diff available.</div>
+      {isImagePath(file) ? <ImageDiff repositoryPath={repositoryPath} file={file} before={diff?.status === "A" ? null : `${commit}^`} after={diff?.status === "D" ? `${commit}^` : commit} />
+        : binary ? <div className="ux-empty-state compact"><Icon name="file" />Binary file — no text diff available.</div>
         : failed ? <div className="ux-empty-state compact"><Icon name="warning" />Failed to load the diff.</div>
         : !diff ? <div className="ux-empty-state compact"><i className="ux-spinner" />Loading diff…</div>
         : diff.hunks.length === 0
           ? <div className="ux-empty-state compact"><Icon name="file" />No text changes to show.</div>
-          : <div className="ux-commit-diff-body">
-              {diff.hunks.map((hunk, hunkIndex) => (
-                <div key={hunkIndex} className="ux-diff-hunk">
-                  <div className="ux-diff-hunk-header">@@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@{hunk.header ? ` ${hunk.header}` : ""}</div>
-                  {hunk.lines.map((line, lineIndex) => (
-                    <div key={lineIndex} className={`ux-diff-line ux-diff-line--${line.kind}`}>
-                      <span className="ux-diff-no ux-diff-no--old">{line.kind === "del" || line.kind === "ctx" ? line.number : ""}</span>
-                      <span className="ux-diff-no ux-diff-no--new">{line.kind === "add" || line.kind === "ctx" ? line.number : ""}</span>
-                      <span className="ux-diff-mark">{line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}</span>
-                      <code>{line.text}</code>
-                    </div>
-                  ))}
-                </div>
-              ))}
-            </div>}
+          : <DiffHunks hunks={diff.hunks} />}
     </section>
   );
 }

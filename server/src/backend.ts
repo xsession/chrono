@@ -51,6 +51,11 @@ export interface RemoteRecord {
 export interface CloneRequest {
   url: string;
   destination: string;
+  depth?: number | null;
+  filter?: "blob:none" | "tree:0" | null;
+  sparse?: boolean;
+  branch?: string | null;
+  singleBranch?: boolean;
   username?: string | null;
   token?: string | null;
 }
@@ -249,7 +254,13 @@ export async function cloneRepository(request: CloneRequest): Promise<Repository
     throw invalidError("clone URL and destination are required");
   }
   const url = withAuth(request.url, request.username, request.token);
-  await checked(null, ["clone", "--", url, request.destination]);
+  const options: string[] = [];
+  if (request.depth && Number.isSafeInteger(request.depth) && request.depth > 0) options.push(`--depth=${request.depth}`);
+  if (request.filter === "blob:none" || request.filter === "tree:0") options.push(`--filter=${request.filter}`);
+  if (request.sparse) options.push("--sparse");
+  if (request.branch && !request.branch.startsWith("-") && !/\s/.test(request.branch)) options.push("--branch", request.branch);
+  if (request.singleBranch) options.push("--single-branch");
+  await checked(null, ["clone", ...options, "--", url, request.destination]);
   return repositorySummary(request.destination);
 }
 
@@ -331,6 +342,12 @@ function workflowArgs(request: WorkflowRequest): string[] {
       return ["sparse-checkout", "set", "--cone", ...requireArgs(request, 1)];
     case "sparse_disable":
       return ["sparse-checkout", "disable"];
+    case "sparse_add":
+      return ["sparse-checkout", "add", ...requireArgs(request, 1).concat(request.args.slice(1)).filter((arg) => !arg.startsWith("-"))];
+    case "sparse_reapply":
+      return ["sparse-checkout", "reapply"];
+    case "sparse_list":
+      return ["sparse-checkout", "list"];
     case "submodule_update":
       return ["submodule", "update", "--init", "--recursive"];
     case "submodule_sync":

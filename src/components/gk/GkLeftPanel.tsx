@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { api } from "../../api";
-import type { BranchRef, RefGroups, RemoteRecord, StashFile, TagRecord } from "../../types";
+import type { BranchRef, FlowType, GitflowConfig, RefGroups, RemoteRecord, StashFile, TagRecord } from "../../types";
+import { CleanupDialog, PullRequestDialog } from "./HostingDialogs";
+import type { SettingsTab } from "../settings/RepoSettings";
 import { Icon, type IconName } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askChoice, askConfirm, askFields, askText } from "../DialogHost";
@@ -18,6 +20,8 @@ type Props = {
   onStartRebase: () => void;
   onOpenPullRequests: () => void;
   onStashCount?: (count: number) => void;
+  onOpenSettings?: (tab: SettingsTab) => void;
+  onNewAgentSession?: () => void;
 };
 
 type SectionId = "local" | "remote" | "worktrees" | "stashes" | "tags" | "submodules" | "prs";
@@ -53,7 +57,11 @@ const copy = async (text: string) => {
 /** GitKraken-style left panel: LOCAL / REMOTE / WORKTREES / STASHES / TAGS /
  *  SUBMODULES / PULL REQUESTS with folder-grouped branch trees, ahead/behind
  *  counters, filter, context menus and drag-and-drop merge/rebase. */
-export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRevision, onOpenRepository, onStartRebase, onOpenPullRequests, onStashCount }: Props) {
+export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRevision, onOpenRepository, onStartRebase, onOpenPullRequests, onStashCount, onOpenSettings, onNewAgentSession }: Props) {
+  const [parents, setParents] = useState<Record<string, string>>({});
+  const [flow, setFlow] = useState<GitflowConfig | null>(null);
+  const [prFor, setPrFor] = useState<{ head: string; base: string } | null>(null);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
   const [refs, setRefs] = useState<RefGroups | null>(null);
   const [remotes, setRemotes] = useState<RemoteRecord[]>([]);
   const [filter, setFilter] = useState("");
@@ -66,11 +74,13 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([api.refGroups(repositoryPath), api.remotes(repositoryPath).catch(() => [])])
-      .then(([groups, remoteList]) => {
+    Promise.all([api.refGroups(repositoryPath), api.remotes(repositoryPath).catch(() => []), api.stackParents(repositoryPath).catch(() => ({})), api.gitflowConfig(repositoryPath).catch(() => null)])
+      .then(([groups, remoteList, stackParents, flowConfig]) => {
         if (cancelled) return;
         setRefs(groups);
         setRemotes(remoteList);
+        setParents(stackParents);
+        setFlow(flowConfig);
         onStashCount?.(groups.stashes.length);
       })
       .catch(() => { if (!cancelled) setRefs(null); });
@@ -127,6 +137,54 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
     ],
   });
 
+  /** Run merge/rebase/cherry-pick only after a local `git merge-tree`
+   *  dry run; conflicts are listed before anything touches the work tree. */
+  const predicted = async (mode: "merge" | "rebase", source: string, target: string | null, label: string, action: () => Promise<unknown>) => {
+    try {
+      const prediction = await api.predictConflicts(repositoryPath, mode, source, target);
+      if (prediction.supported && !prediction.clean) {
+        const ok = await askConfirm(`${label}: conflicts expected`, (
+          <div className="gk-hook-failure">
+            <p>{prediction.message} Chrono simulated the {mode} with git merge-tree; nothing has changed yet.</p>
+            <pre>{prediction.files.join("\n")}</pre>
+          </div>
+        ), { confirm: `${mode === "rebase" ? "Rebase" : "Merge"} anyway`, danger: true });
+        if (!ok) return;
+      }
+    } catch { /* prediction is advisory */ }
+    await run(label, action);
+  };
+
+  const flowType = (name: string): FlowType | null => {
+    if (!flow?.initialized) return null;
+    for (const type of ["feature", "release", "hotfix"] as FlowType[]) if (name.startsWith(flow[type])) return type;
+    return null;
+  };
+
+  const startFlow = async (type: FlowType) => {
+    if (!flow?.initialized) { onOpenSettings?.("gitflow"); return; }
+    const name = await askText(`Start ${type}`, `${type === "feature" ? "Feature" : type === "release" ? "Version" : "Hotfix version"} name (branch ${flow[type]}<name>)`);
+    if (name?.trim()) await run(`Start ${type} ${name.trim()}`, () => api.gitflowStart(repositoryPath, type, name.trim()));
+  };
+
+  const finishFlow = async (branch: BranchRef, type: FlowType) => {
+    const tagged = type !== "feature";
+    const values = tagged ? await askFields(`Finish ${branch.name}`, [{ name: "message", label: `Tag message for ${flow?.versionTag ?? ""}${branch.name.slice((flow?.[type] ?? "").length)}`, initial: `${type === "release" ? "Release" : "Hotfix"} ${branch.name.slice((flow?.[type] ?? "").length)}` }]) : { message: "" };
+    if (!values) return;
+    if (!tagged && !(await askConfirm(`Finish ${branch.name}`, `Merge ${branch.name} into ${flow?.develop} (--no-ff) and delete it?`, { confirm: "Finish feature" }))) return;
+    await run(`Finish ${branch.name}`, () => api.gitflowFinish(repositoryPath, type, branch.name, values.message || null));
+  };
+
+  const flowMenu = (): MenuItem => ({
+    id: "gitflow", label: "Git-flow", icon: "branch", submenu: flow?.initialized ? [
+      { id: "f", label: "Start feature…", onSelect: () => startFlow("feature") },
+      { id: "r", label: "Start release…", onSelect: () => startFlow("release") },
+      { id: "h", label: "Start hotfix…", onSelect: () => startFlow("hotfix") },
+      { kind: "separator", id: "s" },
+      { id: "settings", label: "Git-flow settings…", icon: "settings", onSelect: () => onOpenSettings?.("gitflow") },
+    ] : [{ id: "init", label: "Initialise git-flow…", onSelect: () => onOpenSettings?.("gitflow") }],
+  });
+
   const localMenu = (branch: BranchRef): MenuItem[] => {
     const isCurrent = branch.current;
     const remoteChoices = (refs?.branches ?? []).filter((candidate) => candidate.remote);
@@ -138,11 +196,20 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
       { id: "push", label: branch.upstream ? `Push ${branch.name}` : `Push ${branch.name} and set upstream`, icon: "upload", disabled: busy, onSelect: () => run(`Push ${branch.name}`, () => api.branchAction(repositoryPath, { action: "push", branch: branch.name })) },
       { kind: "separator", id: "s1" },
       ...(!isCurrent && current ? [
-        { id: "merge", label: `Merge ${branch.name} into ${current.name}`, disabled: busy, onSelect: () => run(`Merge ${branch.name}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: branch.name })) },
-        { id: "rebase", label: `Rebase ${current.name} onto ${branch.name}`, disabled: busy, onSelect: () => run(`Rebase onto ${branch.name}`, () => api.branchAction(repositoryPath, { action: "rebase_current_onto", branch: branch.name })) },
+        { id: "merge", label: `Merge ${branch.name} into ${current.name}`, disabled: busy, onSelect: () => predicted("merge", branch.name, null, `Merge ${branch.name}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: branch.name })) },
+        { id: "rebase", label: `Rebase ${current.name} onto ${branch.name}`, disabled: busy, onSelect: () => predicted("rebase", branch.name, null, `Rebase onto ${branch.name}`, () => api.branchAction(repositoryPath, { action: "rebase_current_onto", branch: branch.name })) },
         { id: "ff", label: `Fast-forward ${current.name} to ${branch.name}`, disabled: busy, onSelect: () => run(`Fast-forward to ${branch.name}`, () => api.branchAction(repositoryPath, { action: "fast_forward", branch: current.name, target: branch.name })) },
       ] as MenuItem[] : []),
       { id: "irebase", label: "Interactive rebase…", icon: "layers", disabled: busy, onSelect: onStartRebase },
+      { id: "stack", label: parents[branch.name] ? `Stack (on ${parents[branch.name]})` : "Stack", icon: "layers", submenu: [
+        { id: "stack-new", label: `Create stacked branch on ${branch.name}…`, disabled: busy, onSelect: async () => { const name = await askText(`New branch stacked on ${branch.name}`, "Branch name"); if (name?.trim()) await run(`Create stacked branch ${name.trim()}`, () => api.createStackedBranch(repositoryPath, branch.name, name.trim())); } },
+        ...(parents[branch.name] ? [{ id: "restack", label: `Restack onto ${parents[branch.name]}`, hint: "rebase --update-refs from the stack tip", disabled: busy, onSelect: () => predicted("rebase", parents[branch.name], branch.name, `Restack ${branch.name}`, () => api.restack(repositoryPath, branch.name)) } as MenuItem] : []),
+        { kind: "separator", id: "ss" },
+        { id: "parent", label: "Set parent branch", submenu: (refs?.branches ?? []).filter((candidate) => !candidate.remote && candidate.name !== branch.name).map<MenuItem>((candidate) => ({ id: `p-${candidate.name}`, label: candidate.name, checked: parents[branch.name] === candidate.name, onSelect: () => run(`Set parent of ${branch.name}`, () => api.setStackParent(repositoryPath, branch.name, candidate.name)) })) },
+        ...(parents[branch.name] ? [{ id: "unparent", label: "Clear parent", onSelect: () => run(`Clear parent of ${branch.name}`, () => api.setStackParent(repositoryPath, branch.name, null)) } as MenuItem] : []),
+      ] },
+      ...(remotes.length ? [{ id: "pr", label: "Create pull request…", icon: "compare" as IconName, disabled: busy, onSelect: () => setPrFor({ head: branch.name, base: parents[branch.name] ?? (refs?.branches.find((candidate) => !candidate.remote && (candidate.name === "main" || candidate.name === "master"))?.name ?? "main") }) }] : []),
+      ...(flowType(branch.name) ? [{ id: "flow-finish", label: `Finish ${flowType(branch.name)} ${branch.name.slice((flow?.[flowType(branch.name)!] ?? "").length)}`, icon: "check" as IconName, disabled: busy, onSelect: () => finishFlow(branch, flowType(branch.name)!) }] : []),
       { kind: "separator", id: "s2" },
       { id: "branch", label: "Create branch here", icon: "branch", disabled: busy, onSelect: () => createBranchAt(branch.target, branch.name) },
       { id: "tag", label: "Create tag here", icon: "tag", disabled: busy, onSelect: () => createTagAt(branch.target, branch.name) },
@@ -174,8 +241,8 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
     return [
       { id: "checkout", label: `Checkout ${name}`, icon: "check", disabled: busy, onSelect: () => checkout(branch) },
       ...(current ? [
-        { id: "merge", label: `Merge ${name} into ${current.name}`, disabled: busy, onSelect: () => run(`Merge ${name}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: name })) },
-        { id: "rebase", label: `Rebase ${current.name} onto ${name}`, disabled: busy, onSelect: () => run(`Rebase onto ${name}`, () => api.branchAction(repositoryPath, { action: "rebase_current_onto", branch: name })) },
+        { id: "merge", label: `Merge ${name} into ${current.name}`, disabled: busy, onSelect: () => predicted("merge", name, null, `Merge ${name}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: name })) },
+        { id: "rebase", label: `Rebase ${current.name} onto ${name}`, disabled: busy, onSelect: () => predicted("rebase", name, null, `Rebase onto ${name}`, () => api.branchAction(repositoryPath, { action: "rebase_current_onto", branch: name })) },
         { id: "ff", label: `Fast-forward ${current.name} to ${name}`, disabled: busy, onSelect: () => run(`Fast-forward to ${name}`, () => api.branchAction(repositoryPath, { action: "fast_forward", branch: current.name, target: name })) },
       ] as MenuItem[] : []),
       { kind: "separator", id: "s1" },
@@ -237,7 +304,12 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
           { value: "ff", label: `Fast-forward ${target.name} to ${source}` },
           { value: "reset", label: `Reset ${target.name} to ${source}`, danger: true, description: "Moves the branch pointer (undo is available)." },
         ];
-    const choice = await askChoice(`Drop ${source} onto ${target.name}`, choices);
+    let note: string | undefined;
+    try {
+      const prediction = await api.predictConflicts(repositoryPath, "merge", source, target.name);
+      if (prediction.supported) note = prediction.clean ? "✓ No conflicts expected (merge-tree dry run)." : `⚠ ${prediction.files.length} file(s) would conflict: ${prediction.files.slice(0, 6).join(", ")}${prediction.files.length > 6 ? "…" : ""}`;
+    } catch { note = undefined; }
+    const choice = await askChoice(`Drop ${source} onto ${target.name}`, choices, note);
     if (choice === "merge") await run(`Merge ${source}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: source }));
     else if (choice === "rebase") await run(`Rebase onto ${source}`, () => api.branchAction(repositoryPath, { action: "rebase_current_onto", branch: source }));
     else if (choice === "ff") await run(`Fast-forward ${target.name}`, () => api.branchAction(repositoryPath, { action: "fast_forward", branch: target.name, target: source }));
@@ -268,6 +340,7 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
       >
         {branch.current ? <Icon name="check" className="gk-ref-check" /> : <Icon name={branch.remote ? "cloud" : "branch"} />}
         <span className="gk-ref-name">{label}</span>
+        {!branch.remote && parents[branch.name] && <span className="gk-ref-parent" title={`Stacked on ${parents[branch.name]}`}>↳ {parents[branch.name]}</span>}
         {(branch.ahead > 0 || branch.behind > 0) && (
           <span className="gk-ref-track">{branch.behind > 0 && <span>↓{branch.behind}</span>}{branch.ahead > 0 && <span>↑{branch.ahead}</span>}</span>
         )}
@@ -335,6 +408,12 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
           {section("local", "LOCAL", "repository", local.length, local.length ? renderTree(buildTree(local), 0, "local") : <div className="gk-empty">No local branches</div>, {
             onAdd: async () => { const name = await askText("Create branch", "Branch name (created at HEAD and checked out)"); if (name?.trim()) await run(`Create branch ${name.trim()}`, () => api.createBranch(repositoryPath, name.trim())); },
             addTitle: "Create branch",
+            onContext: (event) => menu.open(event, [
+              { id: "new", label: "Create branch…", icon: "plus", onSelect: async () => { const name = await askText("Create branch", "Branch name"); if (name?.trim()) await run(`Create branch ${name.trim()}`, () => api.createBranch(repositoryPath, name.trim())); } },
+              { id: "cleanup", label: "Clean up merged & stale branches…", icon: "trash", onSelect: () => setCleanupOpen(true) },
+              flowMenu(),
+              { id: "agent", label: "New agent session…", icon: "terminal", disabled: !onNewAgentSession, onSelect: () => onNewAgentSession?.() },
+            ], "Local branches"),
           })}
           {section("remote", "REMOTE", "cloud", remoteBranches.length, (
             <>{[...remotesByName.entries()].map(([remoteName, list]) => {
@@ -369,7 +448,7 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
           )), { onAdd: async () => {
             const values = await askFields("Add worktree", [{ name: "location", label: "Folder (absolute path)" }, { name: "commit", label: "Branch or commit", initial: current?.name ?? "HEAD" }]);
             if (values?.location.trim()) await run("Add worktree", () => api.workflow(repositoryPath, { operation: "worktree_add", args: [values.location.trim(), values.commit.trim() || "HEAD"] }));
-          }, addTitle: "Add worktree" })}
+          }, addTitle: "Add worktree", onContext: (event) => menu.open(event, [{ id: "agent", label: "New agent session…", icon: "terminal", disabled: !onNewAgentSession, onSelect: () => onNewAgentSession?.() }], "Worktrees") })}
           {section("stashes", "STASHES", "stash", stashes.length, stashes.map((stash) => (
             <div key={stash.ref}>
               <div className={`gk-ref-row${openStash === stash.ref ? " is-open" : ""}`} role="treeitem" tabIndex={0} title={`${stash.ref}: ${stash.message}`}
@@ -423,6 +502,8 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
         </>}
       </div>
       {menu.element}
+      {prFor && <PullRequestDialog repositoryPath={repositoryPath} head={prFor.head} defaultBase={prFor.base} remotes={remotes.map((remote) => remote.name)} onClose={() => setPrFor(null)} run={run} />}
+      {cleanupOpen && <CleanupDialog repositoryPath={repositoryPath} onClose={() => setCleanupOpen(false)} run={run} />}
     </aside>
   );
 }

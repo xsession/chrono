@@ -21,15 +21,17 @@
 
 import type { CommitRecord } from "./types";
 
+// Lane colours are CSS variables (defined in gk.css) so Settings → Display can
+// swap in a colour-blind-safe palette without re-laying out the graph.
 export const GRAPH_COLORS = [
-  "#4f9cf9", // blue
-  "#70c58f", // green
-  "#d88ae6", // purple
-  "#e1a667", // orange
-  "#67c4cd", // teal
-  "#e06c75", // red
-  "#c3a15f", // gold
-  "#98c379", // light green
+  "var(--lane-0, #4f9cf9)", // blue
+  "var(--lane-1, #70c58f)", // green
+  "var(--lane-2, #d88ae6)", // purple
+  "var(--lane-3, #e1a667)", // orange
+  "var(--lane-4, #67c4cd)", // teal
+  "var(--lane-5, #e06c75)", // red
+  "var(--lane-6, #c3a15f)", // gold
+  "var(--lane-7, #98c379)", // light green
 ];
 
 export const LANE_W = 19;

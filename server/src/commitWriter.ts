@@ -6,6 +6,7 @@
 // available. The fallback is deliberately conservative: it describes what is
 // staged without inventing behavior or test results.
 
+import { repoInstructions } from "./features.ts";
 import { invalidError } from "./lib/errors.ts";
 import { repositoryRoot, runGit } from "./lib/git.ts";
 
@@ -222,7 +223,9 @@ export async function draftCommitMessage(
   let draft = fallback;
   let source: CommitDraft["source"] = "local-rules";
   if (mode === "auto" || mode === "ollama") {
+    const instructions = await repoInstructions(root).catch(() => "");
     const prompt = [
+      ...(instructions ? ["Repository commit guidelines (follow them):", instructions, ""] : []),
       "Write a concise Git commit message for the staged diff below.",
       "Return only JSON with keys subject and body.",
       "Use an imperative subject of at most 72 characters; do not invent tests, behavior, issue IDs or files.",

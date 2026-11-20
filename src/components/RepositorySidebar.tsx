@@ -6,6 +6,7 @@ export type RepositoryView =
   | "changes"
   | "history"
   | "explorer"
+  | "settings"
   | "branches"
   | "refs"
   | "rebase"
@@ -67,7 +68,8 @@ export function RepositorySidebar({
     { id: "worktrees", label: "Worktrees", icon: "worktree" },
     { id: "submodules", label: "Submodules", icon: "submodule" },
     { id: "stashes", label: "Stashes", icon: "stash" },
-    { id: "recovery", label: "Recovery & tools", icon: "activity" }
+    { id: "recovery", label: "Recovery & tools", icon: "activity" },
+    { id: "settings", label: "Repository settings", icon: "settings" }
   ];
 
   return (

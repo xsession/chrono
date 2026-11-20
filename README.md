@@ -101,6 +101,41 @@ The **Explorer (TortoiseGit)** view (Ctrl+4) is a Windows-Explorer-style browser
 
 Keyboard: F5 refresh, F2 rename, Del delete, Backspace up a folder, Ctrl+A select all, Shift+F10 opens the menu. "Open" and "Open containing folder" run on the server host, so they only work when Chrono listens on localhost.
 
+## Trust, safety and workflow features
+
+These features come from the roadmap in `reports/Git client feature gap analysis.md`. Most settings live in **Repository settings** in the sidebar, and every action is also in the command palette.
+
+- **Commit signing:** the graph shows a badge on each signed commit (verified, unknown key, expired, revoked, bad). Signatures are checked only for rows on screen. Settings has a setup screen for GPG, SSH and X.509 signing (`gpg.format`, `user.signingkey`, `commit.gpgSign`, `tag.gpgSign`, `gpg.ssh.allowedSignersFile`).
+- **Identity profiles:** reusable sets of name, email and signing key. A profile applies to one repository (through a local `include.path`) or to every repository under a folder (through a global `includeIf "gitdir:"`). Switching profiles never rewrites the repository's own config.
+- **Large-repo performance:** one click applies Scalar-style settings: a commit-graph with changed-path filters, the multi-pack index, the untracked cache, index v4 and background maintenance. A status panel shows the commit-graph, maintenance, fsmonitor, untracked cache and loose objects. Individual actions are also available, including `fsmonitor` where git supports it.
+- **Search operators:** the graph search box accepts `author:`, `committer:`, `message:`, `-message:`, `path:`, `contents:` (`-G`), `since:`, `until:`, `type:merge|nomerge`, `sha:` and `ref:`, with quoted values allowed. Searches cover all history, not only the loaded window.
+- **Git hooks:** Settings lists, shows and enables or disables hooks. If `pre-commit` or `commit-msg` rejects a commit, Chrono shows the hook's output and offers an explicit "Commit anyway (--no-verify)".
+- **Commit message helpers:**
+  - Templates: insert one with `t:` in the summary field or from the template menu. git's `commit.template` is included automatically.
+  - Co-authors: pick contributors to add `Co-authored-by:` lines.
+  - The AI draft follows `AGENTS.md` and `.github/copilot-instructions.md` if the repository has them.
+- **Issue links:** issue IDs in commit messages become links, using per-repository regex → URL rules stored in `.git/config` (`chrono.autolink`).
+- **Fork point:** the graph's *Fork* highlight mode dims history from before the current branch left its base.
+- **Diff options:** ignore whitespace, choose the diff algorithm, wrap long lines, and restore a file from a commit (or from the commit before it) using the right-click menu in the commit inspector.
+- **Conflict prediction:** merge, rebase, cherry-pick, revert and drag-and-drop first run a `git merge-tree` dry run. Files that would conflict are listed before anything touches the working tree.
+- **Branch cleanup:** finds branches that were merged, squash- or rebase-merged, whose upstream was deleted, or that are stale. They can be archived under `refs/chrono/archive` (restorable from Settings) or deleted, and both can be undone.
+- **Stacked branches:** each branch can have a parent, stored as `branch.<name>.chronoParent`. "Create stacked branch" makes a new branch on top of another. "Restack" rebases the whole stack with `rebase --update-refs` from its tip. The parent is also the default base for pull requests.
+- **Pull requests and CI:**
+  - Create GitHub pull requests, GitLab merge requests and Gitea/Forgejo pull requests, with the repository's PR template, a preview of the commits and diffstat, and a generated description.
+  - The commit inspector shows CI check status and can re-run GitHub Actions jobs or GitLab pipelines.
+  - Provider tokens are kept for the browser session only.
+- **Custom commands:** your own commands, defined as one argument per line, appear in the palette and on the commit, branch and file menus. They support `$REPO`, `$BRANCH`, `$SHA`, `$FILES` and `$PARAM_name`, plus parameter dialogs. Each variable is substituted into a single argument, so values never pass through a shell. Commands other than git only run when the server listens on localhost.
+- **Image diff:** side by side, swipe, onion skin and pixel difference, with Git LFS content fetched through `git cat-file --filters`.
+- **Agent sessions:** creates a worktree on a new branch, opens a terminal there and starts an agent CLI (Claude Code, Codex, Gemini, Aider or any command). The worktree's uncommitted work shows as its own WIP entry above the graph.
+- **Git-flow:** initialise, then start and finish features, releases and hotfixes. Finishing uses `merge --no-ff` and creates the tag, signed when tag signing is on. It is all done with plain git commands and can be undone.
+- **Explain:** explains a commit, a branch or your working changes in plain language. It uses local Ollama when it is running and otherwise falls back to a deterministic summary.
+- **Other:** git notes on commits, sparse-checkout controls, and clone options for shallow, blobless, treeless, single-branch and sparse clones.
+- **Accessibility:**
+  - A colour-blind-safe graph palette, distinct node shapes per lane, high contrast and reduced motion.
+  - F7 / Shift+F7 move between diff hunks.
+  - Commit rows have descriptive screen-reader labels, and status messages are announced through `aria-live`.
+- **Notifications:** an optional desktop notification when a fetch, pull, push, rebase, clone or CI check finishes while Chrono is in the background.
+
 ## Run (web)
 
 Easiest — the launchers install Node.js 22+ if it is missing, install npm
@@ -170,6 +205,7 @@ npm run test:graph     # commit-graph layout engine unit tests
 npm run test:git       # shell smoke tests against real temp Git repositories
 npm run test:api       # boots the API server and exercises every /api route
 npm run test:ui-contract # verifies every visible view/control remains wired
+npm run test:roadmap   # signing/hooks/stacks/cleanup/git-flow/custom-command smoke test
 ```
 
 The shell smoke tests create temporary Git repositories and do not modify your own repositories.

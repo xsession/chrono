@@ -59,7 +59,39 @@ import type {
   ExplorerProperties,
   FilePairDiff,
   PreviousVersionDiff,
+  SignatureInfo,
+  SigningConfig,
+  PerfStatus,
+  PerfAction,
+  HookInfo,
+  HookCommitResult,
+  AutolinkRule,
+  CommitTemplate,
+  ForkPointInfo,
+  ConflictPrediction,
+  CleanupCandidate,
+  IdentityProfile,
+  CustomCommand,
+  FileBlob,
+  RemoteHost,
+  CheckRun,
+  GitflowConfig,
+  FlowType,
+  ExplainKind,
+  DiffOptions,
+  CloneOptions,
 } from "./types";
+
+// Diff display options (Settings → Display) are attached to diff viewer calls.
+const DIFF_OPTIONS_KEY = "chrono.diffOptions";
+export function getDiffOptions(): DiffOptions {
+  try { return JSON.parse(localStorage.getItem(DIFF_OPTIONS_KEY) ?? "{}") as DiffOptions; } catch { return {}; }
+}
+export function setDiffOptions(options: DiffOptions): void {
+  localStorage.setItem(DIFF_OPTIONS_KEY, JSON.stringify(options));
+  window.dispatchEvent(new CustomEvent("chrono:diff-options"));
+}
+const DIFF_ROUTES = new Set(["working_tree_diff", "commit_file_diff", "diff_revisions", "explorer_diff_files", "explorer_diff_previous"]);
 
 const API_URL_KEY = "chrono.apiUrl";
 const API_TOKEN_KEY = "chrono.apiToken";
@@ -83,7 +115,7 @@ async function invoke<T>(command: string, payload: Record<string, unknown> = {})
   const response = await fetch(`${connection.url}/api/${command}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(connection.token ? { Authorization: `Bearer ${connection.token}` } : {}) },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(DIFF_ROUTES.has(command) ? { ...payload, diffOptions: getDiffOptions() } : payload),
   });
   let body: { ok: boolean; result?: T; error?: string } | null = null;
   try {
@@ -169,7 +201,7 @@ export const api = {
   fetch: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("fetch_repository", { path, ...auth }),
   pull: (path: string, mode: PullMode = "ff-only") => invoke<CommandResult>("pull_repository", { path, mode }),
   push: (path: string, options: PushOptions & AuthRequest = {}) => invoke<CommandResult>("push_repository", { path, ...options }),
-  clone: (request: CloneRequest) => invoke<RepositorySummary>("clone_repository", request),
+  clone: (request: CloneRequest & CloneOptions) => invoke<RepositorySummary>("clone_repository", request),
   switchBranch: (path: string, branch: string) => invoke<void>("switch_branch", { path, branch }),
   checkoutRemoteBranch: (path: string, branch: string) => invoke<void>("checkout_remote_branch", { path, branch }),
   createBranch: (path: string, branch: string) => invoke<void>("create_branch", { path, branch }),
@@ -209,6 +241,65 @@ export const api = {
   diffCommitFiles: (path: string, from: string, to: string) =>
     invoke<CommitFileChange[]>("diff_commit_files", { path, from, to }),
   stashFiles: (path: string, ref: string) => invoke<StashFile[]>("stash_files", { path, ref }),
+
+  // Roadmap Tier 1
+  signatures: (path: string, commits: string[]) => invoke<SignatureInfo[]>("commit_signatures", { path, commits }),
+  signingConfig: (path: string) => invoke<SigningConfig>("signing_config", { path }),
+  setSigningConfig: (path: string, scope: "local" | "global", values: Partial<Pick<SigningConfig, "format" | "signingKey" | "commitSign" | "tagSign" | "allowedSignersFile">>) =>
+    invoke<void>("set_signing_config", { path, scope, ...values }),
+  perfStatus: (path: string) => invoke<PerfStatus>("perf_status", { path }),
+  perfApply: (path: string, action: PerfAction) => invoke<string>("perf_apply", { path, action }),
+  searchAdvanced: (path: string, query: string, limit = 500) => invoke<{ commits: CommitRecord[]; description: string }>("search_advanced", { path, query, limit }),
+  hooks: (path: string) => invoke<{ dir: string; hooksPath: string; hooks: HookInfo[] }>("hooks_list", { path }),
+  setHookEnabled: (path: string, name: string, enabled: boolean) => invoke<void>("hook_set_enabled", { path, name, enabled }),
+  commitWithHooks: (path: string, message: string, options: CommitOptions = {}) => invoke<HookCommitResult>("commit_with_hooks", { path, message, ...options }),
+  autolinks: (path: string) => invoke<{ rules: AutolinkRule[]; suggested: AutolinkRule[] }>("autolinks_get", { path }),
+  setAutolinks: (path: string, rules: AutolinkRule[]) => invoke<void>("autolinks_set", { path, rules }),
+  commitTemplates: (path: string) => invoke<CommitTemplate[]>("commit_templates", { path }),
+  saveCommitTemplates: (templates: CommitTemplate[]) => invoke<void>("commit_templates_save", { templates }),
+  forkPoint: (path: string, branch: string | null = null, base: string | null = null) => invoke<ForkPointInfo>("fork_point", { path, branch, base }),
+
+  // Roadmap Tier 2
+  predictConflicts: (path: string, mode: "merge" | "cherry-pick" | "revert" | "rebase", source: string, target: string | null = null) =>
+    invoke<ConflictPrediction>("predict_conflicts", { path, mode, source, target }),
+  cleanupCandidates: (path: string, target: string | null = null, staleDays = 90) => invoke<{ target: string; candidates: CleanupCandidate[] }>("cleanup_candidates", { path, target, staleDays }),
+  cleanupBranches: (path: string, branches: string[], mode: "archive" | "delete") => invoke<string>("cleanup_branches", { path, branches, mode }),
+  archivedBranches: (path: string) => invoke<Array<{ branch: string; sha: string; date: string }>>("archived_branches", { path }),
+  restoreArchived: (path: string, branch: string) => invoke<void>("restore_archived", { path, branch }),
+  stackParents: (path: string) => invoke<Record<string, string>>("stack_parents", { path }),
+  setStackParent: (path: string, branch: string, parent: string | null) => invoke<void>("stack_set_parent", { path, branch, parent }),
+  createStackedBranch: (path: string, parent: string, name: string) => invoke<void>("stack_create", { path, parent, name }),
+  restack: (path: string, branch: string) => invoke<CommandResult>("stack_restack", { path, branch }),
+  profiles: (path: string | null) => invoke<{ profiles: IdentityProfile[]; effective: { name: string; email: string; origin: string } | null }>("profiles_list", { path }),
+  saveProfile: (profile: { name: string; userName: string; userEmail: string; signingKey?: string; gpgFormat?: string }) => invoke<void>("profile_save", profile),
+  deleteProfile: (name: string) => invoke<void>("profile_delete", { name }),
+  applyProfile: (path: string | null, name: string, scope: "repo" | "folder", folder: string | null = null) => invoke<string>("profile_apply", { path, name, scope, folder }),
+  detachProfile: (path: string, name: string) => invoke<void>("profile_detach", { path, name }),
+  customCommands: () => invoke<CustomCommand[]>("custom_commands", {}),
+  saveCustomCommands: (commands: CustomCommand[]) => invoke<void>("custom_commands_save", { commands }),
+  runCustomCommand: (path: string, id: string, context: { sha?: string; branch?: string; files?: string[]; params?: Record<string, string> } = {}) =>
+    invoke<CommandResult & { argv: string[] }>("custom_command_run", { path, id, ...context }),
+  fileBlob: (path: string, revision: string, file: string) => invoke<FileBlob>("file_blob", { path, revision, file }),
+  remoteHost: (path: string, remote = "origin") => invoke<RemoteHost | null>("remote_host", { path, remote }),
+  prTemplate: (path: string) => invoke<string>("pr_template", { path }),
+  createPullRequest: (path: string, request: { remote: string; token: string; head: string; base: string; title: string; description: string; draft: boolean; apiBase?: string }) =>
+    invoke<{ number: number; url: string }>("pr_create", { path, ...request }),
+  ciChecks: (path: string, sha: string, token: string, remote = "origin", apiBase?: string) =>
+    invoke<{ state: string; checks: CheckRun[] }>("ci_checks", { path, sha, token, remote, apiBase }),
+  rerunCheck: (path: string, check: CheckRun, token: string, remote = "origin", apiBase?: string) => invoke<string>("ci_rerun", { path, check, token, remote, apiBase }),
+
+  // Roadmap Tier 3
+  createAgentWorktree: (path: string, name: string, base: string, location: string | null = null) => invoke<{ path: string; branch: string }>("agent_worktree_create", { path, name, base, location }),
+  removeAgentWorktree: (path: string, worktree: string, deleteBranch: boolean, force = false) => invoke<string>("agent_worktree_remove", { path, worktree, deleteBranch, force }),
+  gitflowConfig: (path: string) => invoke<GitflowConfig>("gitflow_config", { path }),
+  gitflowInit: (path: string, config: Partial<GitflowConfig>) => invoke<string>("gitflow_init", { path, config }),
+  gitflowStart: (path: string, type: FlowType, name: string, base: string | null = null) => invoke<string>("gitflow_start", { path, type, name, base }),
+  gitflowFinish: (path: string, type: FlowType, name: string, tagMessage: string | null = null, keepBranch = false) => invoke<string>("gitflow_finish", { path, type, name, tagMessage, keepBranch }),
+  explain: (path: string, kind: ExplainKind, ref: string | null = null, base: string | null = null) => invoke<{ text: string; source: "ollama" | "local-rules"; title?: string }>("ai_explain", { path, kind, ref, base }),
+  sparseStatus: (path: string) => invoke<{ enabled: boolean; cone: boolean; patterns: string[] }>("sparse_status", { path }),
+  sparseAction: (path: string, action: "set" | "add" | "reapply" | "disable", patterns: string[] = []) => invoke<CommandResult>("sparse_action", { path, action, patterns }),
+  notes: (path: string, commit: string) => invoke<string>("notes_get", { path, commit }),
+  setNotes: (path: string, commit: string, text: string) => invoke<void>("notes_set", { path, commit, text }),
 
   // TortoiseGit explorer
   explorerList: (path: string, dir: string) => invoke<ExplorerListing>("explorer_list", { path, dir }),

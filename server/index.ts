@@ -21,6 +21,8 @@ import * as operationState from "./src/operationState.ts";
 import * as rebasePlanner from "./src/rebasePlanner.ts";
 import * as explorer from "./src/explorer.ts";
 import * as gk from "./src/gkOps.ts";
+import * as features from "./src/features.ts";
+import { withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
 import { listPullRequests } from "./src/provider.ts";
 import * as repo from "./src/repo.ts";
 import { loadWorkspaces, saveWorkspaces, type Workspace } from "./src/workspaces.ts";
@@ -48,6 +50,22 @@ function branchActionLabel(body: Record<string, unknown>): string {
     default: return `${String(body.action ?? "").replace(/_/g, " ")} ${branch}`;
   }
 }
+
+async function resolveHost(body: Record<string, unknown>): Promise<features.RemoteHost> {
+  const host = await features.remoteHost(bodyPath(body), optStr(body.remote) ?? "origin");
+  if (!host) throw new AppError("invalid", "could not detect a GitHub/GitLab/Gitea remote — check the remote URL");
+  const apiBase = optStr(body.apiBase);
+  if (apiBase) {
+    if (!/^https?:\/\//i.test(apiBase)) throw new AppError("invalid", "API base must be an http(s) URL");
+    host.apiBase = apiBase.replace(/\/+$/, "");
+  }
+  const provider = optStr(body.provider);
+  if (provider === "github" || provider === "gitlab" || provider === "gitea") host.provider = provider;
+  return host;
+}
+
+// Viewer routes whose diffs honour the user's whitespace/algorithm options.
+const DIFF_VIEW_ROUTES = new Set(["working_tree_diff", "commit_file_diff", "diff_revisions", "explorer_diff_files", "explorer_diff_previous"]);
 
 function isLoopbackHost(): boolean {
   return HOST === "127.0.0.1" || HOST === "localhost" || HOST === "::1";
@@ -318,6 +336,11 @@ const routes: Record<string, Handler> = {
       destination: str(body.destination, "destination"),
       username: optStr(body.username),
       token: optStr(body.token),
+      depth: typeof body.depth === "number" ? body.depth : null,
+      filter: body.filter === "blob:none" || body.filter === "tree:0" ? body.filter : null,
+      sparse: body.sparse === true,
+      branch: optStr(body.branch),
+      singleBranch: body.singleBranch === true,
     }),
   switch_branch: (body) => gk.journaled(bodyPath(body), `Checkout ${String(body.branch)}`, "keep", () => backend.switchBranch(bodyPath(body), str(body.branch, "branch"))),
   checkout_remote_branch: (body) => gk.journaled(bodyPath(body), `Checkout ${String(body.branch)}`, "keep", () => backend.checkoutRemoteBranch(bodyPath(body), str(body.branch, "branch"))),
@@ -393,6 +416,93 @@ const routes: Record<string, Handler> = {
     const mode = body.mode === "reveal" ? "reveal" : body.mode === "terminal" ? "terminal" : "open";
     return explorer.openOnHost(bodyPath(body), typeof body.file === "string" ? body.file : "", mode);
   },
+
+
+  // ---- Roadmap Tier 1 -------------------------------------------------------
+  commit_signatures: (body) => features.signatures(bodyPath(body), strArray(body.commits, "commits")),
+  signing_config: (body) => features.signingConfig(bodyPath(body)),
+  set_signing_config: (body) => features.setSigningConfig(bodyPath(body), body.scope === "global" ? "global" : "local", {
+    format: typeof body.format === "string" ? body.format : undefined,
+    signingKey: typeof body.signingKey === "string" ? body.signingKey : undefined,
+    commitSign: typeof body.commitSign === "boolean" ? body.commitSign : undefined,
+    tagSign: typeof body.tagSign === "boolean" ? body.tagSign : undefined,
+    allowedSignersFile: typeof body.allowedSignersFile === "string" ? body.allowedSignersFile : undefined,
+  }),
+  perf_status: (body) => features.perfStatus(bodyPath(body)),
+  perf_apply: (body) => features.perfApply(bodyPath(body), str(body.action, "action") as features.PerfAction),
+  search_advanced: (body) => features.advancedSearch(bodyPath(body), str(body.query, "query"), num(body.limit ?? 500, "limit")),
+  hooks_list: (body) => features.listHooks(bodyPath(body)),
+  hook_set_enabled: (body) => features.setHookEnabled(bodyPath(body), str(body.name, "name"), bool(body.enabled, "enabled")),
+  commit_with_hooks: (body) =>
+    gk.journaled(bodyPath(body), body.amend === true ? "Amend commit" : "Commit", "soft", () =>
+      features.commitWithHooks(bodyPath(body), { message: typeof body.message === "string" ? body.message : "", amend: body.amend === true, signoff: body.signoff === true, noVerify: body.noVerify === true })),
+  autolinks_get: (body) => features.getAutolinks(bodyPath(body)),
+  autolinks_set: (body) => features.setAutolinks(bodyPath(body), (Array.isArray(body.rules) ? body.rules : []).map((rule) => ({ pattern: String((rule as Record<string, unknown>).pattern ?? ""), url: String((rule as Record<string, unknown>).url ?? "") }))),
+  commit_templates: (body) => features.commitTemplates(bodyPath(body)),
+  commit_templates_save: (body) => features.saveCommitTemplates(Array.isArray(body.templates) ? body.templates as features.CommitTemplate[] : []),
+  fork_point: (body) => features.forkPoint(bodyPath(body), optStr(body.branch), optStr(body.base)),
+
+  // ---- Roadmap Tier 2 -------------------------------------------------------
+  predict_conflicts: (body) => {
+    const mode = body.mode === "cherry-pick" || body.mode === "revert" || body.mode === "rebase" ? body.mode : "merge";
+    return features.predictConflicts(bodyPath(body), mode, str(body.source, "source"), optStr(body.target));
+  },
+  cleanup_candidates: (body) => features.cleanupCandidates(bodyPath(body), optStr(body.target), typeof body.staleDays === "number" ? body.staleDays : 90),
+  cleanup_branches: (body) =>
+    gk.journaled(bodyPath(body), `${body.mode === "delete" ? "Delete" : "Archive"} ${strArray(body.branches, "branches").length} branch(es)`, "keep", () =>
+      features.archiveBranches(bodyPath(body), strArray(body.branches, "branches"), body.mode === "delete" ? "delete" : "archive")),
+  archived_branches: (body) => features.archivedBranches(bodyPath(body)),
+  restore_archived: (body) => gk.journaled(bodyPath(body), `Restore ${String(body.branch)}`, "keep", () => features.restoreArchived(bodyPath(body), str(body.branch, "branch"))),
+  stack_parents: (body) => features.stackParents(bodyPath(body)),
+  stack_set_parent: (body) => features.setStackParent(bodyPath(body), str(body.branch, "branch"), optStr(body.parent)),
+  stack_create: (body) => gk.journaled(bodyPath(body), `Create stacked branch ${String(body.name)}`, "keep", () => features.createStackedBranch(bodyPath(body), str(body.parent, "parent"), str(body.name, "name"))),
+  stack_restack: (body) => gk.journaled(bodyPath(body), `Restack ${String(body.branch)}`, "keep", () => features.restack(bodyPath(body), str(body.branch, "branch"))),
+  profiles_list: (body) => features.listProfiles(optStr(body.path)),
+  profile_save: (body) => features.saveProfile({ name: str(body.name, "name"), userName: str(body.userName, "userName"), userEmail: str(body.userEmail, "userEmail"), signingKey: optStr(body.signingKey) ?? undefined, gpgFormat: optStr(body.gpgFormat) ?? undefined }),
+  profile_delete: (body) => features.deleteProfile(str(body.name, "name")),
+  profile_apply: (body) => features.applyProfile(optStr(body.path), str(body.name, "name"), body.scope === "folder" ? "folder" : "repo", optStr(body.folder)),
+  profile_detach: (body) => features.detachProfile(bodyPath(body), str(body.name, "name")),
+  custom_commands: async () => features.listCustomCommands(),
+  custom_commands_save: (body) => features.saveCustomCommands(Array.isArray(body.commands) ? body.commands as features.CustomCommand[] : []),
+  custom_command_run: (body) =>
+    gk.journaled(bodyPath(body), `Run ${String(body.id)}`, "keep", () =>
+      features.runCustomCommand(bodyPath(body), str(body.id, "id"), {
+        sha: optStr(body.sha) ?? undefined,
+        branch: optStr(body.branch) ?? undefined,
+        files: Array.isArray(body.files) ? strArray(body.files, "files") : [],
+        params: typeof body.params === "object" && body.params ? body.params as Record<string, string> : {},
+      }, isLoopbackHost())),
+  file_blob: (body) => features.fileBlob(bodyPath(body), str(body.revision, "revision"), str(body.file, "file")),
+  remote_host: (body) => features.remoteHost(bodyPath(body), optStr(body.remote) ?? "origin"),
+  pr_template: (body) => features.pullRequestTemplate(bodyPath(body)),
+  pr_create: async (body) => {
+    const host = await resolveHost(body);
+    return features.createPullRequest(host, typeof body.token === "string" ? body.token : "", {
+      head: str(body.head, "head"), base: str(body.base, "base"), title: str(body.title, "title"),
+      body: typeof body.description === "string" ? body.description : "", draft: body.draft === true,
+    });
+  },
+  ci_checks: async (body) => features.ciChecks(await resolveHost(body), typeof body.token === "string" ? body.token : "", str(body.sha, "sha")),
+  ci_rerun: async (body) => features.rerunCheck(await resolveHost(body), typeof body.token === "string" ? body.token : "", body.check as features.CheckRun),
+
+  // ---- Roadmap Tier 3 -------------------------------------------------------
+  agent_worktree_create: (body) => features.createAgentWorktree(bodyPath(body), str(body.name, "name"), optStr(body.base) ?? "HEAD", optStr(body.location)),
+  agent_worktree_remove: (body) => features.removeAgentWorktree(bodyPath(body), str(body.worktree, "worktree"), body.deleteBranch === true, body.force === true),
+  gitflow_config: (body) => features.gitflowConfig(bodyPath(body)),
+  gitflow_init: (body) => features.gitflowInit(bodyPath(body), (typeof body.config === "object" && body.config ? body.config : {}) as Partial<features.GitflowConfig>),
+  gitflow_start: (body) => gk.journaled(bodyPath(body), `Start ${String(body.type)} ${String(body.name)}`, "keep", () => features.gitflowStart(bodyPath(body), str(body.type, "type") as features.FlowType, str(body.name, "name"), optStr(body.base))),
+  gitflow_finish: (body) => gk.journaled(bodyPath(body), `Finish ${String(body.type)} ${String(body.name)}`, "keep", () => features.gitflowFinish(bodyPath(body), str(body.type, "type") as features.FlowType, str(body.name, "name"), { tagMessage: optStr(body.tagMessage) ?? undefined, keepBranch: body.keepBranch === true })),
+  ai_explain: (body) => {
+    const kind = body.kind === "branch" || body.kind === "working" || body.kind === "pr" ? body.kind : "commit";
+    return features.explain(bodyPath(body), kind, optStr(body.ref), optStr(body.base));
+  },
+  sparse_status: (body) => features.sparseStatus(bodyPath(body)),
+  sparse_action: (body) => {
+    const action = body.action === "add" || body.action === "reapply" || body.action === "disable" ? body.action : "set";
+    return features.sparseAction(bodyPath(body), action, strArray(body.patterns ?? [], "patterns"));
+  },
+  notes_get: (body) => features.notesGet(bodyPath(body), str(body.commit, "commit"), optStr(body.ref) ?? "commits"),
+  notes_set: (body) => features.notesSet(bodyPath(body), str(body.commit, "commit"), typeof body.text === "string" ? body.text : "", optStr(body.ref) ?? "commits"),
 
   load_workspaces: async () => loadWorkspaces(),
   save_workspaces: async (body) => {
@@ -507,7 +617,9 @@ async function handleApi(
   }
   try {
     const body = await readJsonBody(request);
-    const result = await handler(body);
+    const result = DIFF_VIEW_ROUTES.has(command) && body.diffOptions && typeof body.diffOptions === "object"
+      ? await withDiffOptions(body.diffOptions as DiffOptions, () => handler(body))
+      : await handler(body);
     sendJson(response, 200, { ok: true, result });
   } catch (error) {
     sendJson(response, statusCodeFor(error), { ok: false, error: (error as Error).message });

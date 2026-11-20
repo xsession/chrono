@@ -35,7 +35,12 @@ import { WorkingDiffView } from "./components/WorkingDiffView";
 import { FileExplorer } from "./components/explorer/FileExplorer";
 import { DialogHost, askConfirm, askText } from "./components/DialogHost";
 import type { GraphExtraAction } from "./components/CommitGraph";
-import type { PullMode, PushOptions, UndoState } from "./types";
+import type { CloneOptions, CustomCommand, PullMode, PushOptions, UndoState } from "./types";
+import { RepoSettings, type SettingsTab } from "./components/settings/RepoSettings";
+import { AgentSessionDialog, CleanupDialog } from "./components/gk/HostingDialogs";
+import { notifyIfHidden } from "./notify";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { askFields } from "./components/DialogHost";
 
 const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
 
@@ -100,6 +105,12 @@ export default function App() {
   const [wipDiff, setWipDiff] = useState<string | null>(null);
   const [scrollTo, setScrollTo] = useState<{ id: string; nonce: number } | null>(null);
   const [explorerFocus, setExplorerFocus] = useState<{ path: string; nonce: number } | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
+  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
+  const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
+  useEffect(() => { api.customCommands().then(setCustomCommands).catch(() => undefined); }, [view]);
+  const openSettings = useCallback((tab?: SettingsTab) => { setSettingsTab(tab); setView("settings"); }, []);
   const [leftPanelOpen, setLeftPanelOpen] = useState(() => localStorage.getItem("chrono.gk.leftPanel") !== "hidden");
   const [cloneOpen, setCloneOpen] = useState(false);
   const historyRequestRef = useRef(0);
@@ -210,11 +221,12 @@ export default function App() {
 
   const cloneRepository = () => setCloneOpen(true);
 
-  const submitClone = async (url: string, destination: string) => {
+  const submitClone = async (url: string, destination: string, options: CloneOptions = {}) => {
     setBusy(true);
     setMessage("Cloning repository…");
     try {
-      const cloned = await api.clone({ url, destination });
+      const cloned = await api.clone({ url, destination, ...options });
+      notifyIfHidden("Clone finished", cloned.name);
       await rememberRepository(cloned.path);
       await refresh(cloned.path);
       setCloneOpen(false);
@@ -235,6 +247,7 @@ export default function App() {
       await action();
       await refresh(path);
       setMessage(`${label} completed`);
+      if (/^(fetch|pull|push|force push|rebase|restack|merge|clone|finish)/i.test(label)) notifyIfHidden(`${label} completed`, path.split(/[\\/]/).pop() ?? path);
     } catch (error) {
       setMessage(String(error));
       pushToast(`${label} failed: ${String(error).replace(/^Error: /, "")}`, "error", 9000);
@@ -278,6 +291,10 @@ export default function App() {
   const runCommitAction = useCallback(async (action: "cherry-pick" | "revert", commit: CommitRecord) => {
     if (!path) return;
     const label = action === "cherry-pick" ? "Cherry-pick" : "Revert";
+    try {
+      const prediction = await api.predictConflicts(path, action, commit.id);
+      if (prediction.supported && !prediction.clean && !(await askConfirm(`${label}: conflicts expected`, `${prediction.message}\n${prediction.files.join(", ")}`, { confirm: `${label} anyway`, danger: true }))) return;
+    } catch { /* advisory */ }
     await runRepositoryAction(`${label} ${commit.id.slice(0, 8)}`, () => api.workflow(path, { operation: action.replace("-", "_") as "cherry_pick" | "revert", args: [commit.id] }));
   }, [path, runRepositoryAction]);
 
@@ -381,6 +398,23 @@ export default function App() {
     }
   }, [commits, path]);
 
+  const runCustom = useCallback(async (command: CustomCommand, context: { sha?: string; branch?: string; files?: string[] } = {}) => {
+    if (!path) return;
+    let params: Record<string, string> = {};
+    if (command.params.length) {
+      const values = await askFields(command.name, command.params.map((param) => ({ name: param.name, label: `${param.label}${param.type === "checkbox" ? " (yes/no)" : param.type === "branch" ? " (branch)" : ""}`, initial: param.default ?? (param.type === "branch" ? summary?.branch ?? "" : "") })), { confirm: "Run" });
+      if (!values) return;
+      params = Object.fromEntries(command.params.map((param) => [param.name, param.type === "checkbox" ? (/^(y|yes|true|1)$/i.test(values[param.name]) ? "true" : "") : values[param.name]]));
+    } else if (command.confirm && !(await askConfirm(command.name, `Run ${command.argv.join(" ")}?`, { confirm: "Run" }))) return;
+    let output = "";
+    await runRepositoryAction(command.name, async () => {
+      const result = await api.runCustomCommand(path, command.id, { ...context, params });
+      output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+      if (result.exitCode !== 0) throw new Error(`${command.name} exited with ${result.exitCode}: ${output.slice(0, 400)}`);
+    });
+    if (output) pushToast(`${command.name}: ${output.slice(0, 300)}${output.length > 300 ? "…" : ""}`, "info", 9000);
+  }, [path, runRepositoryAction, summary?.branch]);
+
   const graphExtraActions = useMemo<GraphExtraAction[]>(() => [
     { id: "checkout", label: "Checkout this commit (detached)", onSelect: (commit) => runRepositoryAction(`Checkout ${commit.id.slice(0, 8)}`, () => api.workflow(path, { operation: "checkout_tag", args: [commit.id] })) },
     { id: "copy-msg", label: "Copy commit message", onSelect: async (commit) => { try { await navigator.clipboard.writeText(commit.subject); pushToast("Message copied", "success", 2000); } catch { pushToast(commit.subject); } } },
@@ -395,7 +429,8 @@ export default function App() {
     } },
     { id: "browse", label: "Browse files at this revision", onSelect: () => setView("repo") },
     { id: "explorer", label: "Open working copy explorer", onSelect: () => setView("explorer") },
-  ], [path, runRepositoryAction]);
+    ...customCommands.filter((command) => command.scope === "commit").map<GraphExtraAction>((command) => ({ id: `custom-${command.id}`, label: `▶ ${command.name}`, onSelect: (commit) => runCustom(command, { sha: commit.id }) })),
+  ], [customCommands, path, runCustom, runRepositoryAction]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -574,6 +609,20 @@ export default function App() {
     { id: "explorer", title: "Open working copy explorer (TortoiseGit)", category: "View", shortcut: "Ctrl+4", keywords: ["tortoise", "files", "overlay", "shell"], disabled: !path, run: () => setView("explorer") },
     { id: "terminal", title: "Toggle terminal", category: "View", shortcut: "Ctrl+T", run: () => setTerminalOpen((value) => !value) },
     { id: "left-panel", title: "Toggle reference panel", category: "View", shortcut: "Ctrl+J", run: () => setLeftPanelOpen((value) => !value) },
+    { id: "settings", title: "Repository settings", category: "Settings", disabled: !path, run: () => openSettings() },
+    { id: "settings-signing", title: "Set up commit signing (GPG / SSH)", category: "Settings", keywords: ["gpg", "ssh", "verify", "sign"], disabled: !path, run: () => openSettings("identity") },
+    { id: "settings-profiles", title: "Identity profiles", category: "Settings", keywords: ["email", "user", "account"], disabled: !path, run: () => openSettings("identity") },
+    { id: "settings-perf", title: "Large-repo performance preset", category: "Settings", keywords: ["commit-graph", "fsmonitor", "maintenance", "speed"], disabled: !path, run: () => openSettings("performance") },
+    { id: "settings-hooks", title: "Manage git hooks", category: "Settings", disabled: !path, run: () => openSettings("hooks") },
+    { id: "settings-links", title: "Issue tracker links", category: "Settings", keywords: ["jira", "autolink", "bugtraq"], disabled: !path, run: () => openSettings("links") },
+    { id: "settings-templates", title: "Commit templates", category: "Settings", disabled: !path, run: () => openSettings("templates") },
+    { id: "settings-commands", title: "Custom commands", category: "Settings", disabled: !path, run: () => openSettings("commands") },
+    { id: "settings-gitflow", title: "Git-flow settings", category: "Settings", disabled: !path, run: () => openSettings("gitflow") },
+    { id: "settings-sparse", title: "Sparse checkout", category: "Settings", keywords: ["monorepo", "cone"], disabled: !path, run: () => openSettings("sparse") },
+    { id: "settings-display", title: "Display & accessibility", category: "Settings", keywords: ["diff", "whitespace", "colorblind", "contrast", "notifications"], disabled: !path, run: () => openSettings("display") },
+    { id: "cleanup-branches", title: "Clean up merged & stale branches", category: "Branch", keywords: ["prune", "squash", "gone"], disabled: !path, run: () => setCleanupDialogOpen(true) },
+    { id: "agent-session", title: "New agent session (worktree + terminal)", category: "AI", keywords: ["claude", "codex", "agent", "worktree"], disabled: !path, run: () => setAgentDialogOpen(true) },
+    ...customCommands.map<Command>((command) => ({ id: `custom-${command.id}`, title: `Run: ${command.name}`, category: "Custom", keywords: command.argv, disabled: !path, run: () => void runCustom(command, { sha: selectedCommit?.id, branch: summary?.branch ?? undefined }) })),
     ...branches.filter((branch) => !branch.remote && !branch.current).map<Command>((branch) => ({ id: `checkout-${branch.name}`, title: `Checkout ${branch.name}`, category: "Branch", keywords: ["switch"], disabled: !path, run: () => void runRepositoryAction(`Checkout ${branch.name}`, () => api.switchBranch(path, branch.name)) })),
     { id: "operation-continue", title: "Continue current Git operation", category: "Operation", disabled: !operation.canContinue, run: () => void runOperationAction("continue") },
     { id: "operation-skip", title: "Skip current commit", category: "Operation", disabled: !operation.canSkip, run: () => void runOperationAction("skip") },
@@ -590,7 +639,7 @@ export default function App() {
     { id: "recovery", title: "Open recovery & maintenance", category: "Repository", keywords: ["reflog", "fsck", "lfs"], disabled: !path, run: () => setView("recovery") },
     { id: "sidebar", title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar", category: "View", shortcut: "Ctrl+B", run: () => setSidebarCollapsed((value) => !value) },
     { id: "cherry", title: "Open UI workbench", category: "Developer", run: () => setView("cherry") }
-  ], [branches, conflictCount, dirtyCount, operation.canContinue, operation.canSkip, operationActive, path, quickBranch, quickPop, quickStash, refresh, runOperationAction, runPull, runPush, runRepositoryAction, runUndo, sidebarCollapsed, undoState]);
+  ], [customCommands, openSettings, runCustom, selectedCommit, summary?.branch, branches, conflictCount, dirtyCount, operation.canContinue, operation.canSkip, operationActive, path, quickBranch, quickPop, quickStash, refresh, runOperationAction, runPull, runPush, runRepositoryAction, runUndo, sidebarCollapsed, undoState]);
 
   const currentBranch = summary?.branch || "Detached HEAD";
 
@@ -696,6 +745,7 @@ export default function App() {
         )}
 
         <section className="ux-content" aria-live="polite">
+          <ErrorBoundary label="This view" resetKey={`${path}|${view}`}>
           {!path && view !== "cherry" && (
             <div className="ux-welcome">
               <div className="ux-welcome-mark"><Icon name="repository" /></div>
@@ -735,6 +785,8 @@ export default function App() {
                   onStartRebase={() => setView("rebase")}
                   onOpenPullRequests={() => setView("insights")}
                   onStashCount={setStashCount}
+                  onOpenSettings={openSettings}
+                  onNewAgentSession={() => setAgentDialogOpen(true)}
                 />
               )}
               <CommitGraph
@@ -747,6 +799,7 @@ export default function App() {
                 wipNode={{ count: dirtyCount, conflicts: conflictCount, branch: summary?.branch ?? null, selected: wipSelected, onSelect: () => setWipSelected(true) }}
                 scrollTo={scrollTo}
                 extraActions={graphExtraActions}
+                onRestoreFile={(revision, file) => runRepositoryAction(`Restore ${file} from ${revision.slice(0, 8)}`, () => api.explorerAction(path, { action: "checkout_revision", files: [file], revision }))}
                 overlay={wipSelected && wipDiff ? (
                   <div className="gk-center-overlay">
                     <WorkingDiffView repositoryPath={path} file={wipDiff} onClose={() => setWipDiff(null)} onStageHunks={async (file, hunks) => { await api.stageHunks(path, file, hunks); await refresh(); }} />
@@ -769,6 +822,9 @@ export default function App() {
                 ) : undefined}
               />
             </div>
+          )}
+          {path && view === "settings" && (
+            <RepoSettings repositoryPath={path} busy={busy} run={runRepositoryAction} initialTab={settingsTab} />
           )}
           {path && view === "explorer" && (
             <FileExplorer
@@ -828,11 +884,12 @@ export default function App() {
             <WorkflowPanel section={view} repositoryPath={path} operationLocked={operationActive} onOpenWorktree={refresh} onRun={(request) => api.workflow(path, request)} />
           )}
           {view === "cherry" && <CherryParityPanel />}
+          </ErrorBoundary>
         </section>
       </main>
 
       <footer className="ux-statusbar">
-        <span className={message.toLowerCase().includes("error") ? "is-error" : ""}>{message}</span>
+        <span className={message.toLowerCase().includes("error") ? "is-error" : ""} role="status" aria-live="polite">{message}</span>
         <span>{busy ? <><i className="ux-spinner" />Working…</> : path ? `${summary?.head?.slice(0, 8) || "no HEAD"} · ${changes.length ? `${changes.length} changed` : "clean"}` : "Ready"}</span>
       </footer>
 
@@ -845,6 +902,14 @@ export default function App() {
       <KeyBindingsModal open={keybindingsOpen} onClose={() => setKeybindingsOpen(false)} onZoom={(direction) => zoom(direction)} />
       <ToastHost />
       <DialogHost />
+      {agentDialogOpen && path && (
+        <AgentSessionDialog repositoryPath={path} defaultBase={summary?.branch ?? "HEAD"} onClose={() => setAgentDialogOpen(false)} onStarted={(worktree, command) => {
+          setTerminalOpen(true);
+          requestAnimationFrame(() => terminalRef.current?.createTab(worktree, command || undefined));
+          void refresh();
+        }} />
+      )}
+      {cleanupDialogOpen && path && <CleanupDialog repositoryPath={path} onClose={() => setCleanupDialogOpen(false)} run={runRepositoryAction} />}
     </div>
   );
 }

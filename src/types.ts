@@ -666,3 +666,37 @@ export type FilePairDiff = {
 };
 
 export type PreviousVersionDiff = RevisionDiff & { from: string; to: string; subject: string };
+
+// ---------------------------------------------------------------------------
+// Roadmap features (Tier 1-3)
+// ---------------------------------------------------------------------------
+
+export type SignatureInfo = { commit: string; status: string; signer: string; key: string };
+export type SigningConfig = {
+  format: string; signingKey: string; commitSign: boolean; tagSign: boolean; allowedSignersFile: string; scopeOfKey: string;
+  sshKeys: string[]; gpgKeys: Array<{ id: string; uid: string }>; userName: string; userEmail: string; identityOrigin: string;
+};
+export type PerfStatus = {
+  commitGraph: boolean; changedPaths: boolean; maintenanceRegistered: boolean; fsmonitorConfigured: string;
+  fsmonitorDaemon: "running" | "stopped" | "unsupported"; untrackedCache: string; indexVersion: string; looseObjects: number;
+  packs: number; sizePackKb: number; commitCount: number; inotifyWatches: number | null; gitVersion: string; presetApplied: string[];
+};
+export type PerfAction = "commit_graph" | "maintenance_register" | "maintenance_unregister" | "maintenance_run" | "fsmonitor_on" | "fsmonitor_off" | "untracked_cache" | "preset" | "gc";
+export type HookInfo = { name: string; path: string; exists: boolean; executable: boolean; size: number; preview: string };
+export type HookCommitResult = { ok: boolean; commit: string | null; output: string; exitCode: number; hookFailed: string | null; activeHooks: string[] };
+export type AutolinkRule = { pattern: string; url: string };
+export type CommitTemplate = { id: string; name: string; text: string; source: "git" | "chrono" };
+export type ForkPointInfo = { branch: string; base: string | null; forkPoint: string | null; ahead: number; behind: number };
+export type ConflictPrediction = { supported: boolean; clean: boolean; files: string[]; approximate: boolean; message: string };
+export type CleanupCandidate = { branch: string; target: string; reasons: Array<"merged" | "squash-merged" | "upstream-gone" | "stale">; lastCommit: string; daysOld: number };
+export type IdentityProfile = { name: string; userName: string; userEmail: string; signingKey: string; gpgFormat: string; file: string; folders: string[]; repos: string[] };
+export type CustomCommandParam = { name: string; label: string; type: "text" | "branch" | "checkbox"; default?: string };
+export type CustomCommand = { id: string; name: string; argv: string[]; scope: "repository" | "commit" | "branch" | "files"; confirm: boolean; refresh: boolean; params: CustomCommandParam[] };
+export type FileBlob = { exists: boolean; mime: string; size: number; base64: string; lfs: boolean };
+export type RemoteHost = { provider: "github" | "gitlab" | "gitea"; host: string; owner: string; repository: string; apiBase: string; webBase: string };
+export type CheckRun = { id: string; name: string; status: string; conclusion: string; url: string; rerunnable: boolean };
+export type GitflowConfig = { initialized: boolean; master: string; develop: string; feature: string; release: string; hotfix: string; support: string; versionTag: string };
+export type FlowType = "feature" | "release" | "hotfix" | "support";
+export type ExplainKind = "commit" | "branch" | "working" | "pr";
+export type DiffOptions = { whitespace?: "all" | "change" | "eol" | "none"; algorithm?: "myers" | "minimal" | "patience" | "histogram" };
+export type CloneOptions = { depth?: number | null; filter?: "blob:none" | "tree:0" | null; sparse?: boolean; branch?: string | null; singleBranch?: boolean };

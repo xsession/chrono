@@ -4,6 +4,7 @@ import { api } from "../api";
 import { Icon } from "./Icon";
 import { DiffHunks } from "./DiffHunks";
 import { StageHunksPanel } from "./StageHunksPanel";
+import { ImageDiff, isImagePath } from "./ImageDiff";
 
 type Props = {
   repositoryPath: string;
@@ -42,7 +43,8 @@ export function WorkingDiffView({ repositoryPath, file, onClose, onStageHunks }:
           <button className="ux-icon-button" onClick={onClose} title="Close diff" aria-label="Close diff">✕</button>
         </span>
       </header>
-      {diff?.binary ? <div className="ux-empty-state compact"><Icon name="file" />Binary file — no text diff available.</div>
+      {isImagePath(file) ? <ImageDiff repositoryPath={repositoryPath} file={file} before={diff?.status === "?" || diff?.status === "A" ? null : "HEAD"} after="WORKTREE" />
+        : diff?.binary ? <div className="ux-empty-state compact"><Icon name="file" />Binary file — no text diff available.</div>
         : failed ? <div className="ux-empty-state compact"><Icon name="warning" />Failed to load the diff.</div>
         : !diff ? <div className="ux-empty-state compact"><i className="ux-spinner" />Loading diff…</div>
         : diff.hunks.length === 0
