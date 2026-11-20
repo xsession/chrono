@@ -8,8 +8,12 @@
 // Commits are undone with a soft reset (changes stay staged); everything
 // else uses `reset --keep`, which refuses to throw away local edits.
 
+import fs from "node:fs/promises";
+import path from "node:path";
 import { AppError, invalidError } from "./lib/errors.ts";
+import { workspacesFile } from "./workspaces.ts";
 import {
+  parseNumstat,
   checked,
   checkedStdout,
   hasHead,
@@ -45,8 +49,43 @@ interface Journal {
 const journals = new Map<string, Journal>();
 let nextEntryId = 1;
 const MAX_JOURNAL = 50;
+let loaded: Promise<void> | null = null;
+let saveChain: Promise<void> = Promise.resolve();
 
-function journalFor(root: string): Journal {
+// The journal survives server restarts: it lives next to workspaces.json.
+function journalFile(): string {
+  return path.join(path.dirname(workspacesFile()), "undo-journal.json");
+}
+
+function ensureLoaded(): Promise<void> {
+  loaded ??= (async () => {
+    try {
+      const parsed = JSON.parse(await fs.readFile(journalFile(), "utf8")) as Record<string, Journal>;
+      for (const [root, journal] of Object.entries(parsed)) {
+        if (!journal || !Array.isArray(journal.undo) || !Array.isArray(journal.redo)) continue;
+        journals.set(root, { undo: journal.undo, redo: journal.redo });
+        for (const entry of [...journal.undo, ...journal.redo]) nextEntryId = Math.max(nextEntryId, (entry.id ?? 0) + 1);
+      }
+    } catch {
+      // missing or unreadable journal: start empty
+    }
+  })();
+  return loaded;
+}
+
+function persist(): Promise<void> {
+  saveChain = saveChain.then(async () => {
+    const file = journalFile();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const temporary = `${file}.${process.pid}.tmp`;
+    await fs.writeFile(temporary, JSON.stringify(Object.fromEntries(journals)));
+    await fs.rename(temporary, file);
+  }).catch(() => undefined);
+  return saveChain;
+}
+
+async function journalFor(root: string): Promise<Journal> {
+  await ensureLoaded();
   let journal = journals.get(root);
   if (!journal) { journal = { undo: [], redo: [] }; journals.set(root, journal); }
   return journal;
@@ -86,10 +125,11 @@ export async function journaled<T>(inputPath: string, label: string, mode: "soft
   try {
     const after = await snapshot(root);
     if (!sameSnapshot(before, after)) {
-      const journal = journalFor(root);
+      const journal = await journalFor(root);
       journal.undo.push({ id: nextEntryId++, label, at: new Date().toISOString(), mode, before, after });
       if (journal.undo.length > MAX_JOURNAL) journal.undo.shift();
       journal.redo = [];
+      await persist();
     }
   } catch {
     // journaling is best-effort; never fail the operation itself
@@ -148,7 +188,7 @@ export interface UndoState {
 
 export async function undoState(inputPath: string): Promise<UndoState> {
   const root = await repositoryRoot(inputPath);
-  const journal = journalFor(root);
+  const journal = await journalFor(root);
   const top = journal.undo[journal.undo.length - 1];
   const redoTop = journal.redo[journal.redo.length - 1];
   return {
@@ -162,23 +202,25 @@ export async function undoState(inputPath: string): Promise<UndoState> {
 
 export async function undo(inputPath: string): Promise<string> {
   const root = await repositoryRoot(inputPath);
-  const journal = journalFor(root);
+  const journal = await journalFor(root);
   const entry = journal.undo[journal.undo.length - 1];
   if (!entry) throw invalidError("nothing to undo");
   const steps = await applySnapshot(root, entry.after, entry.before, entry.mode);
   journal.undo.pop();
   journal.redo.push(entry);
+  await persist();
   return `Undid “${entry.label}”${steps.length ? `: ${steps.join(", ")}` : ""}`;
 }
 
 export async function redo(inputPath: string): Promise<string> {
   const root = await repositoryRoot(inputPath);
-  const journal = journalFor(root);
+  const journal = await journalFor(root);
   const entry = journal.redo[journal.redo.length - 1];
   if (!entry) throw invalidError("nothing to redo");
   const steps = await applySnapshot(root, entry.before, entry.after, entry.mode);
   journal.redo.pop();
   journal.undo.push(entry);
+  await persist();
   return `Redid “${entry.label}”${steps.length ? `: ${steps.join(", ")}` : ""}`;
 }
 
@@ -429,4 +471,16 @@ export async function stashFiles(inputPath: string, ref: string): Promise<StashF
   const untracked = await runGit(inputPath, ["ls-tree", "-r", "--name-only", `${ref}^3`]);
   if (untracked.code === 0) for (const file of untracked.stdout.split(/\r?\n/).filter(Boolean)) files.push({ path: file, additions: null, deletions: null, untracked: true });
   return files;
+}
+
+// ---------------------------------------------------------------------------
+// Two-commit comparison (GitKraken: Ctrl+click two commits)
+// ---------------------------------------------------------------------------
+
+export interface ComparedFile { path: string; additions: number | null; deletions: number | null; binary: boolean }
+
+export async function diffCommitFiles(inputPath: string, from: string, to: string): Promise<ComparedFile[]> {
+  for (const rev of [from, to]) if (!rev.trim() || rev.startsWith("-") || rev.includes("\0")) throw invalidError("invalid revision");
+  const output = await checkedStdout(inputPath, ["diff", "--numstat", "--no-renames", from.trim(), to.trim()]);
+  return parseNumstat(output);
 }

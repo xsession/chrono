@@ -34,6 +34,21 @@ const HOST = process.env.CHRONO_HOST ?? "127.0.0.1";
 const API_TOKEN = process.env.CHRONO_API_TOKEN ?? "";
 const ALLOWED_ORIGIN = process.env.CHRONO_ALLOWED_ORIGIN ?? "";
 
+function branchActionLabel(body: Record<string, unknown>): string {
+  const branch = String(body.branch ?? "");
+  const target = typeof body.target === "string" ? body.target : "";
+  switch (body.action) {
+    case "rename": return `Rename ${branch} to ${String(body.newName ?? "")}`;
+    case "merge_into_current": return `Merge ${branch}`;
+    case "rebase_current_onto": return `Rebase onto ${branch}`;
+    case "fast_forward": return `Fast-forward ${branch}${target ? ` to ${target}` : ""}`;
+    case "force_to_commit": return `Reset ${branch} to ${target.slice(0, 12)}`;
+    case "checkout_and_merge": return `Merge ${branch} into ${target}`;
+    case "pull_branch": return `Pull ${branch}`;
+    default: return `${String(body.action ?? "").replace(/_/g, " ")} ${branch}`;
+  }
+}
+
 function isLoopbackHost(): boolean {
   return HOST === "127.0.0.1" || HOST === "localhost" || HOST === "::1";
 }
@@ -331,7 +346,7 @@ const routes: Record<string, Handler> = {
   discard_paths: (body) =>
     gk.discard(bodyPath(body), body.all === true ? null : strArray(body.files, "files")),
   branch_action: (body) =>
-    gk.journaled(bodyPath(body), `${str(body.action, "action").replace(/_/g, " ")} ${String(body.branch)}`, "keep", () =>
+    gk.journaled(bodyPath(body), branchActionLabel(body), "keep", () =>
       gk.branchAction(bodyPath(body), {
         action: str(body.action, "action") as gk.BranchAction,
         branch: str(body.branch, "branch"),
@@ -343,6 +358,7 @@ const routes: Record<string, Handler> = {
     gk.tagAction(bodyPath(body), str(body.action, "action") as gk.TagAction, typeof body.name === "string" ? body.name : "", optStr(body.remote)),
   remote_action: (body) =>
     gk.remoteAction(bodyPath(body), str(body.action, "action") as gk.RemoteAction, str(body.name, "name"), optStr(body.value)),
+  diff_commit_files: (body) => gk.diffCommitFiles(bodyPath(body), str(body.from, "from"), str(body.to, "to")),
   stash_files: (body) => gk.stashFiles(bodyPath(body), str(body.ref, "ref")),
 
   // TortoiseGit explorer: overlays, context-menu actions, properties, diffs.

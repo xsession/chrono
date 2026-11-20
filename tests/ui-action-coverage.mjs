@@ -66,7 +66,7 @@ for (const route of ["list_tags", "create_tag", "delete_tag", "merge_branch", "w
   must("server/index.ts", `${route}:`, `server exposes ${route}`);
 }
 
-for (const route of ["undo_state", "undo_action", "redo_action", "last_commit_message", "discard_paths", "branch_action", "tag_action", "remote_action", "stash_files", "explorer_list", "explorer_action", "explorer_properties", "explorer_diff_files", "explorer_diff_previous", "explorer_patch", "explorer_open"]) {
+for (const route of ["undo_state", "undo_action", "redo_action", "last_commit_message", "discard_paths", "branch_action", "tag_action", "remote_action", "stash_files", "explorer_list", "explorer_action", "explorer_properties", "explorer_diff_files", "explorer_diff_previous", "explorer_patch", "explorer_open", "diff_commit_files"]) {
   must("server/index.ts", `${route}:`, `server exposes ${route}`);
 }
 for (const control of ["onUndo", "onRedo", "onPull", "onPush", "onBranch", "onStash", "onPop", "onTerminal", "onExplorer"]) {

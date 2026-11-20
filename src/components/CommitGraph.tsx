@@ -11,6 +11,7 @@ import type { GraphLabel, GraphRowData } from "../graph";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
 import { CommitDiffView } from "./CommitDiffView";
+import { CommitCompareDiff, CommitCompareInspector } from "./gk/CommitCompare";
 import { reachableCommitIds, referenceKey, visibleRefCommitIds } from "../refVisibility";
 import { HISTORY_ROW_HEIGHT, visibleHistoryRows } from "../historyWindow";
 
@@ -65,6 +66,15 @@ function formatDate(value: string): string {
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined, {
     month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit"
   }).format(date);
+}
+
+/** GitKraken-style author avatar: initials on a colour derived from the email. */
+function Avatar({ name, email }: { name: string; email: string }) {
+  let hash = 0;
+  for (const ch of (email || name).toLowerCase()) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+  const hue = Math.abs(hash) % 360;
+  const initials = name.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "?";
+  return <span className="gk-avatar" style={{ background: `hsl(${hue} 45% 38%)` }} aria-hidden="true">{initials}</span>;
 }
 
 function loadStoredHistory(): string[] {
@@ -172,6 +182,11 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   const [stats, setStats] = useState<Map<string, HistoryChangeStat>>(new Map());
   const [details, setDetails] = useState<CommitDetails | null>(null);
   const [diffFile, setDiffFile] = useState<string | null>(null);
+  // GitKraken Ctrl+click comparison: `compareWith` is the second commit.
+  const [compareWith, setCompareWith] = useState<CommitRecord | null>(null);
+  const [compareFile, setCompareFile] = useState<string | null>(null);
+  const [compareSwapped, setCompareSwapped] = useState(false);
+  useEffect(() => { setCompareWith(null); setCompareFile(null); }, [repositoryPath]);
   const [worktrees, setWorktrees] = useState<WorktreeSummary[]>([]);
   const [showChanges, setShowChanges] = useState(() => localStorage.getItem("chrono.history.changes") !== "off");
   const [graphColWidthOverride, setGraphColWidthOverride] = useState<number>(() => Number.parseInt(localStorage.getItem("chrono.history.graphWidth") ?? "0", 10) || 0);
@@ -470,6 +485,13 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     return () => { cancelled = true; };
   }, [repositoryPath]);
 
+  const compareSides = (() => {
+    if (!compareWith || !selected) return null;
+    const a = commits.findIndex((commit) => commit.id === selected.id);
+    const b = commits.findIndex((commit) => commit.id === compareWith.id);
+    const [older, newer] = a > b ? [selected, compareWith] : [compareWith, selected];
+    return compareSwapped ? { from: newer, to: older } : { from: older, to: newer };
+  })();
   const wip = worktrees.filter((worktree) => !worktree.isMain && (worktree.dirtyCount > 0 || worktree.conflictCount > 0));
   const gridTemplate = showChanges
     ? `${graphColWidth}px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px`
@@ -590,6 +612,9 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
         )}
 
         {overlay}
+        {!inspector && compareSides && compareFile && (
+          <CommitCompareDiff repositoryPath={repositoryPath} from={compareSides.from.id} to={compareSides.to.id} file={compareFile} onClose={() => setCompareFile(null)} />
+        )}
 
         {diffFile && details && details.files.some((file) => file.path === diffFile) && (() => {
           const file = details.files.find((candidate) => candidate.path === diffFile)!;
@@ -655,13 +680,22 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               return (
                 <div
                   key={commit.id}
-                  className={`ux-commit-row${isSelected ? " is-selected" : ""}${isDimmed ? " is-dimmed" : ""}`}
+                  className={`ux-commit-row${isSelected ? " is-selected" : ""}${compareWith?.id === commit.id ? " is-compared" : ""}${isDimmed ? " is-dimmed" : ""}`}
                   style={{ gridTemplateColumns: gridTemplate }}
                   role="button"
                   tabIndex={0}
                   aria-pressed={isSelected}
                   aria-label={`Select commit ${commit.subject}`}
-                  onClick={() => onSelect(commit)}
+                  onClick={(event) => {
+                    if ((event.ctrlKey || event.metaKey) && selected && selected.id !== commit.id && !inspector) {
+                      setCompareWith(commit);
+                      setCompareFile(null);
+                      return;
+                    }
+                    setCompareWith(null);
+                    setCompareFile(null);
+                    onSelect(commit);
+                  }}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     onSelect(commit);
@@ -698,7 +732,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                       <span className="ux-graph-chip ux-graph-chip--muted" title={`${clippedRefs} more ref${clippedRefs === 1 ? "" : "s"} on this commit`}>+{clippedRefs}</span>
                     )}
                   </span>
-                  <span>{commit.authorName}</span><span>{formatDate(commit.authoredAt)}</span>
+                  <span className="gk-author-cell" title={`${commit.authorName} <${commit.authorEmail}>`}><Avatar name={commit.authorName} email={commit.authorEmail} /><span>{commit.authorName}</span></span><span>{formatDate(commit.authoredAt)}</span>
                   {showChanges && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} files, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}
                   <code>{commit.id.slice(0, 8)}</code>
                 </div>
@@ -729,7 +763,9 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
       <SplitHandle label="Resize commit inspector" onDelta={(delta) => setInspectorWidth((width) => Math.min(780, Math.max(300, width - delta)))} />
 
       <aside className={`ux-inspector${inspector ? " gk-inspector-override" : ""}`} aria-label="Commit details">
-        {inspector ? inspector : selected ? <>
+        {inspector ? inspector : compareSides ? (
+          <CommitCompareInspector repositoryPath={repositoryPath} from={compareSides.from} to={compareSides.to} openFile={compareFile} onOpenFile={setCompareFile} onSwap={() => setCompareSwapped((value) => !value)} onClose={() => { setCompareWith(null); setCompareFile(null); }} />
+        ) : selected ? <>
           <header className="ux-inspector-header"><span className="ux-eyebrow">Selected commit</span><h2>{selected.subject}</h2></header>
           <dl className="ux-metadata-list"><dt>Commit</dt><dd><code>{selected.id}</code></dd><dt>Author</dt><dd>{selected.authorName}<small>{selected.authorEmail}</small></dd><dt>Date</dt><dd>{formatDate(selected.authoredAt)}</dd><dt>Parents</dt><dd>{selected.parents.length ? selected.parents.map((parent) => <code key={parent}>{parent.slice(0, 10)}</code>) : "Root commit"}</dd></dl>
           <section className="ux-inspector-section ux-inspector-actions">

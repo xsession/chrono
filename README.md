@@ -88,7 +88,9 @@ The Graph view follows GitKraken's layout:
 - **Toolbar:** repository and branch pickers, Undo / Redo, Pull▾ (Fetch All, fast-forward if possible, fast-forward only, rebase; the checked mode becomes the default), Push▾ (set upstream, with tags, force-with-lease), Branch, Stash, Pop, Explorer, Terminal and Search.
 - **Left panel:** LOCAL (folder-grouped, ahead/behind counts), REMOTE (per remote, add/edit/prune/remove), WORKTREES, STASHES (shows a stash's files inline), TAGS, SUBMODULES and PULL REQUESTS. It has a filter and full context menus. Drag a branch onto another branch to merge, rebase, fast-forward or reset it.
 - **`// WIP` node:** sits above the newest commit. Clicking it opens the commit panel: Unstaged and Staged lists (path or tree view), stage/unstage all, per-file menus (discard, stash, ignore, history, show in Explorer), a summary with a 72-character counter, a description, amend, sign-off and AI draft. Ctrl+Enter commits.
-- **Undo / Redo** (Ctrl+Z / Ctrl+Y): the server records the effect of each Chrono action on branches and HEAD (commit, checkout, branch create/delete, reset, merge, pull, cherry-pick, revert). Undo restores the previous state, using `reset --soft` for commits and `reset --keep` otherwise. Redo re-applies it. Both refuse to run if the repository was changed outside Chrono in the meantime.
+- **Undo / Redo** (Ctrl+Z / Ctrl+Y): the server records the effect of each Chrono action on branches and HEAD (commit, checkout, branch create/delete, reset, merge, pull, cherry-pick, revert). Undo restores the previous state, using `reset --soft` for commits and `reset --keep` otherwise. Redo re-applies it. Both refuse to run if the repository was changed outside Chrono in the meantime. The journal is saved to `undo-journal.json` in the config directory, so it survives server restarts.
+- **Compare two commits:** select a commit, then Ctrl+click (⌘+click) another. The right panel lists the files that differ between them and clicking a file shows its diff over the graph.
+- **Author avatars:** each graph row shows the author's initials on a colour derived from their email.
 
 ## TortoiseGit explorer
 
