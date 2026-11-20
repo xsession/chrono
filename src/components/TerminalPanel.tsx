@@ -1,3 +1,4 @@
+import { getApiConnection } from "../api";
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Terminal } from "xterm";
 import "xterm/css/xterm.css";
@@ -17,8 +18,13 @@ export interface TerminalPanelHandle {
 interface TabInfo { id: string; title: string; }
 
 function wsUrl(): string {
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.host}/api/terminal/ws`;
+  // Remote (Android companion) connections authenticate with the API token,
+  // passed as a query parameter because browsers can't set WebSocket headers.
+  const connection = getApiConnection();
+  const base = connection.url ? new URL(connection.url) : new URL(window.location.href);
+  const proto = base.protocol === "https:" ? "wss" : "ws";
+  const token = connection.token ? `?token=${encodeURIComponent(connection.token)}` : "";
+  return `${proto}://${base.host}/api/terminal/ws${token}`;
 }
 
 export const TerminalPanel = forwardRef<TerminalPanelHandle, { open: boolean; repositoryPath?: string }>(function TerminalPanel({ open, repositoryPath }, ref) {
@@ -36,8 +42,14 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, { open: boolean; re
 
   useEffect(() => { activeRef.current = activeId; }, [activeId]);
 
+  // Frames sent while the socket is still connecting are queued and flushed
+  // on open (previously the first tab's "create" could be dropped).
+  const outbox = useRef<string[]>([]);
   const send = useCallback((frame: Record<string, unknown>) => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) wsRef.current.send(JSON.stringify(frame));
+    const ws = wsRef.current;
+    const data = JSON.stringify(frame);
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(data);
+    else if (ws && ws.readyState === WebSocket.CONNECTING) outbox.current.push(data);
   }, []);
 
   // --- xterm lifecycle ------------------------------------------------------
@@ -68,6 +80,7 @@ export const TerminalPanel = forwardRef<TerminalPanelHandle, { open: boolean; re
     if (!open) return;
     const ws = new WebSocket(wsUrl());
     wsRef.current = ws;
+    ws.onopen = () => { for (const data of outbox.current.splice(0)) ws.send(data); };
     ws.onmessage = (event: MessageEvent) => {
       let frame: Record<string, unknown>;
       try { frame = JSON.parse(String(event.data)); } catch { return; }

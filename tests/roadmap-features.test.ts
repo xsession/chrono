@@ -122,6 +122,20 @@ const link = parseDeepLink("chrono://tgit?action=commit&path=%2Fa%2Fb+c.txt&path
 ok(link?.command === "tgit" && link.params.action === "commit" && link.paths.join("|") === "/a/b c.txt|/x|/y", "tgit deep link collects every path");
 ok(parseDeepLink("http://localhost:1421/?chrono=tgit&action=log&path=%2Fr")?.paths[0] === "/r", "web fallback form parsed");
 
+// request guard: cross-site, rebinding and content-type checks
+const { rejectReason } = await import("../server/src/lib/requestGuard.ts");
+const fakeRequest = (headers: Record<string, string>, method = "POST") => ({ headers, method, url: "/api/x" }) as unknown as import("node:http").IncomingMessage;
+const local = { host: "127.0.0.1", port: 1421, token: "", allowedOrigin: "" };
+const json = { "content-type": "application/json", host: "127.0.0.1:1421" };
+ok(rejectReason(fakeRequest({ ...json, origin: "http://127.0.0.1:1421" }), local, "api") === null, "same-origin API call allowed");
+ok(rejectReason(fakeRequest(json), local, "api") === null, "origin-less CLI call allowed");
+ok(rejectReason(fakeRequest({ ...json, origin: "https://evil.example" }), local, "api") !== null, "foreign origin refused");
+ok(rejectReason(fakeRequest({ "content-type": "text/plain", host: "127.0.0.1:1421" }), local, "api") !== null, "text/plain (CSRF) refused");
+ok(rejectReason(fakeRequest({ ...json, host: "evil.example:1421", origin: "http://evil.example:1421" }), local, "api") !== null, "DNS rebinding host refused");
+ok(rejectReason(fakeRequest({ host: "127.0.0.1:1421", origin: "https://evil.example" }, "GET"), local, "websocket") !== null, "foreign WebSocket refused");
+ok(rejectReason(fakeRequest({ host: "anything", authorization: "Bearer s3cret" }), { ...local, host: "0.0.0.0", token: "s3cret" }, "api") === null, "valid token authorises remote clients");
+ok(rejectReason(fakeRequest({ host: "anything", authorization: "Bearer nope" }), { ...local, host: "0.0.0.0", token: "s3cret" }, "api") !== null, "wrong token refused");
+
 // remote parsing
 ok(features.parseRemote("git@github.com:owner/repo.git")?.provider === "github", "scp-style GitHub remote parsed");
 ok(features.parseRemote("https://gitlab.example.com/group/sub/proj.git")?.owner === "group/sub", "nested GitLab group parsed");

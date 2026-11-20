@@ -61,8 +61,18 @@ async function resolveCwd(requested: unknown): Promise<string> {
   }
 }
 
-export function attachTerminalServer(server: http.Server): void {
-  const wss = new WebSocketServer({ server, path: "/api/terminal/ws" });
+/** `reject` returns a reason to refuse the upgrade (foreign origin, missing
+ *  token, rebinding host) — a terminal is a shell, so it must never be
+ *  reachable from other web pages. */
+export function attachTerminalServer(server: http.Server, reject: (request: http.IncomingMessage) => string | null = () => null): void {
+  const wss = new WebSocketServer({
+    server,
+    path: "/api/terminal/ws",
+    verifyClient: (info, done) => {
+      const reason = reject(info.req);
+      if (reason) done(false, 403, reason); else done(true);
+    },
+  });
 
   wss.on("connection", (ws) => {
     ws.on("message", async (raw) => {

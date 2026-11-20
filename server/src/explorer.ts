@@ -548,6 +548,7 @@ export async function runAction(inputPath: string, request: ExplorerActionReques
       return done(merge(results.length ? results : [OK]), `Reverted ${tracked.length + added.length} item(s)`);
     }
     case "delete": {
+      if (files.includes(".")) throw invalidError("refusing to delete the repository root");
       const { tracked, untracked, added } = await trackedSubset(root, files);
       const results: CommandResult[] = [];
       const versioned = [...tracked, ...added];
@@ -556,6 +557,7 @@ export async function runAction(inputPath: string, request: ExplorerActionReques
       return done(merge(results.length ? results : [OK]), `Deleted ${files.length} item(s)`);
     }
     case "remove_keep_local":
+      if (files.includes(".")) throw invalidError("select files or folders, not the repository root");
       return done(await checked(root, ["rm", "-r", "--cached", "--", ...specs]), `Removed ${files.length} item(s) from version control (kept on disk)`);
     case "rename": {
       if (files.length !== 1) throw invalidError("rename one item at a time");
@@ -721,8 +723,12 @@ export async function resolveShellPaths(absolutePaths: string[]): Promise<Resolv
   const paths: string[] = [];
   const isDir: boolean[] = [];
   for (const raw of absolutePaths.slice(0, 500)) {
-    const abs = path.resolve(raw.trim());
     if (!path.isAbsolute(raw.trim())) throw invalidError(`not an absolute path: ${raw}`);
+    let abs = path.resolve(raw.trim());
+    // Resolve symlinks (e.g. /home → /var/home) so the path is comparable with
+    // the real repository root git reports; deleted files keep their parent's
+    // real path.
+    try { abs = await fs.realpath(abs); } catch { try { abs = path.join(await fs.realpath(path.dirname(abs)), path.basename(abs)); } catch { /* leave as is */ } }
     let stat: import("node:fs").Stats | null = null;
     try { stat = await fs.stat(abs); } catch { stat = null; }
     const dir = stat?.isDirectory() ? abs : path.dirname(abs);

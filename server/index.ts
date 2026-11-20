@@ -24,6 +24,7 @@ import * as gk from "./src/gkOps.ts";
 import * as features from "./src/features.ts";
 import { withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
 import { readStream, validStreamId } from "./src/lib/streams.ts";
+import { rejectReason, type GuardOptions } from "./src/lib/requestGuard.ts";
 import { listPullRequests } from "./src/provider.ts";
 import * as repo from "./src/repo.ts";
 import { loadWorkspaces, saveWorkspaces, type Workspace } from "./src/workspaces.ts";
@@ -67,6 +68,8 @@ async function resolveHost(body: Record<string, unknown>): Promise<features.Remo
 
 // Viewer routes whose diffs honour the user's whitespace/algorithm options.
 const DIFF_VIEW_ROUTES = new Set(["working_tree_diff", "commit_file_diff", "diff_revisions", "explorer_diff_files", "explorer_diff_previous"]);
+
+const guard: GuardOptions = { host: HOST, port: PORT, token: API_TOKEN, allowedOrigin: ALLOWED_ORIGIN };
 
 function isLoopbackHost(): boolean {
   return HOST === "127.0.0.1" || HOST === "localhost" || HOST === "::1";
@@ -650,7 +653,8 @@ const server = http.createServer((request, response) => {
   }
   const match = url.pathname.match(/^\/api\/([a-z0-9_]+)\/?$/);
   if (match) {
-    if (API_TOKEN && request.headers.authorization !== `Bearer ${API_TOKEN}`) { sendJson(response, 401, { ok: false, error: "invalid or missing API token" }); return; }
+    const reason = rejectReason(request, guard, "api");
+    if (reason) { sendJson(response, reason.includes("token") ? 401 : 403, { ok: false, error: reason }); return; }
     void handleApi(request, response, match[1]);
     return;
   }
@@ -660,7 +664,7 @@ const server = http.createServer((request, response) => {
 });
 
 // v6 integrated terminal (GitKraken RE §TerminalPanel): PTY sessions over WebSocket.
-attachTerminalServer(server);
+attachTerminalServer(server, (request) => rejectReason(request, guard, "websocket"));
 
 server.listen(PORT, HOST, () => {
   console.log(`Chrono Next API listening on http://${HOST}:${PORT}`);

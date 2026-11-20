@@ -211,6 +211,13 @@ npm start              # API server on :1421 also serves dist/
 # open http://localhost:1421
 ```
 
+Security: the server can run git, custom commands and a terminal, so it refuses:
+- requests whose `Origin` is a different web site, including cross-site WebSocket connections to the terminal;
+- requests whose `Host` isn't a loopback name while the server is bound to loopback, which blocks DNS rebinding;
+- API POSTs that aren't `Content-Type: application/json`.
+
+Set `CHRONO_API_TOKEN` to serve other machines. The Android companion then sends the token, also for the terminal. `CHRONO_DEV_ORIGINS` adds extra allowed development origins.
+
 Environment: `CHRONO_PORT` (default 1421), `CHRONO_HOST` (default 127.0.0.1),
 `CHRONO_CONFIG_DIR` (default `~/.chrono-next`).
 

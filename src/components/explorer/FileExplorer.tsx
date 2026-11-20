@@ -208,7 +208,7 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
       case "diff": setDialog(isFile ? { kind: "diff", file: single!, mode: "working" } : paths.length === 2 && !focus.isDir?.some(Boolean) ? { kind: "diff-files", left: files[0], right: files[1] } : { kind: "modifications", files }); break;
       case "diffprev": if (isFile) setDialog({ kind: "diff", file: single!, mode: "previous" }); else pushToast("Diff with previous version needs a single file", "info"); break;
       case "blame": if (isFile) setDialog({ kind: "blame", file: single! }); else pushToast("Blame needs a single file", "info"); break;
-      case "resolve": void exec("Resolve", () => api.explorerAction(repositoryPath, { action: "resolve", files })); break;
+      case "resolve": void (async () => { if (await askConfirm("Resolve", `Mark ${files.length === 1 ? files[0] : `${files.length} items`} as resolved (git add)?`, { confirm: "Mark resolved" })) await exec("Resolve", () => api.explorerAction(repositoryPath, { action: "resolve", files })); })(); break;
       case "stash": void (async () => { const message = await askText("Stash Save", "Message", `WIP on ${files.join(", ")}`); if (message !== null) await exec("Stash save", () => api.explorerAction(repositoryPath, { action: "stash_save", files, message })); })(); break;
       default: break;
     }
