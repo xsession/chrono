@@ -130,7 +130,11 @@ export default function App() {
   useEffect(() => {
     api.loadWorkspaces()
       .then((loaded) => setWorkspaces(loaded.length ? loaded : [emptyWorkspace]))
-      .catch(() => undefined);
+      .catch((error) => {
+        // A server started with CHRONO_API_TOKEN (Docker, remote) needs the
+        // token from the browser too — ask for it instead of failing silently.
+        if (/API token/i.test(String(error))) setConnectionOpen(true);
+      });
   }, []);
 
   const refresh = useCallback(async (repositoryPath = path) => {
@@ -675,8 +679,8 @@ export default function App() {
       {connectionOpen && <div className="connection-backdrop"><form className="connection-dialog" onSubmit={(event) => {
         event.preventDefault(); const data=new FormData(event.currentTarget);
         saveApiConnection({url:String(data.get("url")??""),token:String(data.get("token")??"")}); window.location.reload();
-      }}><h2>Connect Android client</h2><p>Enter the HTTPS address and access token of your Chrono server.</p>
-      <label>Backend URL<input name="url" type="url" required defaultValue={getApiConnection().url} placeholder="https://chrono.example.com" /></label>
+      }}><h2>Connect to Chrono server</h2><p>{nativeMobile ? "Enter the HTTPS address and access token of your Chrono server." : "This server requires an access token (CHRONO_API_TOKEN). Leave the address empty to use this server."}</p>
+      <label>Backend URL<input name="url" type="url" required={nativeMobile} defaultValue={getApiConnection().url} placeholder={nativeMobile ? "https://chrono.example.com" : "(this server)"} /></label>
       <label>API token<input name="token" type="password" required defaultValue={getApiConnection().token} /></label>
       <div className="connection-actions"><button type="button" onClick={()=>setConnectionOpen(false)}>Cancel</button><button type="submit">Save</button></div></form></div>}
       <header className="ux-topbar">

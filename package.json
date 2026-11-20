@@ -1,7 +1,10 @@
 {
   "name": "chrono-next",
   "description": "Cross-platform Git client with desktop and Android companion applications",
-  "author": "CodeLayer",
+  "author": {
+    "name": "CodeLayer",
+    "email": "noreply@codelayer.hu"
+  },
   "private": true,
   "version": "0.8.0",
   "type": "module",
@@ -28,12 +31,22 @@
     "android:open": "cap open android",
     "android:build": "npm run android:sync && cd android && ./gradlew assembleDebug",
     "test:roadmap": "node --experimental-strip-types tests/roadmap-features.test.ts",
-    "test:lines": "node --experimental-strip-types tests/line-staging.test.ts"
+    "test:lines": "node --experimental-strip-types tests/line-staging.test.ts",
+    "icons": "python3 scripts/make-icons.py",
+    "version:sync": "node scripts/sync-version.mjs",
+    "test:unit": "npm run test:markers && npm run test:graph && npm run test:history-window && npm run test:refs && npm run test:ref-visibility && npm run test:ui-contract && npm run test:sagas",
+    "test:all": "npm run test:unit && npm run test:lines && npm run test:roadmap && npm run test:git && npm run test:api",
+    "dist:linux": "npm run build && electron-builder --linux --publish never",
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:server": "npm run build && node scripts/package-server.mjs"
   },
   "dependencies": {
     "@capacitor/core": "^7.4.3",
+    "node-pty": "^1.1.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "ws": "^8.22.2"
   },
   "devDependencies": {
     "@capacitor/android": "^7.4.3",
@@ -45,58 +58,41 @@
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "^38.1.2",
     "electron-builder": "^26.0.12",
-    "node-pty": "^1.1.0",
     "typescript": "^5.8.0",
     "vite": "^7.0.0",
-    "ws": "^8.22.2",
     "xterm": "^5.3.0"
   },
   "build": {
     "appId": "hu.codelayer.chrono",
     "productName": "Chrono",
+    "copyright": "Copyright \u00a9 CodeLayer",
     "asar": true,
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "files": [
       "electron/**/*",
+      "server/**/*",
+      "!server/**/*.tsbuildinfo",
+      "dist/**/*",
+      "public/**/*",
       "package.json"
     ],
+    "asarUnpack": [
+      "server/**",
+      "dist/**",
+      "public/**",
+      "node_modules/ws/**",
+      "node_modules/node-pty/**"
+    ],
     "extraResources": [
-      {
-        "from": "dist",
-        "to": "dist"
-      },
-      {
-        "from": "public",
-        "to": "public"
-      },
-      {
-        "from": "server",
-        "to": "server"
-      },
       {
         "from": "shell-integration",
         "to": "shell-integration"
       }
     ],
-    "linux": {
-      "target": [
-        "AppImage"
-      ],
-      "category": "Development"
-    },
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ]
-    },
-    "mac": {
-      "target": [
-        "dmg"
-      ]
-    },
     "protocols": [
       {
         "name": "Chrono",
@@ -104,6 +100,114 @@
           "chrono"
         ]
       }
-    ]
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm",
+        "tar.gz"
+      ],
+      "category": "Development",
+      "executableName": "chrono",
+      "icon": "build/icons",
+      "synopsis": "GitKraken-style Git client with a TortoiseGit-style file explorer",
+      "description": "Chrono is a cross-platform Git client: commit graph, staging down to single lines, interactive rebase, conflict center, worktrees, and a TortoiseGit-style working-copy explorer and file-manager menu.",
+      "desktop": {
+        "entry": {
+          "StartupWMClass": "Chrono"
+        }
+      }
+    },
+    "deb": {
+      "depends": [
+        "git",
+        "libgtk-3-0",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0"
+      ],
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh"
+    },
+    "rpm": {
+      "depends": [
+        "git",
+        "gtk3",
+        "nss",
+        "libXScrnSaver",
+        "libXtst",
+        "xdg-utils"
+      ],
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Chrono",
+      "include": "build/installer.nsh",
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}",
+      "deleteAppDataOnUninstall": false
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}"
+    }
+  },
+  "homepage": "https://github.com/xsession/chrono",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xsession/chrono.git"
   }
 }

@@ -1,18 +1,176 @@
 name: CI
+
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
 jobs:
-  frontend:
+  test:
+    name: Test (Linux, full suite)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: npm install
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Configure git identity for test repositories
+        run: |
+          git config --global user.name "Chrono CI"
+          git config --global user.email "ci@chrono.invalid"
+          git config --global init.defaultBranch main
+      - run: npm ci
       - run: npm run typecheck
       - run: npm run build
-      - run: npm run test:markers
-      - run: npm run test:git
-      - run: npm run test:api
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Line staging
+        run: npm run test:lines
+      - name: Roadmap features
+        run: npm run test:roadmap
+      - name: Git smoke tests
+        run: npm run test:git
+      - name: API smoke test
+        run: npm run test:api
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: dist
+          retention-days: 7
+
+  cross-platform:
+    name: Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Configure git identity
+        run: |
+          git config --global user.name "Chrono CI"
+          git config --global user.email "ci@chrono.invalid"
+          git config --global init.defaultBranch main
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Line staging
+        run: npm run test:lines
+
+  lint-scripts:
+    name: Shell & workflow lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: |
+          shellcheck --severity=warning \
+            shell-integration/chrono-open shell-integration/linux/install.sh \
+            installers/server/install-linux-service.sh build/linux/after-install.sh build/linux/after-remove.sh
+      - name: actionlint
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  package-linux:
+    name: Package smoke (Linux desktop + server)
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Build unpacked desktop app
+        run: npx electron-builder --linux dir --publish never
+      - name: Packaged backend starts
+        run: |
+          app=release/linux-unpacked
+          ELECTRON_RUN_AS_NODE=1 CHRONO_PORT=14299 "$app/chrono" --experimental-strip-types "$app/resources/app.asar.unpacked/server/index.ts" &
+          for _ in $(seq 1 50); do curl -fsS http://127.0.0.1:14299/api/health && exit 0; sleep 0.3; done
+          echo "packaged backend did not start" >&2; exit 1
+      - name: Server tarball
+        run: node scripts/package-server.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-tarball
+          path: release/chrono-server-*.tar.gz
+          retention-days: 7
+
+  docker:
+    name: Docker image
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: chrono:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Container serves the API with a token
+        run: |
+          docker run -d --name chrono -p 1421:1421 -e CHRONO_API_TOKEN=ci-token chrono:ci
+          for _ in $(seq 1 50); do curl -fsS http://127.0.0.1:1421/api/health && break; sleep 0.5; done
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:1421/api/load_workspaces)
+          test "$code" = 401
+          curl -fsS -X POST -H 'Content-Type: application/json' -H 'Authorization: Bearer ci-token' -d '{}' http://127.0.0.1:1421/api/load_workspaces
+          docker logs chrono
+
+  android:
+    name: Android companion (debug APK)
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name != 'pull_request'
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+      - run: npm ci
+      - run: npm run build && npx cap sync android
+      - name: Assemble debug APK
+        working-directory: android
+        run: chmod +x gradlew && ./gradlew --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 7

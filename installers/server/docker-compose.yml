@@ -1,0 +1,15 @@
+# Chrono server with Docker Compose.
+#   CHRONO_API_TOKEN=$(openssl rand -hex 24) docker compose up -d
+services:
+  chrono:
+    image: ghcr.io/xsession/chrono:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1421:1421"   # put a TLS reverse proxy in front for remote use
+    environment:
+      CHRONO_API_TOKEN: ${CHRONO_API_TOKEN:?set CHRONO_API_TOKEN}
+    volumes:
+      - ${CHRONO_REPOS:-~/src}:/repos
+      - chrono-config:/config
+volumes:
+  chrono-config:

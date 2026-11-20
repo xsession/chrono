@@ -154,6 +154,23 @@ Like TortoiseGit, Chrono can add a **Chrono** submenu to the operating system's 
 - **Linux helper:** menus call `chrono-open`. It uses `$CHRONO_BIN` (or `chrono` on PATH) when set, otherwise `$CHRONO_WEB_URL` for the web build, otherwise the registered `chrono://` handler.
 - **Not included:** TortoiseGit's status icons on the file manager's own icons need a native shell extension, which this doesn't provide. Chrono's Explorer view shows the same status icons instead.
 
+## Install
+
+Download from the [GitHub Releases](https://github.com/xsession/chrono/releases) page and verify with `SHA256SUMS.txt`:
+
+| Platform | Package | Notes |
+|---|---|---|
+| Windows | `Chrono-Setup-<v>-x64.exe` / `-arm64.exe` | Per-user install, no admin needed. Adds the Explorer **Chrono** right-click menu, removed on uninstall. A portable `.exe` is also available. |
+| macOS | `Chrono-<v>-mac-x64.dmg` / `-arm64.dmg` | Unsigned builds: right-click → Open the first time. |
+| Debian / Ubuntu | `sudo apt install ./Chrono-<v>-linux-amd64.deb` | Installs `chrono` and `chrono-open` and the Dolphin and Nemo menus. For Nautilus/Caja run `/opt/Chrono/resources/shell-integration/linux/install.sh`. |
+| Fedora / openSUSE | `sudo dnf install ./Chrono-<v>-linux-x86_64.rpm` | Same as `.deb`. |
+| Any Linux | `Chrono-<v>-linux-x86_64.AppImage` | `chmod +x` and run. |
+| Server (Docker) | `docker run -d -p 127.0.0.1:1421:1421 -e CHRONO_API_TOKEN=$(openssl rand -hex 24) -v ~/src:/repos ghcr.io/xsession/chrono` | Open http://localhost:1421 and enter the token. Repositories are under `/repos`. `installers/server/docker-compose.yml` has a Compose version. |
+| Server (Node) | `chrono-server-<v>.tar.gz` | `npm ci --omit=dev`, then `installers/server/install-linux-service.sh` (systemd user service) or `install-windows-service.ps1` (logon task). |
+| Android | `Chrono-<v>-android.apk` | Companion client for a Chrono server reached over HTTPS. |
+
+The server refuses to listen on a non-loopback address without `CHRONO_API_TOKEN`, unless you set `CHRONO_ALLOW_INSECURE_REMOTE=1`. Maintainers: see [docs/RELEASING.md](docs/RELEASING.md) for CI/CD and signing.
+
 ## Run (web)
 
 Easiest — the launchers install Node.js 22+ if it is missing, install npm

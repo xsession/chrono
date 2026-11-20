@@ -676,6 +676,13 @@ const server = http.createServer((request, response) => {
 // v6 integrated terminal (GitKraken RE §TerminalPanel): PTY sessions over WebSocket.
 attachTerminalServer(server, (request) => rejectReason(request, guard, "websocket"));
 
+// Binding to a network interface without a token would hand git, custom
+// commands and a shell to anyone who can reach the port.
+if (!isLoopbackHost() && !API_TOKEN && process.env.CHRONO_ALLOW_INSECURE_REMOTE !== "1") {
+  console.error(`Refusing to listen on ${HOST} without CHRONO_API_TOKEN. Set a token (or CHRONO_ALLOW_INSECURE_REMOTE=1 on a trusted, isolated network).`);
+  process.exit(2);
+}
+
 server.listen(PORT, HOST, () => {
   console.log(`Chrono Next API listening on http://${HOST}:${PORT}`);
 });

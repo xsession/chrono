@@ -8,7 +8,10 @@ let mainWindow;
 let pendingDeepLinks = [];
 
 const PROTOCOL = "chrono";
-const root = () => (app.isPackaged ? process.resourcesPath : path.resolve(__dirname, ".."));
+// Packaged builds keep server/, dist/ and public/ (plus ws/node-pty) in
+// app.asar.unpacked so the backend can run as plain files with real
+// node_modules next to it.
+const root = () => (app.isPackaged ? path.join(process.resourcesPath, "app.asar.unpacked") : path.resolve(__dirname, ".."));
 
 // --- GitKraken RE §11.2: chrono:// deep-link protocol -----------------------
 if (process.defaultApp) {
@@ -55,7 +58,11 @@ async function wait(url) { for (let i = 0; i < 80; i++) { try { if ((await fetch
 
 async function launch() {
   backendPort = String(14210 + Math.floor(Math.random() * 1000));
-  backend = spawn(process.execPath, ["--experimental-strip-types", path.join(root(), "server", "index.ts")], { cwd: root(), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", CHRONO_PORT: backendPort, CHRONO_HOST: "127.0.0.1" }, stdio: "pipe" });
+  backend = spawn(process.execPath, ["--experimental-strip-types", path.join(root(), "server", "index.ts")], { cwd: root(), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", CHRONO_PORT: backendPort, CHRONO_HOST: "127.0.0.1" }, stdio: ["ignore", "pipe", "pipe"] });
+  let backendLog = "";
+  backend.stdout.on("data", (chunk) => { backendLog = (backendLog + chunk).slice(-4000); });
+  backend.stderr.on("data", (chunk) => { backendLog = (backendLog + chunk).slice(-4000); });
+  backend.on("exit", (code) => { if (!mainWindow) dialog.showErrorBox("Chrono backend stopped", `exit code ${code}\n\n${backendLog}`); });
   await wait(`http://127.0.0.1:${backendPort}/api/health`);
   mainWindow = new BrowserWindow({ width: 1440, height: 900, minWidth: 860, minHeight: 600, backgroundColor: "#111318", webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true } });
   await mainWindow.loadURL(`http://127.0.0.1:${backendPort}`);
