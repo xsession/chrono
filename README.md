@@ -138,6 +138,21 @@ These features come from the roadmap in `reports/Git client feature gap analysis
 - **Treemap:** Git Intelligence → Treemap shows the repository as a squarified treemap. Area is file size or recent churn, colour is churn intensity, and clicking a folder drills into it.
 - **Notifications:** an optional desktop notification when a fetch, pull, push, rebase, clone or CI check finishes while Chrono is in the background.
 
+### Right-click menu in your file manager
+
+Like TortoiseGit, Chrono can add a **Chrono** submenu to the operating system's file manager. Right-click files or folders and choose an action: Git Commit…, Show log, Diff, Diff with previous version, Blame, Check for modifications, Revert…, Add…, Resolve, Clean up…, Stash save…, Create patch…, Git Sync…, Properties, Open in Chrono Explorer, Show in Chrono graph, or Open Git terminal here. Chrono opens the repository that contains the selection and runs the action on exactly those files.
+
+| Platform | Install | Remove |
+|---|---|---|
+| Windows Explorer | `powershell -ExecutionPolicy Bypass -File shell-integration\windows\install-context-menu.ps1` | add `-Uninstall` |
+| Linux: Nautilus, Caja, Nemo, Dolphin | `sh shell-integration/linux/install.sh` | `--uninstall` |
+| macOS Finder | Automator Quick Actions, see `shell-integration/macos/README.md` | |
+
+- **Windows:** entries are written under `HKCU` only, so no administrator rights are needed. On Windows 11 they appear under *Show more options*. Pass `-ExePath` if Chrono isn't installed in the default per-user location.
+- **How actions reach Chrono:** the desktop app is started as `Chrono --tgit=<action> <paths…>` and turns that into the deep link `chrono://tgit?action=<action>&path=<absolute path>`. The link also works on its own, and for the web build as `http://<server>/?chrono=tgit&action=…&path=…`.
+- **Linux helper:** menus call `chrono-open`. It uses `$CHRONO_BIN` (or `chrono` on PATH) when set, otherwise `$CHRONO_WEB_URL` for the web build, otherwise the registered `chrono://` handler.
+- **Not included:** TortoiseGit's status icons on the file manager's own icons need a native shell extension, which this doesn't provide. Chrono's Explorer view shows the same status icons instead.
+
 ## Run (web)
 
 Easiest — the launchers install Node.js 22+ if it is missing, install npm

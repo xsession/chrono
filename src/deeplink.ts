@@ -1,3 +1,4 @@
+import { SHELL_ACTIONS, parseDeepLink, type ShellAction } from "./deeplinkParse";
 import type { SagaResult } from "./sagas/bus";
 import { getSagaActions } from "./sagas/actions";
 import { sagaBus } from "./sagas/bus";
@@ -12,40 +13,14 @@ import { sagaBus } from "./sagas/bus";
 //   chrono://workspaces               list known repositories
 //   chrono://preferences[?section=]   open preferences
 //   chrono://login                    acknowledged no-op (Chrono has no accounts)
+//   chrono://tgit?action=&path=       TortoiseGit-style shell action on absolute
+//                                     path(s) (repeat path= or use paths= with
+//                                     newline-separated values); see SHELL_ACTIONS
 // Web fallback: http(s) URLs carrying ?chrono=<command>&... are routed the same way.
 
-export interface DeepLinkCommand {
-  command: string;
-  params: Record<string, string>;
-}
 
-const SUPPORTED = new Set(["repo", "branch", "commit", "search", "workspaces", "preferences", "login"]);
-
-export function parseDeepLink(uri: string): DeepLinkCommand | null {
-  let url: URL;
-  try {
-    url = new URL(uri);
-  } catch {
-    return null;
-  }
-  if (url.protocol === "chrono:") {
-    const command = (url.hostname || url.pathname.replace(/^\//, "")).toLowerCase();
-    if (!SUPPORTED.has(command)) return null;
-    const params: Record<string, string> = {};
-    for (const [key, value] of url.searchParams) params[key.toLowerCase()] = value;
-    return { command, params };
-  }
-  // Web fallback form.
-  const query = new URLSearchParams(url.search);
-  const command = (query.get("chrono") ?? "").toLowerCase();
-  if (!SUPPORTED.has(command)) return null;
-  const params: Record<string, string> = {};
-  for (const [key, value] of query) {
-    if (key === "chrono") continue;
-    params[key.toLowerCase()] = value;
-  }
-  return { command, params };
-}
+export { SHELL_ACTIONS, parseDeepLink };
+export type { DeepLinkCommand, ShellAction } from "./deeplinkParse";
 
 export async function routeDeepLink(uri: string): Promise<SagaResult> {
   const parsed = parseDeepLink(uri);
@@ -85,6 +60,13 @@ export async function routeDeepLink(uri: string): Promise<SagaResult> {
     case "preferences":
       actions.openPreferences(parsed.params.section);
       return { ok: true };
+    case "tgit":
+    case "explorer": {
+      const action = (parsed.params.action ?? "explore").toLowerCase();
+      if (!(SHELL_ACTIONS as readonly string[]).includes(action)) return { ok: false, error: `unknown shell action: ${action}` };
+      if (!parsed.paths.length) return { ok: false, error: "deep link tgit requires ?path=" };
+      return actions.shellAction(action as ShellAction, parsed.paths);
+    }
     case "login":
       return { ok: true, result: { note: "Chrono has no account login; nothing to do" } };
     default:

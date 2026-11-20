@@ -41,6 +41,7 @@ import { AgentSessionDialog, CleanupDialog } from "./components/gk/HostingDialog
 import { notifyIfHidden } from "./notify";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LiveOutputHost, withLiveOutput } from "./liveOutput";
+import type { ExplorerFocus } from "./components/explorer/FileExplorer";
 import { askFields } from "./components/DialogHost";
 
 const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
@@ -105,7 +106,7 @@ export default function App() {
   const [wipSelected, setWipSelected] = useState(false);
   const [wipDiff, setWipDiff] = useState<string | null>(null);
   const [scrollTo, setScrollTo] = useState<{ id: string; nonce: number } | null>(null);
-  const [explorerFocus, setExplorerFocus] = useState<{ path: string; nonce: number } | null>(null);
+  const [explorerFocus, setExplorerFocus] = useState<ExplorerFocus | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
   const [agentDialogOpen, setAgentDialogOpen] = useState(false);
   const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
@@ -531,6 +532,26 @@ export default function App() {
   }, []);
 
   const sagaActions: SagaActions = {
+    shellAction: async (action, paths) => {
+      try {
+        const resolved = await api.resolveShellPaths(paths);
+        await rememberRepository(resolved.root);
+        setRepoTabs((current) => (current.includes(resolved.root) ? current : [...current, resolved.root]));
+        await refresh(resolved.root);
+        if (action === "graph") { setView("history"); return { ok: true }; }
+        if (action === "terminal") {
+          setTerminalOpen(true);
+          requestAnimationFrame(() => terminalRef.current?.createTab(resolved.directory ? `${resolved.root}/${resolved.directory}` : resolved.root));
+          return { ok: true };
+        }
+        setView("explorer");
+        setExplorerFocus({ path: resolved.paths[0], paths: resolved.paths, isDir: resolved.isDir, action, nonce: Date.now() });
+        return { ok: true };
+      } catch (error) {
+        pushToast(String(error).replace(/^Error: /, ""), "error", 9000);
+        return { ok: false, error: String(error) };
+      }
+    },
     openRepo: async (repositoryPath) => { await rememberRepository(repositoryPath); setRepoTabs((current) => current.includes(repositoryPath) ? current : [...current, repositoryPath]); try { await refresh(repositoryPath); return { ok: true }; } catch (error) { return { ok: false, error: String(error) }; } },
     promptOpenRepo: async () => { const selected = await promptRepositoryPath("Open Git repository"); if (!selected) return { ok: false, error: "cancelled" }; await rememberRepository(selected); setRepoTabs((current) => current.includes(selected) ? current : [...current, selected]); try { await refresh(selected); return { ok: true }; } catch (error) { return { ok: false, error: String(error) }; } },
     refresh: async () => { if (!path) return { ok: false, error: "no repository open" }; try { await refresh(); return { ok: true }; } catch (error) { return { ok: false, error: String(error) }; } },
@@ -567,10 +588,12 @@ export default function App() {
   // Register the GitKraken-compatible saga registry once; expose actions to it.
   useEffect(() => {
     for (const [name, handler] of Object.entries(buildSagaHandlers())) sagaBus.register(name, handler);
-    setSagaActions(sagaActions);
     return () => setSagaActions(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Keep the saga actions current: deep links and IPC must see live state
+  // (workspaces, path, branches), not the values from the first render.
+  useEffect(() => { setSagaActions(sagaActions); });
 
   // Deep-link entry points: Electron IPC (chrono:deep-link), desktop bridge, web ?chrono=… fallback.
   useEffect(() => {

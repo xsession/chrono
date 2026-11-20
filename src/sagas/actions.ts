@@ -6,6 +6,8 @@ import type { SagaResult } from "./bus";
 export interface SagaActions {
   // Repo lifecycle
   openRepo(path: string): Promise<SagaResult>;
+  /** TortoiseGit-style action from the OS file manager (absolute paths). */
+  shellAction(action: import("../deeplink").ShellAction, paths: string[]): Promise<SagaResult>;
   promptOpenRepo(): Promise<SagaResult>;
   refresh(): Promise<SagaResult>;
   listKnownRepos(): Promise<string[]>;

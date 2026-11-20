@@ -306,6 +306,7 @@ export const api = {
   // TortoiseGit explorer
   explorerList: (path: string, dir: string) => invoke<ExplorerListing>("explorer_list", { path, dir }),
   explorerAction: (path: string, request: ExplorerActionRequest) => invoke<ExplorerActionResult>("explorer_action", { path, ...request }),
+  resolveShellPaths: (paths: string[]) => invoke<{ root: string; paths: string[]; isDir: boolean[]; directory: string }>("resolve_shell_paths", { paths }),
   explorerProperties: (path: string, file: string) => invoke<ExplorerProperties>("explorer_properties", { path, file }),
   explorerDiffFiles: (path: string, left: string, right: string) => invoke<FilePairDiff>("explorer_diff_files", { path, left, right }),
   explorerDiffPrevious: (path: string, file: string) => invoke<PreviousVersionDiff>("explorer_diff_previous", { path, file }),

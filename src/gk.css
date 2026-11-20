@@ -551,3 +551,6 @@ html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after 
 .tm-cell.is-dir { box-shadow: inset 0 0 0 1px #ffffff22; font-weight: 600; }
 .tm-cell:hover, .tm-cell:focus-visible { outline: 2px solid #fff; outline-offset: -2px; z-index: 1; }
 .tm-foot { display: flex; justify-content: space-between; gap: 10px; color: var(--gk-grey); font-size: 11px; }
+.st-shell { display: grid; gap: 6px; }
+.st-shell h4 { margin: 6px 0 0; font-size: 12px; }
+.st-table-row code { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 10.5px; }

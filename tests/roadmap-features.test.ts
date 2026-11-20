@@ -112,6 +112,16 @@ ok(streamedCommit.ok && read.done && read.exitCode === 0 && read.text.includes("
 ok(streams.readStream("test-stream-1", read.offset).text === "", "stream offsets advance");
 ok(streams.validStreamId("../etc") === null && streams.validStreamId("abc123") === "abc123", "stream ids are validated");
 
+// shell integration: absolute paths → repo-relative, deep-link parsing
+const explorer = await import("../server/src/explorer.ts");
+const resolved = await explorer.resolveShellPaths([path.join(repo, "a.txt"), repo]);
+ok(resolved.root === fs.realpathSync(repo) && resolved.paths[0] === "a.txt" && resolved.paths[1] === "." && resolved.isDir[1], "shell paths resolve to the repository");
+await assert.rejects(explorer.resolveShellPaths([os.tmpdir()]), /not inside a git working tree/); checks += 1;
+const { parseDeepLink } = await import("../src/deeplinkParse.ts");
+const link = parseDeepLink("chrono://tgit?action=commit&path=%2Fa%2Fb+c.txt&paths=%2Fx%0A%2Fy");
+ok(link?.command === "tgit" && link.params.action === "commit" && link.paths.join("|") === "/a/b c.txt|/x|/y", "tgit deep link collects every path");
+ok(parseDeepLink("http://localhost:1421/?chrono=tgit&action=log&path=%2Fr")?.paths[0] === "/r", "web fallback form parsed");
+
 // remote parsing
 ok(features.parseRemote("git@github.com:owner/repo.git")?.provider === "github", "scp-style GitHub remote parsed");
 ok(features.parseRemote("https://gitlab.example.com/group/sub/proj.git")?.owner === "group/sub", "nested GitLab group parsed");

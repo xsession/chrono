@@ -706,3 +706,35 @@ export async function openOnHost(inputPath: string, fileInput: string, mode: "op
   });
   return abs;
 }
+
+// ---------------------------------------------------------------------------
+// Shell integration: resolve absolute paths from the OS file manager
+// ---------------------------------------------------------------------------
+
+export interface ResolvedShellPaths { root: string; paths: string[]; isDir: boolean[]; directory: string }
+
+/** Map absolute paths (from a file-manager context menu) to their repository
+ *  root and repository-relative paths. All paths must share one repository. */
+export async function resolveShellPaths(absolutePaths: string[]): Promise<ResolvedShellPaths> {
+  if (!absolutePaths.length) throw invalidError("no paths supplied");
+  let root: string | null = null;
+  const paths: string[] = [];
+  const isDir: boolean[] = [];
+  for (const raw of absolutePaths.slice(0, 500)) {
+    const abs = path.resolve(raw.trim());
+    if (!path.isAbsolute(raw.trim())) throw invalidError(`not an absolute path: ${raw}`);
+    let stat: import("node:fs").Stats | null = null;
+    try { stat = await fs.stat(abs); } catch { stat = null; }
+    const dir = stat?.isDirectory() ? abs : path.dirname(abs);
+    const found = await repositoryRoot(dir).catch(() => null);
+    if (!found) throw invalidError(`${abs} is not inside a git working tree`);
+    if (root && found !== root) throw invalidError("the selected items belong to different repositories");
+    root = found;
+    const rel = path.relative(found, abs).split(path.sep).join("/");
+    paths.push(rel || ".");
+    isDir.push(Boolean(stat?.isDirectory()));
+  }
+  const first = paths[0] === "." ? "" : paths[0];
+  const directory = isDir[0] ? first : path.posix.dirname(first) === "." ? "" : path.posix.dirname(first);
+  return { root: root!, paths, isDir, directory };
+}

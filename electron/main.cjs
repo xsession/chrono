@@ -17,6 +17,25 @@ if (process.defaultApp) {
   app.setAsDefaultProtocolClient(PROTOCOL);
 }
 
+// Shell integration: the OS file-manager menu starts Chrono as
+//   Chrono --tgit=<action> <absolute path> [<absolute path> …]
+// (or passes a ready chrono:// URI). Both become a chrono://tgit deep link.
+function argvToDeepLink(argv) {
+  const uri = argv.find((arg) => typeof arg === "string" && arg.startsWith(`${PROTOCOL}://`));
+  if (uri) return uri;
+  const index = argv.findIndex((arg) => typeof arg === "string" && arg.startsWith("--tgit"));
+  if (index < 0) return null;
+  let action = argv[index].includes("=") ? argv[index].slice(argv[index].indexOf("=") + 1) : argv[index + 1];
+  const rest = argv.slice(argv[index].includes("=") ? index + 1 : index + 2);
+  if (!/^[a-z]+$/.test(action || "")) action = "explore";
+  const params = new URLSearchParams({ action });
+  for (const arg of rest) if (arg && !arg.startsWith("-") && path.isAbsolute(arg)) params.append("path", arg);
+  return params.getAll("path").length ? `${PROTOCOL}://tgit?${params.toString()}` : null;
+}
+
+const launchLink = argvToDeepLink(process.argv);
+if (launchLink) pendingDeepLinks.push(launchLink);
+
 function forwardDeepLink(uri) {
   if (!mainWindow || mainWindow.isDestroyed()) { pendingDeepLinks.push(uri); return; }
   mainWindow.webContents.send("chrono:deep-link", uri);
@@ -25,7 +44,7 @@ function forwardDeepLink(uri) {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", (_event, argv) => {
-    const uri = argv.find((arg) => arg.startsWith(`${PROTOCOL}://`));
+    const uri = argvToDeepLink(argv);
     if (uri) forwardDeepLink(uri);
     if (mainWindow && !mainWindow.isDestroyed()) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
   });

@@ -73,6 +73,10 @@
       {
         "from": "server",
         "to": "server"
+      },
+      {
+        "from": "shell-integration",
+        "to": "shell-integration"
       }
     ],
     "linux": {
@@ -91,6 +95,14 @@
       "target": [
         "dmg"
       ]
-    }
+    },
+    "protocols": [
+      {
+        "name": "Chrono",
+        "schemes": [
+          "chrono"
+        ]
+      }
+    ]
   }
 }

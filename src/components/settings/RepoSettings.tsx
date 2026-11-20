@@ -16,7 +16,7 @@ type Props = {
   initialTab?: SettingsTab;
 };
 
-export type SettingsTab = "identity" | "performance" | "hooks" | "links" | "templates" | "commands" | "gitflow" | "sparse" | "archive" | "display";
+export type SettingsTab = "identity" | "performance" | "hooks" | "links" | "templates" | "commands" | "gitflow" | "sparse" | "archive" | "display" | "shell";
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: IconName }> = [
   { id: "identity", label: "Identity & signing", icon: "users" },
@@ -29,6 +29,7 @@ const TABS: Array<{ id: SettingsTab; label: string; icon: IconName }> = [
   { id: "sparse", label: "Sparse checkout", icon: "filter" },
   { id: "archive", label: "Archived branches", icon: "stash" },
   { id: "display", label: "Display & accessibility", icon: "eye" },
+  { id: "shell", label: "File manager menu", icon: "folder" },
 ];
 
 const errorText = (error: unknown) => String(error).replace(/^Error: /, "");
@@ -352,6 +353,49 @@ function DisplayTab() {
   );
 }
 
+// ------------------------------------------------------------- shell menu
+const SHELL_ACTION_LABELS: Array<[string, string]> = [
+  ["commit", "Git Commit…"], ["log", "Show log"], ["diff", "Diff"], ["diffprev", "Diff with previous version"], ["blame", "Blame"],
+  ["modifications", "Check for modifications"], ["revert", "Revert…"], ["add", "Add…"], ["resolve", "Resolve"], ["cleanup", "Clean up…"],
+  ["stash", "Stash save…"], ["patch", "Create patch…"], ["sync", "Git Sync…"], ["properties", "Properties"], ["explore", "Open in Chrono Explorer"],
+  ["graph", "Show in Chrono graph"], ["terminal", "Open Git terminal here"],
+];
+
+function ShellTab({ repositoryPath }: Props) {
+  const [action, setAction] = useState("commit");
+  const [target, setTarget] = useState(repositoryPath);
+  const desktop = typeof window !== "undefined" && Boolean(window.chronoDesktop);
+  const protocolLink = `chrono://tgit?${new URLSearchParams({ action, path: target }).toString()}`;
+  const webLink = `${window.location.origin}/?chrono=tgit&${new URLSearchParams({ action, path: target }).toString()}`;
+  const copy = (text: string) => { void navigator.clipboard?.writeText(text).then(() => pushToast("Copied", "success", 2000)); };
+  return (
+    <>
+      <Section title="Right-click menu in your file manager" hint="Adds a TortoiseGit-style “Chrono” submenu to Windows Explorer, GNOME Files (Nautilus), Caja, Nemo, Dolphin or Finder. Each entry opens Chrono on the clicked files and runs the action — commit, log, diff, blame, revert, clean up…">
+        <div className="st-shell">
+          <h4>Windows Explorer</h4>
+          <p className="st-note">Per-user, no administrator rights. Run from the <code>shell-integration</code> folder (inside the Chrono install's <code>resources</code> folder or the source tree):</p>
+          <pre className="st-pre">powershell -ExecutionPolicy Bypass -File windows\install-context-menu.ps1{"\n"}# uninstall: add -Uninstall · custom install path: -ExePath "D:\Apps\Chrono\Chrono.exe"</pre>
+          <h4>Linux (Nautilus, Caja, Nemo, Dolphin)</h4>
+          <pre className="st-pre">sh shell-integration/linux/install.sh{"\n"}# uninstall: sh shell-integration/linux/install.sh --uninstall</pre>
+          <p className="st-note">The menu calls <code>~/.local/bin/chrono-open</code>. It starts the desktop app (<code>$CHRONO_BIN</code> or <code>chrono</code> on PATH), or opens the web build when <code>CHRONO_WEB_URL</code> is set (for this server: <code>{window.location.origin}</code>).</p>
+          <h4>macOS Finder</h4>
+          <p className="st-note">Create Automator Quick Actions that run <code>chrono-open &lt;action&gt; "$@"</code> — see <code>shell-integration/macos/README.md</code>.</p>
+        </div>
+      </Section>
+      <Section title="Try a link" hint={desktop ? "The desktop app handles chrono:// links directly." : "In the web build, use the http link (or set CHRONO_WEB_URL for chrono-open)."}>
+        <div className="st-grid">
+          <label>Action<select value={action} onChange={(event) => setAction(event.target.value)}>{SHELL_ACTION_LABELS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+          <label className="st-wide">Absolute path<input value={target} onChange={(event) => setTarget(event.target.value)} /></label>
+        </div>
+        <div className="st-table">
+          <div className="st-table-row"><strong>Protocol</strong><code>{protocolLink}</code><small /><div><button type="button" className="ux-button compact" onClick={() => copy(protocolLink)}>Copy</button></div></div>
+          <div className="st-table-row"><strong>Web</strong><code>{webLink}</code><small /><div><button type="button" className="ux-button compact" onClick={() => copy(webLink)}>Copy</button><button type="button" className="ux-button compact" onClick={() => window.dispatchEvent(new CustomEvent("chrono:deep-link", { detail: protocolLink }))}>Run now</button></div></div>
+        </div>
+      </Section>
+    </>
+  );
+}
+
 /** Repository settings: everything from the feature-gap roadmap that is
  *  configuration rather than a daily action lives here. */
 export function RepoSettings(props: Props) {
@@ -376,6 +420,7 @@ export function RepoSettings(props: Props) {
         {tab === "sparse" && <SparseTab {...props} />}
         {tab === "archive" && <ArchiveTab {...props} />}
         {tab === "display" && <DisplayTab />}
+        {tab === "shell" && <ShellTab {...props} />}
       </div>
     </div>
   );

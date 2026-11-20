@@ -408,6 +408,7 @@ const routes: Record<string, Handler> = {
       ? gk.journaled(bodyPath(body), action === "commit" ? (request.amend ? "Amend commit" : "Commit") : "Revert to revision", action === "commit" ? "soft" : "keep", () => explorer.runAction(bodyPath(body), request))
       : explorer.runAction(bodyPath(body), request);
   },
+  resolve_shell_paths: (body) => explorer.resolveShellPaths(strArray(body.paths, "paths")),
   explorer_properties: (body) => explorer.properties(bodyPath(body), typeof body.file === "string" ? body.file : ""),
   explorer_diff_files: (body) => explorer.diffTwoFiles(bodyPath(body), str(body.left, "left"), str(body.right, "right")),
   explorer_diff_previous: (body) => explorer.diffWithPrevious(bodyPath(body), str(body.file, "file")),

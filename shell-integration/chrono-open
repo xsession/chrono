@@ -1,0 +1,75 @@
+#!/bin/sh
+# chrono-open — send a TortoiseGit-style action from the file manager to Chrono.
+#
+#   chrono-open <action> [path ...]
+#
+# Actions: explore commit log diff diffprev blame revert add resolve cleanup
+#          modifications properties sync stash patch graph terminal
+#
+# Delivery, in order of preference:
+#   1. $CHRONO_BIN (or a `chrono` / `Chrono` executable on PATH):
+#        "$CHRONO_BIN" --tgit=<action> <absolute paths...>
+#   2. $CHRONO_WEB_URL (e.g. http://localhost:1421): opens
+#        $CHRONO_WEB_URL/?chrono=tgit&action=<action>&path=... in the browser
+#   3. the registered chrono:// protocol handler (desktop build):
+#        chrono://tgit?action=<action>&path=...
+set -eu
+
+action="${1:-explore}"
+[ "$#" -gt 0 ] && shift
+case "$action" in
+  explore|commit|log|diff|diffprev|blame|revert|add|resolve|cleanup|modifications|properties|sync|stash|patch|graph|terminal) ;;
+  *) echo "chrono-open: unknown action '$action'" >&2; exit 2 ;;
+esac
+
+# Collect absolute paths: Nautilus/Caja pass a newline-separated list in an
+# environment variable; everything else passes arguments.
+paths_file="$(mktemp)"
+trap 'rm -f "$paths_file"' EXIT
+selected="${NAUTILUS_SCRIPT_SELECTED_FILE_PATHS:-${CAJA_SCRIPT_SELECTED_FILE_PATHS:-}}"
+if [ -n "$selected" ]; then
+  printf '%s\n' "$selected" | while IFS= read -r line; do [ -n "$line" ] && printf '%s\n' "$line"; done > "$paths_file"
+elif [ "$#" -gt 0 ]; then
+  for item in "$@"; do
+    case "$item" in
+      file://*) item="$(python3 -c 'import sys,urllib.parse;print(urllib.parse.unquote(urllib.parse.urlparse(sys.argv[1]).path))' "$item")" ;;
+    esac
+    (cd "$(dirname -- "$item")" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$(basename -- "$item")") >> "$paths_file" || printf '%s\n' "$item" >> "$paths_file"
+  done
+else
+  pwd -P > "$paths_file"
+fi
+
+bin="${CHRONO_BIN:-}"
+if [ -z "$bin" ]; then
+  for candidate in chrono Chrono chrono-next; do
+    if command -v "$candidate" >/dev/null 2>&1; then bin="$(command -v "$candidate")"; break; fi
+  done
+fi
+if [ -z "$bin" ] && [ -x "/Applications/Chrono.app/Contents/MacOS/Chrono" ]; then bin="/Applications/Chrono.app/Contents/MacOS/Chrono"; fi
+
+if [ -n "$bin" ]; then
+  # Rebuild "$@" from the collected paths (one argv element per path).
+  set --
+  while IFS= read -r line; do set -- "$@" "$line"; done < "$paths_file"
+  exec "$bin" "--tgit=$action" "$@"
+fi
+
+query="$(python3 - "$action" "$paths_file" <<'PY'
+import sys, urllib.parse
+action, paths_file = sys.argv[1], sys.argv[2]
+paths = [line.rstrip("\n") for line in open(paths_file, encoding="utf-8") if line.strip()]
+print(urllib.parse.urlencode([("action", action)] + [("path", p) for p in paths]))
+PY
+)"
+
+if [ -n "${CHRONO_WEB_URL:-}" ]; then
+  url="${CHRONO_WEB_URL%/}/?chrono=tgit&$query"
+else
+  url="chrono://tgit?$query"
+fi
+
+if command -v xdg-open >/dev/null 2>&1; then exec xdg-open "$url"; fi
+if command -v open >/dev/null 2>&1; then exec open "$url"; fi
+echo "chrono-open: no way to open $url (install the desktop app or set CHRONO_WEB_URL)" >&2
+exit 1

@@ -9,6 +9,10 @@ import { askChoice, askConfirm, askFields, askText } from "../DialogHost";
 import { ExplorerDialogView, type ExplorerDialog } from "./ExplorerDialogs";
 import { pushToast } from "../../toastBus";
 
+/** Reveal (and optionally act on) items — used by "Show in Explorer" and by
+ *  chrono://tgit deep links from the operating system's file manager. */
+export type ExplorerFocus = { path: string; nonce: number; paths?: string[]; isDir?: boolean[]; action?: string };
+
 type Props = {
   repositoryPath: string;
   refreshKey: number;
@@ -19,7 +23,7 @@ type Props = {
   onNavigate: (view: RepositoryView) => void;
   onOpenTerminal: (dir: string) => void;
   /** reveal and select this repository-relative path */
-  focus?: { path: string; nonce: number } | null;
+  focus?: ExplorerFocus | null;
 };
 
 const OVERLAY_LABEL: Record<OverlayStatus, string> = {
@@ -182,10 +186,32 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
 
   useEffect(() => {
     if (!focus) return;
-    const parent = parentOf(focus.path);
-    setDir(parent);
-    setSelection([focus.path]);
-    setAnchor(focus.path);
+    const paths = focus.paths?.length ? focus.paths : [focus.path];
+    const firstIsDir = focus.isDir?.[0] ?? false;
+    const target = paths[0] === "." ? "" : paths[0];
+    // A folder chosen alone opens that folder; files reveal in their parent.
+    if (paths.length === 1 && firstIsDir) { setDir(target); setSelection([]); }
+    else { setDir(parentOf(target)); setSelection(paths.filter((item) => item !== ".")); setAnchor(target); }
+    const files = paths.map((item) => item || ".");
+    const single = paths.length === 1 ? files[0] : null;
+    const isFile = single !== null && !firstIsDir;
+    switch (focus.action) {
+      case "commit": setDialog({ kind: "commit", files }); break;
+      case "revert": setDialog({ kind: "revert", files }); break;
+      case "add": setDialog({ kind: "add", files }); break;
+      case "cleanup": setDialog({ kind: "cleanup", files }); break;
+      case "modifications": setDialog({ kind: "modifications", files }); break;
+      case "patch": setDialog({ kind: "patch", files }); break;
+      case "sync": setDialog({ kind: "sync" }); break;
+      case "log": setDialog({ kind: "log", file: single ?? files[0] }); break;
+      case "properties": setDialog({ kind: "properties", file: single ?? files[0] }); break;
+      case "diff": setDialog(isFile ? { kind: "diff", file: single!, mode: "working" } : paths.length === 2 && !focus.isDir?.some(Boolean) ? { kind: "diff-files", left: files[0], right: files[1] } : { kind: "modifications", files }); break;
+      case "diffprev": if (isFile) setDialog({ kind: "diff", file: single!, mode: "previous" }); else pushToast("Diff with previous version needs a single file", "info"); break;
+      case "blame": if (isFile) setDialog({ kind: "blame", file: single! }); else pushToast("Blame needs a single file", "info"); break;
+      case "resolve": void exec("Resolve", () => api.explorerAction(repositoryPath, { action: "resolve", files })); break;
+      case "stash": void (async () => { const message = await askText("Stash Save", "Message", `WIP on ${files.join(", ")}`); if (message !== null) await exec("Stash save", () => api.explorerAction(repositoryPath, { action: "stash_save", files, message })); })(); break;
+      default: break;
+    }
   }, [focus?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const updateSettings = (patch: Partial<ExplorerSettings>) => setSettings((value) => {
