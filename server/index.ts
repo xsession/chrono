@@ -23,6 +23,7 @@ import * as explorer from "./src/explorer.ts";
 import * as gk from "./src/gkOps.ts";
 import * as features from "./src/features.ts";
 import { withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
+import { readStream, validStreamId } from "./src/lib/streams.ts";
 import { listPullRequests } from "./src/provider.ts";
 import * as repo from "./src/repo.ts";
 import { loadWorkspaces, saveWorkspaces, type Workspace } from "./src/workspaces.ts";
@@ -324,12 +325,12 @@ const routes: Record<string, Handler> = {
   pull_repository: (body) => {
     const mode = typeof body.mode === "string" ? body.mode : "ff-only";
     if (mode !== "fetch" && mode !== "ff" && mode !== "ff-only" && mode !== "rebase") throw new AppError("invalid", "pull mode must be fetch, ff, ff-only or rebase");
-    return gk.journaled(bodyPath(body), `Pull (${mode})`, "keep", () => gk.pull(bodyPath(body), mode));
+    return gk.journaled(bodyPath(body), `Pull (${mode})`, "keep", () => gk.pull(bodyPath(body), mode, validStreamId(body.streamId)));
   },
   push_repository: (body) =>
     body.force === true || body.setUpstream === true || body.tags === true || optStr(body.remote) || optStr(body.branch)
-      ? gk.push(bodyPath(body), { remote: optStr(body.remote), branch: optStr(body.branch), force: body.force === true, setUpstream: body.setUpstream === true, tags: body.tags === true })
-      : gk.push(bodyPath(body), {}),
+      ? gk.push(bodyPath(body), { remote: optStr(body.remote), branch: optStr(body.branch), force: body.force === true, setUpstream: body.setUpstream === true, tags: body.tags === true, streamId: validStreamId(body.streamId) })
+      : gk.push(bodyPath(body), { streamId: validStreamId(body.streamId) }),
   clone_repository: (body) =>
     backend.cloneRepository({
       url: str(body.url, "url"),
@@ -435,7 +436,12 @@ const routes: Record<string, Handler> = {
   hook_set_enabled: (body) => features.setHookEnabled(bodyPath(body), str(body.name, "name"), bool(body.enabled, "enabled")),
   commit_with_hooks: (body) =>
     gk.journaled(bodyPath(body), body.amend === true ? "Amend commit" : "Commit", "soft", () =>
-      features.commitWithHooks(bodyPath(body), { message: typeof body.message === "string" ? body.message : "", amend: body.amend === true, signoff: body.signoff === true, noVerify: body.noVerify === true })),
+      features.commitWithHooks(bodyPath(body), { message: typeof body.message === "string" ? body.message : "", amend: body.amend === true, signoff: body.signoff === true, noVerify: body.noVerify === true, streamId: validStreamId(body.streamId) })),
+  stream_read: async (body) => {
+    const id = validStreamId(body.id);
+    if (!id) throw new AppError("invalid", "invalid stream id");
+    return readStream(id, typeof body.offset === "number" ? body.offset : 0);
+  },
   autolinks_get: (body) => features.getAutolinks(bodyPath(body)),
   autolinks_set: (body) => features.setAutolinks(bodyPath(body), (Array.isArray(body.rules) ? body.rules : []).map((rule) => ({ pattern: String((rule as Record<string, unknown>).pattern ?? ""), url: String((rule as Record<string, unknown>).url ?? "") }))),
   commit_templates: (body) => features.commitTemplates(bodyPath(body)),
@@ -496,6 +502,7 @@ const routes: Record<string, Handler> = {
     const kind = body.kind === "branch" || body.kind === "working" || body.kind === "pr" ? body.kind : "commit";
     return features.explain(bodyPath(body), kind, optStr(body.ref), optStr(body.base));
   },
+  repo_treemap: (body) => features.repoTreemap(bodyPath(body), optStr(body.revision) ?? "HEAD", typeof body.days === "number" ? body.days : 90),
   sparse_status: (body) => features.sparseStatus(bodyPath(body)),
   sparse_action: (body) => {
     const action = body.action === "add" || body.action === "reapply" || body.action === "disable" ? body.action : "set";

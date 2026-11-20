@@ -12,6 +12,16 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { AppError, invalidError } from "./lib/errors.ts";
 import { workspacesFile } from "./workspaces.ts";
+import { finishStream, runGitStreaming } from "./lib/streams.ts";
+
+/** Run with live output when a stream id is supplied; throws like `checked`. */
+async function streamed(root: string, args: string[], streamId: string | null | undefined): Promise<CommandResult> {
+  if (!streamId) return checked(root, args);
+  const out = await runGitStreaming(root, args, streamId);
+  finishStream(streamId, out.code);
+  if (out.code !== 0) throw new AppError("command", `git ${args.join(" ")}: ${out.stderr.replace(/\s+/g, " ").trim() || `exit code ${out.code}`}`);
+  return { stdout: out.stdout, stderr: out.stderr, exitCode: 0 };
+}
 import {
   parseNumstat,
   checked,
@@ -230,12 +240,13 @@ export async function redo(inputPath: string): Promise<string> {
 
 export type PullMode = "fetch" | "ff" | "ff-only" | "rebase";
 
-export async function pull(inputPath: string, mode: PullMode): Promise<CommandResult> {
+export async function pull(inputPath: string, mode: PullMode, streamId: string | null = null): Promise<CommandResult> {
+  const progress = streamId ? ["--progress"] : [];
   switch (mode) {
-    case "fetch": return checked(inputPath, ["fetch", "--all", "--prune", "--tags"]);
-    case "ff": return checked(inputPath, ["pull", "--no-rebase", "--ff"]);
-    case "ff-only": return checked(inputPath, ["pull", "--ff-only"]);
-    case "rebase": return checked(inputPath, ["pull", "--rebase", "--autostash"]);
+    case "fetch": return streamed(inputPath, ["fetch", "--all", "--prune", "--tags", ...progress], streamId);
+    case "ff": return streamed(inputPath, ["pull", "--no-rebase", "--ff", ...progress], streamId);
+    case "ff-only": return streamed(inputPath, ["pull", "--ff-only", ...progress], streamId);
+    case "rebase": return streamed(inputPath, ["pull", "--rebase", "--autostash", ...progress], streamId);
     default: throw invalidError("pull mode must be fetch, ff, ff-only or rebase");
   }
 }
@@ -246,6 +257,7 @@ export interface PushOptions {
   force?: boolean;
   setUpstream?: boolean;
   tags?: boolean;
+  streamId?: string | null;
 }
 
 function safeName(value: string, what: string): string {
@@ -273,8 +285,9 @@ export async function push(inputPath: string, options: PushOptions): Promise<Com
   if (options.force) args.push("--force-with-lease");
   if (options.setUpstream || !hasUpstream) args.push("--set-upstream");
   if (options.tags) args.push("--follow-tags");
+  if (options.streamId) args.push("--progress");
   args.push(remote, `refs/heads/${branch}:refs/heads/${hasUpstream && !options.remote ? upstream.stdout.trim().slice(remote.length + 1) : branch}`);
-  return checked(root, args);
+  return streamed(root, args, options.streamId);
 }
 
 // ---------------------------------------------------------------------------

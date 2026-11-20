@@ -3,7 +3,7 @@ import { api } from "../../api";
 import type { CheckRun, CleanupCandidate, RemoteHost } from "../../types";
 import { Icon } from "../Icon";
 import { pushToast } from "../../toastBus";
-import { ensureToken, forgetToken, getToken } from "../../providerTokens";
+import { ensureToken, forgetToken, getApiBase, getToken, setApiBase as saveApiBase } from "../../providerTokens";
 import { notifyIfHidden } from "../../notify";
 
 const errorText = (error: unknown) => String(error).replace(/^Error: /, "");
@@ -45,7 +45,7 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
   const [created, setCreated] = useState<{ number: number; url: string } | null>(null);
   const [apiBase, setApiBase] = useState("");
 
-  useEffect(() => { setHost(undefined); api.remoteHost(repositoryPath, remote).then((value) => { setHost(value); setApiBase(value?.apiBase ?? ""); }).catch(() => setHost(null)); }, [repositoryPath, remote]);
+  useEffect(() => { setHost(undefined); api.remoteHost(repositoryPath, remote).then((value) => { setHost(value); setApiBase(value ? getApiBase(value.host) || value.apiBase : ""); }).catch(() => setHost(null)); }, [repositoryPath, remote]);
   useEffect(() => { api.prTemplate(repositoryPath).then((template) => { if (template) setDescription((current) => current || template); }).catch(() => undefined); }, [repositoryPath]);
   useEffect(() => {
     let cancelled = false;
@@ -75,6 +75,7 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
     const token = await ensureToken(host.host, host.provider);
     if (!token) return;
     await run(`Create pull request ${head} → ${base}`, async () => {
+      if (apiBase && apiBase !== host.apiBase) saveApiBase(host.host, apiBase); else saveApiBase(host.host, "");
       const result = await api.createPullRequest(repositoryPath, { remote, token, head, base, title, description, draft, apiBase: apiBase || undefined });
       setCreated(result);
       notifyIfHidden("Pull request created", `#${result.number} ${title}`);
@@ -124,7 +125,7 @@ export function CiChecks({ repositoryPath, sha, remote = "origin" }: { repositor
     setLoading(true); setError(null);
     try {
       const previous = state?.state;
-      const next = await api.ciChecks(repositoryPath, sha, token, remote);
+      const next = await api.ciChecks(repositoryPath, sha, token, remote, getApiBase(host.host) || undefined);
       setState(next);
       if (previous && previous !== next.state && next.state === "failure") notifyIfHidden("CI failed", `${sha.slice(0, 8)} on ${host.owner}/${host.repository}`);
     } catch (reason) { setError(errorText(reason)); }
@@ -146,7 +147,7 @@ export function CiChecks({ repositoryPath, sha, remote = "origin" }: { repositor
               <span aria-hidden="true">{icon(check)}</span>
               <a href={check.url || undefined} target="_blank" rel="noreferrer" title={`${check.name}: ${check.conclusion || check.status}`}>{check.name}</a>
               <small>{check.conclusion || check.status}</small>
-              {check.rerunnable && <button type="button" className="ux-button compact" onClick={async () => { const token = await ensureToken(host.host, host.provider); if (!token) return; try { pushToast(await api.rerunCheck(repositoryPath, check, token, remote), "success"); } catch (reason) { pushToast(errorText(reason), "error"); } }}>Re-run</button>}
+              {check.rerunnable && <button type="button" className="ux-button compact" onClick={async () => { const token = await ensureToken(host.host, host.provider); if (!token) return; try { pushToast(await api.rerunCheck(repositoryPath, check, token, remote, getApiBase(host.host) || undefined), "success"); void load(false); } catch (reason) { pushToast(errorText(reason), "error"); } }}>Re-run</button>}
             </div>
           ))}
           {!state.checks.length && <div className="gk-empty">No checks reported for this commit.</div>}

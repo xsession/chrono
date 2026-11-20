@@ -99,6 +99,19 @@ fs.writeFileSync(path.join(repo, "x.png"), Buffer.from([137, 80, 78, 71])); git(
 const blob = await features.fileBlob(repo, "HEAD", "x.png");
 ok(blob.exists && blob.mime === "image/png" && blob.base64 === Buffer.from([137, 80, 78, 71]).toString("base64"), "blob served for image diff");
 
+// treemap + live output streams
+const treemap = await features.repoTreemap(repo, "HEAD", 365);
+ok(treemap.files.some((file) => file.path === "a.txt" && file.size > 0 && file.churn > 0), "treemap reports size and churn");
+const streams = await import("../server/src/lib/streams.ts");
+fs.writeFileSync(path.join(repo, ".git/hooks/pre-commit"), "#!/bin/sh\necho hook-line-1\necho hook-line-2 >&2\n", { mode: 0o755 });
+fs.chmodSync(path.join(repo, ".git/hooks/pre-commit"), 0o755);
+write("z.txt", "z\n"); git("add", "z.txt");
+const streamedCommit = await features.commitWithHooks(repo, { message: "streamed", streamId: "test-stream-1" });
+const read = streams.readStream("test-stream-1", 0);
+ok(streamedCommit.ok && read.done && read.exitCode === 0 && read.text.includes("hook-line-1") && read.text.includes("hook-line-2"), "hook output captured in the live stream");
+ok(streams.readStream("test-stream-1", read.offset).text === "", "stream offsets advance");
+ok(streams.validStreamId("../etc") === null && streams.validStreamId("abc123") === "abc123", "stream ids are validated");
+
 // remote parsing
 ok(features.parseRemote("git@github.com:owner/repo.git")?.provider === "github", "scp-style GitHub remote parsed");
 ok(features.parseRemote("https://gitlab.example.com/group/sub/proj.git")?.owner === "group/sub", "nested GitLab group parsed");

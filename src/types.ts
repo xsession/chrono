@@ -514,6 +514,7 @@ export type PushOptions = {
   force?: boolean;
   setUpstream?: boolean;
   tags?: boolean;
+  streamId?: string;
 };
 
 export type CommitOptions = {

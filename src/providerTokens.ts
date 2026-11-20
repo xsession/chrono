@@ -23,3 +23,13 @@ export async function ensureToken(host: string, provider: string): Promise<strin
 export function forgetToken(host: string): void {
   sessionStorage.removeItem(key(host));
 }
+
+// Per-host API base override (GitHub Enterprise, self-hosted GitLab/Gitea).
+const baseKey = (host: string) => `chrono.apiBase.${host}`;
+export function getApiBase(host: string): string {
+  return localStorage.getItem(baseKey(host)) ?? "";
+}
+export function setApiBase(host: string, value: string): void {
+  if (value.trim()) localStorage.setItem(baseKey(host), value.trim());
+  else localStorage.removeItem(baseKey(host));
+}

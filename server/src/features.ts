@@ -31,6 +31,7 @@ import {
   type CommitRecord,
 } from "./lib/git.ts";
 import { workspacesFile } from "./workspaces.ts";
+import { finishStream, runGitStreaming } from "./lib/streams.ts";
 
 const configDir = () => path.dirname(workspacesFile());
 
@@ -419,7 +420,7 @@ export interface HookCommitResult {
 
 /** Commit capturing the full hook output (pre-commit / commit-msg). On failure
  *  the UI shows the output and can retry with --no-verify explicitly. */
-export async function commitWithHooks(inputPath: string, options: { message: string; amend?: boolean; signoff?: boolean; noVerify?: boolean }): Promise<HookCommitResult> {
+export async function commitWithHooks(inputPath: string, options: { message: string; amend?: boolean; signoff?: boolean; noVerify?: boolean; streamId?: string | null }): Promise<HookCommitResult> {
   const root = await repositoryRoot(inputPath);
   const message = options.message.trim();
   if (!message && !options.amend) throw invalidError("commit message is empty");
@@ -430,7 +431,10 @@ export async function commitWithHooks(inputPath: string, options: { message: str
   if (options.signoff) args.push("--signoff");
   if (options.noVerify) args.push("--no-verify");
   if (message) args.push("-m", message); else args.push("--no-edit");
-  const out = await runGit(root, args, { FORCE_COLOR: "1", CLICOLOR_FORCE: "1" });
+  const out = options.streamId
+    ? await runGitStreaming(root, args, options.streamId, { FORCE_COLOR: "1", CLICOLOR_FORCE: "1" })
+    : await runGit(root, args, { FORCE_COLOR: "1", CLICOLOR_FORCE: "1" });
+  if (options.streamId) finishStream(options.streamId, out.code);
   const output = [out.stdout, out.stderr].filter(Boolean).join("\n");
   if (out.code === 0) {
     const sha = (await checkedStdout(root, ["rev-parse", "HEAD"])).trim();
@@ -1163,7 +1167,8 @@ export async function ciChecks(target: RemoteHost, token: string, sha: string): 
     const runs = await providerFetch(`${target.apiBase}/repos/${target.owner}/${target.repository}/commits/${rev}/check-runs?per_page=100`, { headers }) as { check_runs?: Array<Record<string, unknown>> };
     for (const run of runs.check_runs ?? []) {
       const details = String(run.details_url ?? run.html_url ?? "");
-      checks.push({ id: String(run.id), name: String(run.name), status: String(run.status), conclusion: String(run.conclusion ?? ""), url: details, rerunnable: /\/actions\/runs\/\d+/.test(details) });
+      const conclusion = String(run.conclusion ?? "");
+      checks.push({ id: String(run.id), name: String(run.name), status: String(run.status), conclusion, url: details, rerunnable: /\/actions\/runs\/\d+/.test(details) && ["failure", "cancelled", "timed_out", "action_required"].includes(conclusion) });
     }
     const combined = await providerFetch(`${target.apiBase}/repos/${target.owner}/${target.repository}/commits/${rev}/status`, { headers }).catch(() => null) as { statuses?: Array<Record<string, unknown>> } | null;
     for (const status of combined?.statuses ?? []) checks.push({ id: String(status.id), name: String(status.context), status: "completed", conclusion: String(status.state), url: String(status.target_url ?? ""), rerunnable: false });
@@ -1195,4 +1200,37 @@ export async function rerunCheck(target: RemoteHost, token: string, check: Check
     return `Retrying pipeline ${check.id}`;
   }
   throw new AppError("unsupported", "re-running checks is not supported for this provider");
+}
+
+// ===========================================================================
+// Repository treemap (size and churn per file)
+// ===========================================================================
+
+export interface TreemapFile { path: string; size: number; churn: number; commits: number }
+
+export async function repoTreemap(inputPath: string, revision: string, days: number): Promise<{ revision: string; files: TreemapFile[]; truncated: boolean; days: number }> {
+  const root = await repositoryRoot(inputPath);
+  const rev = safeRev(revision || "HEAD");
+  if (!(await hasHead(root))) return { revision: rev, files: [], truncated: false, days };
+  const tree = await checkedStdout(root, ["ls-tree", "-r", "-l", "-z", rev]);
+  const files = new Map<string, TreemapFile>();
+  for (const record of tree.split("\0")) {
+    const match = /^\d+ blob [0-9a-f]+\s+(\d+|-)\t(.+)$/.exec(record);
+    if (match) files.set(match[2], { path: match[2], size: match[1] === "-" ? 0 : Number(match[1]), churn: 0, commits: 0 });
+  }
+  const span = Math.min(Math.max(Math.floor(days) || 90, 1), 3650);
+  const log = await runGit(root, ["log", rev, `--since=${span}.days`, "--numstat", "--format=%x1e", "--no-renames", "-n", "20000"]);
+  for (const chunk of log.stdout.split("\u001e")) {
+    for (const line of chunk.split(/\r?\n/)) {
+      const [add, del, ...rest] = line.split("\t");
+      const file = rest.join("\t");
+      const entry = file ? files.get(file) : undefined;
+      if (!entry) continue;
+      entry.churn += (Number(add) || 0) + (Number(del) || 0);
+      entry.commits += 1;
+    }
+  }
+  const all = [...files.values()];
+  const LIMIT = 60000;
+  return { revision: rev, files: all.length > LIMIT ? all.sort((a, b) => b.size - a.size).slice(0, LIMIT) : all, truncated: all.length > LIMIT, days: span };
 }

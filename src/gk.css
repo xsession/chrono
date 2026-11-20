@@ -528,3 +528,26 @@ html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after 
 .st-command { display: grid; gap: 8px; padding: 10px; border-radius: 4px; background: var(--gk-bg-2); }
 .st-command > .ux-danger-button { justify-self: start; }
 .st-inline-form { padding-top: 6px; border-top: 1px dashed var(--gk-line); }
+
+/* live operation output */
+.live-output-host { position: fixed; right: 14px; bottom: 34px; z-index: 1200; display: grid; gap: 8px; width: min(520px, calc(100vw - 28px)); }
+.live-output { overflow: hidden; border: 1px solid var(--gk-line); border-radius: 6px; background: #15171c; box-shadow: 0 12px 34px #000a; }
+.live-output header { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-bottom: 1px solid var(--gk-line); background: var(--gk-bg-2); font-size: 11.5px; }
+.live-output header strong { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.live-output.is-ok header > span { color: var(--gk-green); }
+.live-output.is-failed { border-color: #7a3a40; }
+.live-output.is-failed header > span { color: var(--gk-red); }
+.live-output pre { max-height: 200px; margin: 0; padding: 8px 10px; overflow: auto; color: #cfd5de; font-family: var(--ux-mono); font-size: 11px; white-space: pre-wrap; }
+
+/* repository treemap */
+.tm-view { display: grid; grid-template-rows: auto minmax(360px, 1fr) auto; gap: 8px; min-height: 520px; height: 100%; }
+.tm-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tm-bar .tg-breadcrumb { flex: 1; min-width: 200px; }
+.tm-days { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--gk-grey); }
+.tm-days select { height: 24px; border: 1px solid var(--gk-line); border-radius: 3px; background: var(--gk-bg-1); }
+.tm-canvas { position: relative; min-height: 360px; overflow: hidden; border: 1px solid var(--gk-line); border-radius: 4px; background: var(--gk-bg-0); }
+.tm-cell { position: absolute; overflow: hidden; padding: 2px 4px; border: 0; border-radius: 2px; color: #eef2f7; font-size: 10.5px; text-align: left; vertical-align: top; display: flex; align-items: flex-start; }
+.tm-cell span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-shadow: 0 1px 2px #000a; }
+.tm-cell.is-dir { box-shadow: inset 0 0 0 1px #ffffff22; font-weight: 600; }
+.tm-cell:hover, .tm-cell:focus-visible { outline: 2px solid #fff; outline-offset: -2px; z-index: 1; }
+.tm-foot { display: flex; justify-content: space-between; gap: 10px; color: var(--gk-grey); font-size: 11px; }

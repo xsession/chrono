@@ -40,6 +40,7 @@ import { RepoSettings, type SettingsTab } from "./components/settings/RepoSettin
 import { AgentSessionDialog, CleanupDialog } from "./components/gk/HostingDialogs";
 import { notifyIfHidden } from "./notify";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { LiveOutputHost, withLiveOutput } from "./liveOutput";
 import { askFields } from "./components/DialogHost";
 
 const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
@@ -343,12 +344,13 @@ export default function App() {
 
   const runPull = useCallback((mode: PullMode) => {
     const label = mode === "fetch" ? "Fetch" : mode === "rebase" ? "Pull (rebase)" : "Pull";
-    void runRepositoryAction(label, () => api.pull(path, mode));
+    void runRepositoryAction(label, () => withLiveOutput(label, (streamId) => api.pull(path, mode, streamId)));
   }, [path, runRepositoryAction]);
 
   const runPush = useCallback(async (options: PushOptions) => {
     if (options.force && !(await askConfirm("Force push", `Force push ${summary?.branch ?? "HEAD"} with --force-with-lease? Remote commits not present locally will be overwritten.`, { confirm: "Force push", danger: true }))) return;
-    await runRepositoryAction(options.force ? "Force push" : "Push", () => api.push(path, options));
+    const label = options.force ? "Force push" : "Push";
+    await runRepositoryAction(label, () => withLiveOutput(label, (streamId) => api.push(path, { ...options, streamId })));
   }, [path, runRepositoryAction, summary?.branch]);
 
   const quickBranch = useCallback(async () => {
@@ -902,6 +904,7 @@ export default function App() {
       <KeyBindingsModal open={keybindingsOpen} onClose={() => setKeybindingsOpen(false)} onZoom={(direction) => zoom(direction)} />
       <ToastHost />
       <DialogHost />
+      <LiveOutputHost />
       {agentDialogOpen && path && (
         <AgentSessionDialog repositoryPath={path} defaultBase={summary?.branch ?? "HEAD"} onClose={() => setAgentDialogOpen(false)} onStarted={(worktree, command) => {
           setTerminalOpen(true);

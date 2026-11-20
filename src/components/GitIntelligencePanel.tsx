@@ -1,3 +1,4 @@
+import { RepoTreemap } from "./RepoTreemap";
 import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { ActivityDay, BlameResult, BranchRecord, CommitRecord, ContributorRecord, PullRequestRecord, RangeDiffEntry, RangeDiffResult, RefComparison, RemoteRecord, RepositoryHealth } from "../types";
@@ -5,7 +6,7 @@ import { api } from "../api";
 import { Icon } from "./Icon";
 import { RevisionDiffView } from "./RevisionDiffView";
 
-type Tab = "search" | "compare" | "review" | "health" | "file" | "blame" | "contributors" | "stats" | "pulls";
+type Tab = "search" | "compare" | "review" | "health" | "file" | "blame" | "contributors" | "stats" | "treemap" | "pulls";
 
 type PullRequestConfig = {
   provider: "github" | "gitlab" | "gitea" | "forgejo";
@@ -315,6 +316,7 @@ export function GitIntelligencePanel({ repositoryPath, branches, onOpenCommit }:
     { id: "blame", label: "Blame", icon: "eye" },
     { id: "contributors", label: "Contributors", icon: "users" },
     { id: "stats", label: "Activity", icon: "activity" },
+    { id: "treemap", label: "Treemap", icon: "list" },
     { id: "pulls", label: "Pull requests", icon: "list" }
   ];
 
@@ -426,6 +428,7 @@ export function GitIntelligencePanel({ repositoryPath, branches, onOpenCommit }:
           </div> : <div className="ux-empty-state">Load blame to see the commit, author and age of every line. This is repository data only; it does not annotate an external code editor.</div>}
         </>}
 
+        {tab === "treemap" && <RepoTreemap repositoryPath={repositoryPath} />}
         {tab === "stats" && <>
           <div className="ux-activity-controls">
             <div><strong>Commit activity</strong><span>All refs · authored commit dates</span></div>

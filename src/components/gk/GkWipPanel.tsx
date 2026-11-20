@@ -6,6 +6,7 @@ import { Icon } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askConfirm, askText } from "../DialogHost";
 import { pushToast } from "../../toastBus";
+import { withLiveOutput } from "../../liveOutput";
 
 type Props = {
   repositoryPath: string;
@@ -101,7 +102,7 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
     let succeeded = false;
     await run(amend ? "Amend commit" : "Commit", async () => {
       if (stageAllFirst) await api.stage(repositoryPath, unstaged.map((change) => change.path));
-      const result = await api.commitWithHooks(repositoryPath, message, { amend, signoff });
+      const result = await withLiveOutput(amend ? "Amend commit" : "Commit", (streamId) => api.commitWithHooks(repositoryPath, message, { amend, signoff, streamId }));
       if (!result.ok) { failure = result; throw new Error(result.hookFailed ? `${result.hookFailed} hook failed` : result.output.trim() || "commit failed"); }
       succeeded = true;
     });

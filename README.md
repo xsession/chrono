@@ -123,7 +123,7 @@ These features come from the roadmap in `reports/Git client feature gap analysis
 - **Pull requests and CI:**
   - Create GitHub pull requests, GitLab merge requests and Gitea/Forgejo pull requests, with the repository's PR template, a preview of the commits and diffstat, and a generated description.
   - The commit inspector shows CI check status and can re-run GitHub Actions jobs or GitLab pipelines.
-  - Provider tokens are kept for the browser session only.
+  - Provider tokens are kept for the browser session only. For GitHub Enterprise or self-hosted servers, set the API base in the pull-request dialog; Chrono remembers it per host.
 - **Custom commands:** your own commands, defined as one argument per line, appear in the palette and on the commit, branch and file menus. They support `$REPO`, `$BRANCH`, `$SHA`, `$FILES` and `$PARAM_name`, plus parameter dialogs. Each variable is substituted into a single argument, so values never pass through a shell. Commands other than git only run when the server listens on localhost.
 - **Image diff:** side by side, swipe, onion skin and pixel difference, with Git LFS content fetched through `git cat-file --filters`.
 - **Agent sessions:** creates a worktree on a new branch, opens a terminal there and starts an agent CLI (Claude Code, Codex, Gemini, Aider or any command). The worktree's uncommitted work shows as its own WIP entry above the graph.
@@ -134,6 +134,8 @@ These features come from the roadmap in `reports/Git client feature gap analysis
   - A colour-blind-safe graph palette, distinct node shapes per lane, high contrast and reduced motion.
   - F7 / Shift+F7 move between diff hunks.
   - Commit rows have descriptive screen-reader labels, and status messages are announced through `aria-live`.
+- **Live output:** commits, fetch, pull and push stream their output (hook messages, transfer progress) into a small console while they run. It appears only if an operation takes longer than a moment, and stays open if the operation fails.
+- **Treemap:** Git Intelligence → Treemap shows the repository as a squarified treemap. Area is file size or recent churn, colour is churn intensity, and clicking a folder drills into it.
 - **Notifications:** an optional desktop notification when a fetch, pull, push, rebase, clone or CI check finishes while Chrono is in the background.
 
 ## Run (web)

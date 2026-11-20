@@ -82,7 +82,7 @@ for (const control of ["Git Sync…", "Git Commit ->", "Diff with previous versi
   must("src/components/explorer/FileExplorer.tsx", control, `TortoiseGit menu has ${control}`);
 }
 
-for (const route of ["commit_signatures", "signing_config", "set_signing_config", "perf_status", "perf_apply", "search_advanced", "hooks_list", "hook_set_enabled", "commit_with_hooks", "autolinks_get", "autolinks_set", "commit_templates", "commit_templates_save", "fork_point", "predict_conflicts", "cleanup_candidates", "cleanup_branches", "archived_branches", "restore_archived", "stack_parents", "stack_set_parent", "stack_create", "stack_restack", "profiles_list", "profile_save", "profile_delete", "profile_apply", "profile_detach", "custom_commands", "custom_commands_save", "custom_command_run", "file_blob", "remote_host", "pr_template", "pr_create", "ci_checks", "ci_rerun", "agent_worktree_create", "agent_worktree_remove", "gitflow_config", "gitflow_init", "gitflow_start", "gitflow_finish", "ai_explain", "sparse_status", "sparse_action", "notes_get", "notes_set"]) {
+for (const route of ["commit_signatures", "signing_config", "set_signing_config", "perf_status", "perf_apply", "search_advanced", "hooks_list", "hook_set_enabled", "commit_with_hooks", "autolinks_get", "autolinks_set", "commit_templates", "commit_templates_save", "fork_point", "predict_conflicts", "cleanup_candidates", "cleanup_branches", "archived_branches", "restore_archived", "stack_parents", "stack_set_parent", "stack_create", "stack_restack", "profiles_list", "profile_save", "profile_delete", "profile_apply", "profile_detach", "custom_commands", "custom_commands_save", "custom_command_run", "file_blob", "remote_host", "pr_template", "pr_create", "ci_checks", "ci_rerun", "agent_worktree_create", "agent_worktree_remove", "gitflow_config", "gitflow_init", "gitflow_start", "gitflow_finish", "ai_explain", "sparse_status", "sparse_action", "notes_get", "notes_set", "stream_read", "repo_treemap"]) {
   must("server/index.ts", `${route}:`, `server exposes ${route}`);
 }
 for (const tab of ["IdentityTab", "PerformanceTab", "HooksTab", "LinksTab", "TemplatesTab", "CommandsTab", "GitflowTab", "SparseTab", "ArchiveTab", "DisplayTab"]) {
@@ -97,6 +97,11 @@ for (const control of ["commitWithHooks", "--no-verify", "applyTemplate", "Co-au
 for (const control of ["predictConflicts", "createStackedBranch", "api.restack", "PullRequestDialog", "CleanupDialog", "gitflowStart", "gitflowFinish"]) {
   must("src/components/gk/GkLeftPanel.tsx", control, `left panel binds ${control}`);
 }
+
+for (const control of ["withLiveOutput", "LiveOutputHost"]) {
+  must("src/App.tsx", control, `app binds ${control}`);
+}
+must("src/components/GitIntelligencePanel.tsx", "RepoTreemap", "intelligence renders the treemap");
 
 console.log(`\n${checks} UI contract checks, ${failures} failures`);
 process.exitCode = failures ? 1 : 0;
