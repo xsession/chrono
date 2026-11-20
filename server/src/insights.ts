@@ -417,7 +417,10 @@ export function parseUnifiedHunks(raw: string): CommitDiffHunk[] {
   let oldLine = 0;
   let newLine = 0;
   let counted = 0;
-  for (const line of raw.split("\n")) {
+  const rawLines = raw.split("\n");
+  // A diff ends with a newline; the empty string after it is not a line.
+  if (rawLines.length && rawLines[rawLines.length - 1] === "") rawLines.pop();
+  for (const line of rawLines) {
     const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@\s*(.*)$/.exec(line);
     if (header) {
       current = {

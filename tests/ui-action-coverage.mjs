@@ -82,7 +82,7 @@ for (const control of ["Git Sync…", "Git Commit ->", "Diff with previous versi
   must("src/components/explorer/FileExplorer.tsx", control, `TortoiseGit menu has ${control}`);
 }
 
-for (const route of ["commit_signatures", "signing_config", "set_signing_config", "perf_status", "perf_apply", "search_advanced", "hooks_list", "hook_set_enabled", "commit_with_hooks", "autolinks_get", "autolinks_set", "commit_templates", "commit_templates_save", "fork_point", "predict_conflicts", "cleanup_candidates", "cleanup_branches", "archived_branches", "restore_archived", "stack_parents", "stack_set_parent", "stack_create", "stack_restack", "profiles_list", "profile_save", "profile_delete", "profile_apply", "profile_detach", "custom_commands", "custom_commands_save", "custom_command_run", "file_blob", "remote_host", "pr_template", "pr_create", "ci_checks", "ci_rerun", "agent_worktree_create", "agent_worktree_remove", "gitflow_config", "gitflow_init", "gitflow_start", "gitflow_finish", "ai_explain", "sparse_status", "sparse_action", "notes_get", "notes_set", "stream_read", "repo_treemap", "resolve_shell_paths"]) {
+for (const route of ["commit_signatures", "signing_config", "set_signing_config", "perf_status", "perf_apply", "search_advanced", "hooks_list", "hook_set_enabled", "commit_with_hooks", "autolinks_get", "autolinks_set", "commit_templates", "commit_templates_save", "fork_point", "predict_conflicts", "cleanup_candidates", "cleanup_branches", "archived_branches", "restore_archived", "stack_parents", "stack_set_parent", "stack_create", "stack_restack", "profiles_list", "profile_save", "profile_delete", "profile_apply", "profile_detach", "custom_commands", "custom_commands_save", "custom_command_run", "file_blob", "remote_host", "pr_template", "pr_create", "ci_checks", "ci_rerun", "agent_worktree_create", "agent_worktree_remove", "gitflow_config", "gitflow_init", "gitflow_start", "gitflow_finish", "ai_explain", "sparse_status", "sparse_action", "notes_get", "notes_set", "stream_read", "repo_treemap", "resolve_shell_paths", "file_diff_side", "apply_lines"]) {
   must("server/index.ts", `${route}:`, `server exposes ${route}`);
 }
 for (const tab of ["IdentityTab", "PerformanceTab", "HooksTab", "LinksTab", "TemplatesTab", "CommandsTab", "GitflowTab", "SparseTab", "ArchiveTab", "DisplayTab"]) {
@@ -106,6 +106,10 @@ for (const action of ["commit", "log", "diff", "diffprev", "blame", "revert", "a
   must("src/components/explorer/FileExplorer.tsx", `case "${action}":`, `shell action ${action} handled by the explorer`);
 }
 must("src/App.tsx", "shellAction", "app handles shell actions");
+for (const control of ["Stage lines", "Unstage lines", "Discard lines", "Stage hunk", "Unstage hunk", "Discard hunk", "api.applyLines", "api.fileDiffSide"]) {
+  must("src/components/gk/LineStagingDiff.tsx", control, `line staging binds ${control}`);
+}
+must("src/App.tsx", "LineStagingDiff", "WIP diff uses line staging");
 must("electron/main.cjs", "argvToDeepLink", "desktop shell maps --tgit arguments");
 
 console.log(`\n${checks} UI contract checks, ${failures} failures`);

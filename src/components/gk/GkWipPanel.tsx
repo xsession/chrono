@@ -15,7 +15,7 @@ type Props = {
   busy: boolean;
   operationActive: boolean;
   run: (label: string, action: () => Promise<unknown>) => Promise<void>;
-  onOpenDiff: (file: string) => void;
+  onOpenDiff: (file: string, group: Group) => void;
   openDiff: string | null;
   onResolveConflicts: () => void;
   onShowInExplorer: (file: string) => void;
@@ -153,7 +153,7 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
       group === "unstaged"
         ? { id: "stage", label: targets.length > 1 ? `Stage ${targets.length} files` : "Stage file", icon: "plus", disabled: busy, onSelect: () => run("Stage", () => api.stage(repositoryPath, targets)) }
         : { id: "unstage", label: targets.length > 1 ? `Unstage ${targets.length} files` : "Unstage file", icon: "minus", disabled: busy, onSelect: () => run("Unstage", () => api.unstage(repositoryPath, targets)) },
-      { id: "diff", label: "Open diff", icon: "diff", onSelect: () => onOpenDiff(change.path) },
+      { id: "diff", label: "Open diff (stage lines)", icon: "diff", onSelect: () => onOpenDiff(change.path, group) },
       ...(change.conflicted ? [{ id: "resolve", label: "Resolve in Conflict Center", icon: "warning" as const, onSelect: onResolveConflicts }] : []),
       { kind: "separator", id: "s1" },
       { id: "discard", label: targets.length > 1 ? `Discard changes to ${targets.length} files` : "Discard changes", icon: "trash", danger: true, disabled: busy, onSelect: () => discard(targets) },
@@ -202,8 +202,8 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
           role="button"
           tabIndex={0}
           title={`${meta.label}: ${change.path}`}
-          onClick={(event) => { if (!toggleSelect(event, change.path)) onOpenDiff(change.path); }}
-          onKeyDown={(event) => { if (event.key === "Enter") onOpenDiff(change.path); }}
+          onClick={(event) => { if (!toggleSelect(event, change.path)) onOpenDiff(change.path, group); }}
+          onKeyDown={(event) => { if (event.key === "Enter") onOpenDiff(change.path, group); }}
           onContextMenu={(event) => { if (!selected.has(change.path)) setSelected(new Set([change.path])); menu.open(event, fileMenu(change, group), change.path); }}
         >
           <span className={`gk-file-badge is-${meta.kind}`} aria-label={meta.label}>{meta.mark}</span>

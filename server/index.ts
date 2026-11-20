@@ -22,6 +22,7 @@ import * as rebasePlanner from "./src/rebasePlanner.ts";
 import * as explorer from "./src/explorer.ts";
 import * as gk from "./src/gkOps.ts";
 import * as features from "./src/features.ts";
+import * as lineStaging from "./src/lineStaging.ts";
 import { withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
 import { readStream, validStreamId } from "./src/lib/streams.ts";
 import { rejectReason, type GuardOptions } from "./src/lib/requestGuard.ts";
@@ -388,6 +389,15 @@ const routes: Record<string, Handler> = {
     gk.remoteAction(bodyPath(body), str(body.action, "action") as gk.RemoteAction, str(body.name, "name"), optStr(body.value)),
   commit_offset: (body) => gk.commitOffset(bodyPath(body), str(body.revision, "revision")),
   diff_commit_files: (body) => gk.diffCommitFiles(bodyPath(body), str(body.from, "from"), str(body.to, "to")),
+  file_diff_side: (body) => lineStaging.sideDiff(bodyPath(body), str(body.file, "file"), body.side === "staged" ? "staged" : "unstaged"),
+  apply_lines: (body) => {
+    const mode = body.mode === "unstage" || body.mode === "discard" ? body.mode : "stage";
+    const selection = (Array.isArray(body.selection) ? body.selection : []).map((raw) => {
+      const item = (raw ?? {}) as Record<string, unknown>;
+      return { hunk: num(item.hunk, "selection[].hunk"), lines: numArray(item.lines ?? [], "selection[].lines") };
+    });
+    return lineStaging.applyLines(bodyPath(body), str(body.file, "file"), mode, selection, optStr(body.fingerprint));
+  },
   stash_files: (body) => gk.stashFiles(bodyPath(body), str(body.ref, "ref")),
 
   // TortoiseGit explorer: overlays, context-menu actions, properties, diffs.

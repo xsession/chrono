@@ -80,6 +80,9 @@ import type {
   ExplainKind,
   DiffOptions,
   CloneOptions,
+  DiffSide,
+  LineMode,
+  SideDiff,
 } from "./types";
 
 // Diff display options (Settings → Display) are attached to diff viewer calls.
@@ -241,6 +244,9 @@ export const api = {
   commitOffset: (path: string, revision: string) => invoke<number | null>("commit_offset", { path, revision }),
   diffCommitFiles: (path: string, from: string, to: string) =>
     invoke<CommitFileChange[]>("diff_commit_files", { path, from, to }),
+  fileDiffSide: (path: string, file: string, side: DiffSide) => invoke<SideDiff>("file_diff_side", { path, file, side }),
+  applyLines: (path: string, file: string, mode: LineMode, selection: Array<{ hunk: number; lines: number[] }>, fingerprint: string | null) =>
+    invoke<CommandResult>("apply_lines", { path, file, mode, selection, fingerprint }),
   stashFiles: (path: string, ref: string) => invoke<StashFile[]>("stash_files", { path, ref }),
 
   // Roadmap Tier 1

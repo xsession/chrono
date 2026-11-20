@@ -701,3 +701,8 @@ export type FlowType = "feature" | "release" | "hotfix" | "support";
 export type ExplainKind = "commit" | "branch" | "working" | "pr";
 export type DiffOptions = { whitespace?: "all" | "change" | "eol" | "none"; algorithm?: "myers" | "minimal" | "patience" | "histogram" };
 export type CloneOptions = { depth?: number | null; filter?: "blob:none" | "tree:0" | null; sparse?: boolean; branch?: string | null; singleBranch?: boolean };
+
+// Line-level staging
+export type DiffSide = "unstaged" | "staged";
+export type LineMode = "stage" | "unstage" | "discard";
+export type SideDiff = { path: string; side: DiffSide; binary: boolean; untracked: boolean; additions: number; deletions: number; fingerprint: string; hunks: CommitDiffHunk[] };

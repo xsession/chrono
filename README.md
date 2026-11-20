@@ -87,6 +87,7 @@ The Graph view follows GitKraken's layout:
 
 - **Toolbar:** repository and branch pickers, Undo / Redo, Pull▾ (Fetch All, fast-forward if possible, fast-forward only, rebase; the checked mode becomes the default), Push▾ (set upstream, with tags, force-with-lease), Branch, Stash, Pop, Explorer, Terminal and Search.
 - **Left panel:** LOCAL (folder-grouped, ahead/behind counts), REMOTE (per remote, add/edit/prune/remove), WORKTREES, STASHES (shows a stash's files inline), TAGS, SUBMODULES and PULL REQUESTS. It has a filter and full context menus. Drag a branch onto another branch to merge, rebase, fast-forward or reset it.
+- **Line-level staging:** clicking a file in the WIP panel opens its diff with *Unstaged* and *Staged* tabs. Click, drag or Shift+click to select lines, then *Stage lines* / *Unstage lines* / *Discard lines*, or act on a whole hunk. Keys: S stages, U unstages, Esc clears, Ctrl+A selects all. Chrono builds a patch from just the selected lines and applies it with `git apply --recount`. This also works for untracked files and files without a trailing newline, and a diff that changed meanwhile is refused.
 - **`// WIP` node:** sits above the newest commit. Clicking it opens the commit panel: Unstaged and Staged lists (path or tree view), stage/unstage all, per-file menus (discard, stash, ignore, history, show in Explorer), a summary with a 72-character counter, a description, amend, sign-off and AI draft. Ctrl+Enter commits.
 - **Undo / Redo** (Ctrl+Z / Ctrl+Y): the server records the effect of each Chrono action on branches and HEAD (commit, checkout, branch create/delete, reset, merge, pull, cherry-pick, revert). Undo restores the previous state, using `reset --soft` for commits and `reset --keep` otherwise. Redo re-applies it. Both refuse to run if the repository was changed outside Chrono in the meantime. The journal is saved to `undo-journal.json` in the config directory, so it survives server restarts.
 - **Compare two commits:** select a commit, then Ctrl+click (⌘+click) another. The right panel lists the files that differ between them and clicking a file shows its diff over the graph.
@@ -229,6 +230,7 @@ npm run test:graph     # commit-graph layout engine unit tests
 npm run test:git       # shell smoke tests against real temp Git repositories
 npm run test:api       # boots the API server and exercises every /api route
 npm run test:ui-contract # verifies every visible view/control remains wired
+npm run test:lines     # line-level stage/unstage/discard edge cases
 npm run test:roadmap   # signing/hooks/stacks/cleanup/git-flow/custom-command smoke test
 ```
 

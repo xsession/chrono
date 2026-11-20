@@ -31,7 +31,7 @@ import { GitIntelligencePanel } from "./components/GitIntelligencePanel";
 import { GkToolbar } from "./components/gk/GkToolbar";
 import { GkLeftPanel } from "./components/gk/GkLeftPanel";
 import { GkWipPanel } from "./components/gk/GkWipPanel";
-import { WorkingDiffView } from "./components/WorkingDiffView";
+import { LineStagingDiff } from "./components/gk/LineStagingDiff";
 import { FileExplorer } from "./components/explorer/FileExplorer";
 import { DialogHost, askConfirm, askText } from "./components/DialogHost";
 import type { GraphExtraAction } from "./components/CommitGraph";
@@ -105,6 +105,7 @@ export default function App() {
   const [stashCount, setStashCount] = useState(0);
   const [wipSelected, setWipSelected] = useState(false);
   const [wipDiff, setWipDiff] = useState<string | null>(null);
+  const [wipDiffSide, setWipDiffSide] = useState<"unstaged" | "staged">("unstaged");
   const [scrollTo, setScrollTo] = useState<{ id: string; nonce: number } | null>(null);
   const [explorerFocus, setExplorerFocus] = useState<ExplorerFocus | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
@@ -827,7 +828,7 @@ export default function App() {
                 onRestoreFile={(revision, file) => runRepositoryAction(`Restore ${file} from ${revision.slice(0, 8)}`, () => api.explorerAction(path, { action: "checkout_revision", files: [file], revision }))}
                 overlay={wipSelected && wipDiff ? (
                   <div className="gk-center-overlay">
-                    <WorkingDiffView repositoryPath={path} file={wipDiff} onClose={() => setWipDiff(null)} onStageHunks={async (file, hunks) => { await api.stageHunks(path, file, hunks); await refresh(); }} />
+                    <LineStagingDiff repositoryPath={path} file={wipDiff} initialSide={wipDiffSide} onClose={() => setWipDiff(null)} onChanged={() => refresh()} />
                   </div>
                 ) : undefined}
                 inspector={wipSelected && dirtyCount > 0 ? (
@@ -839,7 +840,7 @@ export default function App() {
                     operationActive={operationActive}
                     run={runRepositoryAction}
                     openDiff={wipDiff}
-                    onOpenDiff={(file) => setWipDiff((current) => (current === file ? null : file))}
+                    onOpenDiff={(file, group) => { setWipDiffSide(group); setWipDiff((current) => (current === file && wipDiffSide === group ? null : file)); }}
                     onResolveConflicts={() => setView("conflicts")}
                     onShowInExplorer={(file) => { setExplorerFocus({ path: file, nonce: Date.now() }); setView("explorer"); }}
                     onFileHistory={() => setView("insights")}
