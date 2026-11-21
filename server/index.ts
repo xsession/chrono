@@ -23,6 +23,7 @@ import * as explorer from "./src/explorer.ts";
 import * as gk from "./src/gkOps.ts";
 import * as features from "./src/features.ts";
 import * as lineStaging from "./src/lineStaging.ts";
+import * as submodules from "./src/submodules.ts";
 import { withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
 import { readStream, validStreamId } from "./src/lib/streams.ts";
 import { rejectReason, type GuardOptions } from "./src/lib/requestGuard.ts";
@@ -389,6 +390,13 @@ const routes: Record<string, Handler> = {
     gk.remoteAction(bodyPath(body), str(body.action, "action") as gk.RemoteAction, str(body.name, "name"), optStr(body.value)),
   commit_offset: (body) => gk.commitOffset(bodyPath(body), str(body.revision, "revision")),
   diff_commit_files: (body) => gk.diffCommitFiles(bodyPath(body), str(body.from, "from"), str(body.to, "to")),
+  submodule_tree: (body) => submodules.submoduleTree(bodyPath(body)),
+  submodule_action: (body) => {
+    const action = str(body.action, "action");
+    if (!["init", "update", "update_remote", "sync", "fetch", "deinit"].includes(action)) throw new AppError("invalid", `unknown submodule action ${action}`);
+    return submodules.submoduleAction(bodyPath(body), action as submodules.SubmoduleAction, typeof body.target === "string" ? body.target : "");
+  },
+  superproject_chain: (body) => submodules.superprojectChain(bodyPath(body)),
   file_diff_side: (body) => lineStaging.sideDiff(bodyPath(body), str(body.file, "file"), body.side === "staged" ? "staged" : "unstaged"),
   apply_lines: (body) => {
     const mode = body.mode === "unstage" || body.mode === "discard" ? body.mode : "stage";

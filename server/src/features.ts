@@ -28,8 +28,7 @@ import {
   runGit,
   runGitRaw,
   type CommandResult,
-  type CommitRecord,
-} from "./lib/git.ts";
+  type CommitRecord, HISTORY_ALL_REFS } from "./lib/git.ts";
 import { workspacesFile } from "./workspaces.ts";
 import { finishStream, runGitStreaming } from "./lib/streams.ts";
 
@@ -362,11 +361,11 @@ export async function advancedSearch(inputPath: string, query: string, limit: nu
     const out = await runGit(root, ["log", "-1", "--date=iso-strict", `--pretty=format:${COMMIT_FORMAT}`, sha]);
     return { commits: out.code === 0 ? parseCommits(out.stdout) : [], description: description.join(" · ") };
   }
-  args.push(ref ?? "--all");
+  args.push(...(ref ? [ref] : HISTORY_ALL_REFS));
   if (paths.length) args.push("--", ...paths);
   let commits = parseCommits((await runGit(root, args)).stdout);
   if (negativeGreps.length) {
-    const negArgs = ["log", "--format=%H", "-i", ...negativeGreps.map((grep) => `--grep=${grep}`), ref ?? "--all"];
+    const negArgs = ["log", "--format=%H", "-i", ...negativeGreps.map((grep) => `--grep=${grep}`), ...(ref ? [ref] : HISTORY_ALL_REFS)];
     const excluded = new Set((await runGit(root, negArgs)).stdout.split(/\r?\n/).filter(Boolean));
     commits = commits.filter((commit) => !excluded.has(commit.id));
   }

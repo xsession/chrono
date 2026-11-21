@@ -254,3 +254,9 @@ export function parseNumstat(output: string): FileChangeStat[] {
   }
   return result;
 }
+
+/** `--all` for history views, minus internal refs that are not branch history
+ *  (git notes and Chrono's own archive refs would otherwise show up as
+ *  orphan "Notes added by 'git notes add'" commits in the graph). The
+ *  `--exclude` options must precede `--all`. */
+export const HISTORY_ALL_REFS = ["--exclude=refs/notes/*", "--exclude=refs/chrono/*", "--all"] as const;

@@ -29,8 +29,7 @@ import {
   hasHead,
   repositoryRoot,
   runGit,
-  type CommandResult,
-} from "./lib/git.ts";
+  type CommandResult, HISTORY_ALL_REFS } from "./lib/git.ts";
 
 // ---------------------------------------------------------------------------
 // Ref snapshots + journal
@@ -508,7 +507,7 @@ export async function commitOffset(inputPath: string, revision: string): Promise
   const rev = revision.trim();
   if (!rev || rev.startsWith("-") || rev.includes("\0")) throw invalidError("invalid revision");
   const sha = (await checkedStdout(inputPath, ["rev-parse", "--verify", `${rev}^{commit}`])).trim();
-  const list = await checkedStdout(inputPath, ["rev-list", "--all", "--date-order"]);
+  const list = await checkedStdout(inputPath, ["rev-list", ...HISTORY_ALL_REFS, "--date-order"]);
   const index = list.split("\n").indexOf(sha);
   return index >= 0 ? index : null;
 }

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { api } from "../../api";
-import type { BranchRef, FlowType, GitflowConfig, RefGroups, RemoteRecord, StashFile, TagRecord } from "../../types";
+import type { BranchRef, FlowType, GitflowConfig, RefGroups, RemoteRecord, StashFile, SubmoduleTree, TagRecord } from "../../types";
+import { submoduleStatus } from "./SubmoduleMap";
 import { CleanupDialog, PullRequestDialog } from "./HostingDialogs";
 import type { SettingsTab } from "../settings/RepoSettings";
 import { Icon, type IconName } from "../Icon";
@@ -22,13 +23,15 @@ type Props = {
   onStashCount?: (count: number) => void;
   onOpenSettings?: (tab: SettingsTab) => void;
   onNewAgentSession?: () => void;
+  onOpenSubmoduleMap?: () => void;
 };
 
 type SectionId = "local" | "remote" | "worktrees" | "stashes" | "tags" | "submodules" | "prs";
 const COLLAPSE_KEY = "chrono.gk.leftPanel.collapsed";
 
 function loadCollapsed(): Set<SectionId> {
-  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? "[]") as SectionId[]); } catch { return new Set(); }
+  // First run: keep the panel calm — only LOCAL and SUBMODULES open.
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) ?? '["remote","tags","stashes","worktrees"]') as SectionId[]); } catch { return new Set(); }
 }
 
 type TreeNode = { name: string; full: string; children: Map<string, TreeNode>; branch: BranchRef | null };
@@ -57,7 +60,7 @@ const copy = async (text: string) => {
 /** GitKraken-style left panel: LOCAL / REMOTE / WORKTREES / STASHES / TAGS /
  *  SUBMODULES / PULL REQUESTS with folder-grouped branch trees, ahead/behind
  *  counters, filter, context menus and drag-and-drop merge/rebase. */
-export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRevision, onOpenRepository, onStartRebase, onOpenPullRequests, onStashCount, onOpenSettings, onNewAgentSession }: Props) {
+export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRevision, onOpenRepository, onStartRebase, onOpenPullRequests, onStashCount, onOpenSettings, onNewAgentSession, onOpenSubmoduleMap }: Props) {
   const [parents, setParents] = useState<Record<string, string>>({});
   const [flow, setFlow] = useState<GitflowConfig | null>(null);
   const [prFor, setPrFor] = useState<{ head: string; base: string } | null>(null);
@@ -71,6 +74,19 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
   const [openStash, setOpenStash] = useState<string | null>(null);
   const [stashFiles, setStashFiles] = useState<StashFile[] | null>(null);
   const menu = useContextMenu();
+  const [subTree, setSubTree] = useState<SubmoduleTree | null>(null);
+  const [openSubs, setOpenSubs] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+    api.submoduleTree(repositoryPath).then((tree) => {
+      if (cancelled) return;
+      setSubTree(tree);
+      setOpenSubs((current) => (current.size ? current : new Set(tree.nodes.filter((node) => node.attentionBelow > 0).map((node) => node.path))));
+    }).catch(() => { if (!cancelled) setSubTree(null); });
+    return () => { cancelled = true; };
+  }, [repositoryPath, refreshKey]);
+  useEffect(() => { setOpenSubs(new Set()); }, [repositoryPath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,7 +126,18 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
   const tags = (refs?.tags ?? []).filter((tag) => matches(tag.name));
   const stashes = (refs?.stashes ?? []).filter((stash) => matches(stash.message));
   const worktrees = (refs?.worktrees ?? []).filter((worktree) => matches(`${worktree.branch ?? ""} ${worktree.path}`));
-  const submodules = (refs?.submodules ?? []).filter((submodule) => matches(submodule.path));
+  const subNodes = subTree?.nodes ?? [];
+  const subVisible = useMemo(() => {
+    const byPath = new Map(subNodes.map((node) => [node.path, node]));
+    if (needle) {
+      const keep = new Set<string>();
+      for (const node of subNodes) if (matches(node.path)) for (let cursor: string | null = node.path; cursor; cursor = byPath.get(cursor)?.parent ?? null) keep.add(cursor);
+      return subNodes.filter((node) => keep.has(node.path));
+    }
+    const shown = (node: (typeof subNodes)[number]): boolean => !node.parent || (openSubs.has(node.parent) && shown(byPath.get(node.parent)!));
+    return subNodes.filter(shown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subNodes, openSubs, needle]);
   const fullName = (branch: BranchRef) => (branch.remote ? `${branch.remote}/${branch.name}` : branch.name);
 
   // ------------------------------------------------------------------ actions
@@ -371,6 +398,9 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
 
   const section = (id: SectionId, title: string, icon: IconName, count: number, body: ReactNode, extra?: { onAdd?: () => void; addTitle?: string; onContext?: (event: ReactMouseEvent) => void }) => {
     const isCollapsed = collapsed.has(id);
+    // Empty sections are noise: hide them unless the user is filtering.
+    const alwaysShown = id === "local" || id === "remote";
+    if (!alwaysShown && !needle && (count === 0 || (id === "worktrees" && count <= 1))) return null;
     return (
       <section className={`gk-section${isCollapsed ? " is-collapsed" : ""}`} aria-label={title}>
         <header onContextMenu={extra?.onContext}>
@@ -413,8 +443,34 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
               { id: "cleanup", label: "Clean up merged & stale branches…", icon: "trash", onSelect: () => setCleanupOpen(true) },
               flowMenu(),
               { id: "agent", label: "New agent session…", icon: "terminal", disabled: !onNewAgentSession, onSelect: () => onNewAgentSession?.() },
+              { id: "prs", label: "Pull request triage…", icon: "compare", onSelect: onOpenPullRequests },
             ], "Local branches"),
           })}
+          {section("submodules", "SUBMODULES", "submodule", subNodes.length, subVisible.map((node) => {
+            const absolute = `${(subTree?.root ?? repositoryPath).replace(/[\\/]$/, "")}/${node.path}`;
+            const status = submoduleStatus(node);
+            const isOpen = needle !== "" || openSubs.has(node.path);
+            const toggleSub = () => setOpenSubs((current) => { const next = new Set(current); if (next.has(node.path)) next.delete(node.path); else next.add(node.path); return next; });
+            return (
+              <div key={node.path} className="gk-ref-row gk-sub-row" role="treeitem" aria-level={node.depth + 1} aria-expanded={node.children ? isOpen : undefined} tabIndex={0}
+                style={{ paddingLeft: 8 + node.depth * 14 }}
+                title={`${node.path} — ${status.title}`}
+                onClick={() => node.children && toggleSub()}
+                onDoubleClick={() => node.state !== "uninitialized" && onOpenRepository(absolute)}
+                onContextMenu={(event) => menu.open(event, [
+                  { id: "open", label: "Open submodule", icon: "external", disabled: node.state === "uninitialized", onSelect: () => onOpenRepository(absolute) },
+                  { id: "map", label: "Show in submodule map", icon: "submodule", disabled: !onOpenSubmoduleMap, onSelect: () => onOpenSubmoduleMap?.() },
+                  { id: "update", label: node.state === "uninitialized" ? "Initialize (recursive)" : "Check out the recorded commit", disabled: busy, onSelect: () => run(`Update ${node.path}`, () => api.submoduleAction(repositoryPath, "update", node.path)) },
+                  { id: "copy", label: "Copy path", icon: "copy", onSelect: () => copy(node.path) },
+                ], node.path)}>
+                {node.children ? <Icon name={isOpen ? "chevronDown" : "chevronRight"} className="gk-sub-twisty" /> : <span className="gk-sub-twisty" />}
+                <i className={`sm-dot sm-tone-${status.tone}`} aria-hidden="true" />
+                <span className="gk-ref-name">{node.name}</span>
+                {status.tone !== "ok" && <span className={`gk-sub-badge sm-tone-${status.tone}`}>{status.tone === "dirty" ? `✎${node.changes + node.untracked}` : status.tone === "drift" ? "moved" : status.tone === "off" ? "off" : "!"}</span>}
+                {node.children > 0 && !isOpen && node.attentionBelow > 0 && <span className="gk-sub-badge sm-tone-attention" title={`${node.attentionBelow} nested submodule(s) need attention`}>{node.attentionBelow}↓</span>}
+              </div>
+            );
+          }), { onAdd: onOpenSubmoduleMap, addTitle: "Open submodule map" })}
           {section("remote", "REMOTE", "cloud", remoteBranches.length, (
             <>{[...remotesByName.entries()].map(([remoteName, list]) => {
               const remote = remotes.find((candidate) => candidate.name === remoteName) ?? null;
@@ -485,20 +541,6 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
               <span className="gk-ref-name">{tag.name}</span>
             </div>
           )), { onAdd: () => createTagAt("HEAD", "HEAD"), addTitle: "Create tag at HEAD" })}
-          {section("submodules", "SUBMODULES", "submodule", submodules.length, submodules.map((submodule) => (
-            <div key={submodule.path} className="gk-ref-row" role="treeitem" tabIndex={0} title={`${submodule.path} @ ${submodule.commit.slice(0, 8)} ${submodule.summary}`}
-              onDoubleClick={() => onOpenRepository(`${repositoryPath.replace(/[\\/]$/, "")}/${submodule.path}`)}
-              onContextMenu={(event) => menu.open(event, [
-                { id: "open", label: "Open submodule", icon: "external", onSelect: () => onOpenRepository(`${repositoryPath.replace(/[\\/]$/, "")}/${submodule.path}`) },
-                { id: "update", label: "Update (init + recursive)", disabled: busy, onSelect: () => run(`Update ${submodule.path}`, () => api.workflow(repositoryPath, { operation: "submodule_init_path", args: [submodule.path] })) },
-                { id: "copy", label: "Copy path", icon: "copy", onSelect: () => copy(submodule.path) },
-              ], submodule.path)}>
-              <Icon name="submodule" />
-              <span className="gk-ref-name">{submodule.path}</span>
-              {submodule.status.trim() && <span className="gk-ref-track"><span>{submodule.status === "-" ? "uninit" : submodule.status === "+" ? "changed" : submodule.status}</span></span>}
-            </div>
-          )), { onAdd: () => run("Update submodules", () => api.workflow(repositoryPath, { operation: "submodule_update", args: [] })), addTitle: "Update all submodules" })}
-          {section("prs", "PULL REQUESTS", "compare", 0, <button type="button" className="gk-ref-link" onClick={onOpenPullRequests}>Open pull request triage…</button>)}
         </>}
       </div>
       {menu.element}

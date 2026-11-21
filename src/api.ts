@@ -83,6 +83,8 @@ import type {
   DiffSide,
   LineMode,
   SideDiff,
+  SubmoduleAction,
+  SubmoduleTree,
 } from "./types";
 
 // Diff display options (Settings → Display) are attached to diff viewer calls.
@@ -244,6 +246,9 @@ export const api = {
   commitOffset: (path: string, revision: string) => invoke<number | null>("commit_offset", { path, revision }),
   diffCommitFiles: (path: string, from: string, to: string) =>
     invoke<CommitFileChange[]>("diff_commit_files", { path, from, to }),
+  submoduleTree: (path: string) => invoke<SubmoduleTree>("submodule_tree", { path }),
+  submoduleAction: (path: string, action: SubmoduleAction, target = "") => invoke<string>("submodule_action", { path, action, target }),
+  superprojectChain: (path: string) => invoke<Array<{ path: string; name: string }>>("superproject_chain", { path }),
   fileDiffSide: (path: string, file: string, side: DiffSide) => invoke<SideDiff>("file_diff_side", { path, file, side }),
   applyLines: (path: string, file: string, mode: LineMode, selection: Array<{ hunk: number; lines: number[] }>, fingerprint: string | null) =>
     invoke<CommandResult>("apply_lines", { path, file, mode, selection, fingerprint }),

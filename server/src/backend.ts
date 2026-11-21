@@ -14,8 +14,7 @@ import {
   repositoryRoot,
   runGit,
   type CommandResult,
-  type CommitRecord,
-} from "./lib/git.ts";
+  type CommitRecord, HISTORY_ALL_REFS } from "./lib/git.ts";
 
 export interface RepositorySummary {
   path: string;
@@ -154,7 +153,7 @@ export async function repositoryHistoryPage(
   const pageSize = Math.min(Math.max(limit, 1), 1000);
   const result = await checkedStdout(root, [
     "log",
-    "--all",
+    ...HISTORY_ALL_REFS,
     "--date-order",
     "--date=iso-strict",
     `--pretty=format:${COMMIT_FORMAT}`,

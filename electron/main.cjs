@@ -64,7 +64,7 @@ async function launch() {
   backend.stderr.on("data", (chunk) => { backendLog = (backendLog + chunk).slice(-4000); });
   backend.on("exit", (code) => { if (!mainWindow) dialog.showErrorBox("Chrono backend stopped", `exit code ${code}\n\n${backendLog}`); });
   await wait(`http://127.0.0.1:${backendPort}/api/health`);
-  mainWindow = new BrowserWindow({ width: 1440, height: 900, minWidth: 860, minHeight: 600, backgroundColor: "#111318", webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true } });
+  mainWindow = new BrowserWindow({ width: 1440, height: 900, minWidth: 860, minHeight: 600, backgroundColor: "#111318", title: "Chrono", autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true } });
   await mainWindow.loadURL(`http://127.0.0.1:${backendPort}`);
   for (const uri of pendingDeepLinks.splice(0)) forwardDeepLink(uri);
   mainWindow.on("closed", () => { mainWindow = null; });
@@ -80,6 +80,12 @@ ipcMain.handle("chrono:invoke-saga", async (_event, name, payload) => {
   } catch (error) { return { ok: false, error: String(error) }; }
 });
 
+// Linux WM_CLASS follows the app name; keep it equal to StartupWMClass=Chrono.
+if (process.platform === "linux") {
+  const userData = app.getPath("userData"); // keep existing settings/localStorage where they are
+  app.setName("Chrono");
+  app.setPath("userData", userData);
+}
 app.whenReady().then(launch).catch((e) => { dialog.showErrorBox("Chrono failed to start", String(e)); app.quit(); });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
 app.on("before-quit", () => backend?.kill());

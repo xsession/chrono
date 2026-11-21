@@ -1,5 +1,5 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
-import type { BranchRecord, PullMode, PushOptions, RepositorySummary, UndoState } from "../../types";
+import type { BranchRecord, PullMode, PushOptions, RepositorySummary, UndoState, Workspace } from "../../types";
 import { Icon, type IconName } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
 
@@ -28,6 +28,13 @@ type Props = {
   onSwitchBranch: (branch: BranchRecord) => void;
   onOpenRepository: () => void;
   onFetchAll?: () => void;
+  /** recent repositories for the repository picker */
+  workspaces?: Workspace[];
+  /** enclosing superprojects when the open repository is a submodule, outermost first */
+  superprojects?: Array<{ path: string; name: string }>;
+  onSelectRepository?: (path: string) => void;
+  onOpenFolder?: () => void;
+  onClone?: () => void;
 };
 
 const PULL_LABEL: Record<PullMode, string> = {
@@ -93,12 +100,45 @@ export function GkToolbar(props: Props) {
     ], "Switch branch");
   };
 
+  // Deep chains (root › … › parent): keep the outermost and the direct parent visible.
+  const chain = props.superprojects ?? [];
+  const hidden = chain.length > 2 ? chain.slice(1, -1) : [];
+  const crumbs = chain.length > 2 ? [chain[0], { path: "…", name: "…" }, chain[chain.length - 1]] : chain;
+
+  const repositoryPicker = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    const recent = (props.workspaces ?? []).flatMap((workspace) => workspace.repositories).slice(0, 15);
+    menu.open(anchor(event), [
+      ...(recent.length ? [{ kind: "header", id: "hr", label: "Repositories" } as MenuItem] : []),
+      ...recent.map<MenuItem>((repository) => ({
+        id: `r-${repository.path}`,
+        label: repository.alias || repository.path.split(/[\\/]/).filter(Boolean).pop() || repository.path,
+        checked: repository.path === path,
+        bold: repository.path === path,
+        onSelect: () => props.onSelectRepository?.(repository.path),
+      })),
+      ...(recent.length ? [{ kind: "separator", id: "s" } as MenuItem] : []),
+      { id: "open", label: "Open repository…", icon: "folderOpen", disabled: !props.onOpenFolder, onSelect: () => props.onOpenFolder?.() },
+      { id: "tab", label: "Open in new tab…", icon: "plus", onSelect: props.onOpenRepository },
+      { id: "clone", label: "Clone…", icon: "download", disabled: !props.onClone, onSelect: () => props.onClone?.() },
+    ], summary?.path ?? "Repository");
+  };
+
   return (
     <header className="gk-toolbar" role="toolbar" aria-label="Repository toolbar">
       <div className="gk-toolbar-pickers">
-        <button type="button" className="gk-picker" onClick={props.onOpenRepository} title={summary?.path ?? "Open a repository"}>
+        {crumbs.map((parent) => (
+          <span key={parent.path} className="gk-crumb">
+            {parent.path === "…" ? (
+              <button type="button" className="gk-crumb-button" title="More parent repositories" onClick={(event) => menu.open(anchor(event), hidden.map<MenuItem>((entry) => ({ id: entry.path, label: entry.name, icon: "submodule", onSelect: () => props.onSelectRepository?.(entry.path) })), "Parent repositories")}>…</button>
+            ) : (
+              <button type="button" className="gk-crumb-button" onClick={() => props.onSelectRepository?.(parent.path)} title={`Go to superproject ${parent.path}`}>{parent.name}</button>
+            )}
+            <Icon name="chevronRight" className="gk-picker-sep" />
+          </span>
+        ))}
+        <button type="button" className="gk-picker" onClick={repositoryPicker} title={summary?.path ?? "Open a repository"}>
           <small>repository</small>
-          <strong><Icon name="repository" />{summary?.name ?? "Open repository"}</strong>
+          <strong><Icon name={props.superprojects?.length ? "submodule" : "repository"} />{summary?.name ?? "Open repository"}<Icon name="chevronDown" /></strong>
         </button>
         <Icon name="chevronRight" className="gk-picker-sep" />
         <button type="button" className="gk-picker" disabled={!path} onClick={branchPicker} title="Switch branch">
@@ -129,7 +169,7 @@ export function GkToolbar(props: Props) {
       <div className="gk-toolbar-actions gk-toolbar-right">
         <ToolButton icon="folder" label="Explorer" disabled={!path} onClick={props.onExplorer} title="TortoiseGit-style working copy explorer" />
         <ToolButton icon="terminal" label="Terminal" active={props.terminalOpen} disabled={!path} onClick={props.onTerminal} title="Toggle terminal (Ctrl+T)" />
-        <ToolButton icon="search" label="Search" onClick={props.onSearch} title="Fuzzy finder (Ctrl+P)" />
+        <ToolButton icon="command" label="Commands" onClick={props.onSearch} title="Command palette — every action, fuzzy search (Ctrl+Shift+P)" />
       </div>
       {menu.element}
     </header>

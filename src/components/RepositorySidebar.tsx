@@ -39,6 +39,8 @@ type NavItem = {
   icon: IconName;
   badge?: number;
   critical?: boolean;
+  /** starts a new visual group (a thin divider in the rail) */
+  group?: boolean;
 };
 
 export function RepositorySidebar({
@@ -55,21 +57,22 @@ export function RepositorySidebar({
   onClone,
   onToggleCollapsed
 }: Props) {
+  // Grouped by how often they are needed: everyday views first, then
+  // reference lists, then power tools. The rail shows dividers between groups.
   const navigation: NavItem[] = [
     ...(conflictCount > 0 ? [{ id: "conflicts" as RepositoryView, label: "Conflict Center", icon: "warning" as IconName, badge: conflictCount, critical: true }] : []),
-    { id: "changes", label: "Changes", icon: "changes", badge: changeCount },
     { id: "history", label: "Graph", icon: "history" },
-    { id: "explorer", label: "Explorer (TortoiseGit)", icon: "folder" },
-    { id: "branches", label: "Branches", icon: "branch" },
+    { id: "changes", label: "Changes", icon: "changes", badge: changeCount },
+    { id: "explorer", label: "Explorer", icon: "folder" },
+    { id: "submodules", label: "Submodules", icon: "submodule" },
+    { id: "branches", label: "Branches", icon: "branch", group: true },
     { id: "refs", label: "References", icon: "list" },
-    { id: "rebase", label: "Interactive rebase", icon: "layers" },
+    { id: "worktrees", label: "Worktrees", icon: "worktree" },
+    { id: "stashes", label: "Stashes", icon: "stash" },
+    { id: "rebase", label: "Interactive rebase", icon: "layers", group: true },
     { id: "insights", label: "Git Intelligence", icon: "compare" },
     { id: "repo", label: "Repo browser", icon: "repository" },
-    { id: "worktrees", label: "Worktrees", icon: "worktree" },
-    { id: "submodules", label: "Submodules", icon: "submodule" },
-    { id: "stashes", label: "Stashes", icon: "stash" },
     { id: "recovery", label: "Recovery & tools", icon: "activity" },
-    { id: "settings", label: "Repository settings", icon: "settings" }
   ];
 
   return (
@@ -80,9 +83,10 @@ export function RepositorySidebar({
         </button>
         {!collapsed && <span className="ux-sidebar-title">Repositories</span>}
         {!collapsed && <button className="ux-sidebar-add" onClick={onOpen}>Open</button>}
+        {!collapsed && <button className="ux-sidebar-add" onClick={onClone}>Clone</button>}
       </div>
 
-      <div className="ux-repository-list" aria-label="Open repositories">
+      {!collapsed && <div className="ux-repository-list" aria-label="Open repositories">
         {workspaces.map((workspace) => (
           <section key={workspace.id} className="ux-workspace-group">
             {!collapsed && <h2>{workspace.name}</h2>}
@@ -104,9 +108,9 @@ export function RepositorySidebar({
             })}
           </section>
         ))}
-      </div>
+      </div>}
 
-      <div className="ux-sidebar-separator" />
+      {!collapsed && <div className="ux-sidebar-separator" />}
 
       <nav className="ux-repo-navigation" aria-label="Repository views">
         {!collapsed && activePath && (
@@ -115,7 +119,8 @@ export function RepositorySidebar({
             <span className={summary?.dirty ? "is-dirty" : ""}>{summary?.branch || "Detached HEAD"}</span>
           </div>
         )}
-        {navigation.map((item) => (
+        {navigation.map((item) => [
+          item.group ? <div key={`${item.id}-group`} className="ux-nav-divider" role="separator" /> : null,
           <button
             key={item.id}
             className={`ux-nav-item${activeView === item.id ? " is-active" : ""}${item.critical ? " is-critical" : ""}`}
@@ -127,18 +132,15 @@ export function RepositorySidebar({
             <Icon name={item.icon} />
             {!collapsed && <span>{item.label}</span>}
             {!collapsed && Boolean(item.badge) && <span className="ux-nav-badge">{item.badge}</span>}
-          </button>
-        ))}
+            {collapsed && Boolean(item.badge) && <i className="ux-nav-dot" aria-label={`${item.badge}`} />}
+          </button>,
+        ])}
       </nav>
 
       <div className="ux-sidebar-bottom">
-        <button className="ux-nav-item" onClick={onClone} title={collapsed ? "Clone repository" : undefined}>
-          <Icon name="download" />
-          {!collapsed && <span>Clone repository</span>}
-        </button>
-        <button className="ux-nav-item" onClick={() => onView("cherry")} title={collapsed ? "UI workbench" : undefined}>
+        <button className={`ux-nav-item${activeView === "settings" ? " is-active" : ""}`} disabled={!activePath} onClick={() => onView("settings")} title={collapsed ? "Repository settings" : undefined}>
           <Icon name="settings" />
-          {!collapsed && <span>UI workbench</span>}
+          {!collapsed && <span>Repository settings</span>}
         </button>
       </div>
     </aside>

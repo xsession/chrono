@@ -31,6 +31,7 @@ import { GitIntelligencePanel } from "./components/GitIntelligencePanel";
 import { GkToolbar } from "./components/gk/GkToolbar";
 import { GkLeftPanel } from "./components/gk/GkLeftPanel";
 import { GkWipPanel } from "./components/gk/GkWipPanel";
+import { SubmoduleMap } from "./components/gk/SubmoduleMap";
 import { LineStagingDiff } from "./components/gk/LineStagingDiff";
 import { FileExplorer } from "./components/explorer/FileExplorer";
 import { DialogHost, askConfirm, askText } from "./components/DialogHost";
@@ -93,10 +94,12 @@ export default function App() {
   const [operation, setOperation] = useState<RepositoryOperationState>(idleOperation);
   const [view, setView] = useState<RepositoryView>("history");
   const [busy, setBusy] = useState(false);
+  const [superprojects, setSuperprojects] = useState<Array<{ path: string; name: string }>>([]);
   const [message, setMessage] = useState("Ready");
   const [palette, setPalette] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("chrono.sidebar") === "collapsed");
-  useEffect(() => { localStorage.setItem("chrono.sidebar", sidebarCollapsed ? "collapsed" : "expanded"); }, [sidebarCollapsed]);
+  // v2 key: the navigation now defaults to the slim icon rail (Ctrl+B expands it).
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("chrono.sidebar.v2") !== "expanded");
+  useEffect(() => { localStorage.setItem("chrono.sidebar.v2", sidebarCollapsed ? "collapsed" : "expanded"); }, [sidebarCollapsed]);
 
   // GitKraken parity state: undo journal, pull default, WIP node, left panel refresh.
   const [undoState, setUndoState] = useState<UndoState | null>(null);
@@ -227,6 +230,13 @@ export default function App() {
   };
 
   const cloneRepository = () => setCloneOpen(true);
+
+  useEffect(() => {
+    if (!path) { setSuperprojects([]); return; }
+    let cancelled = false;
+    api.superprojectChain(path).then((chain) => { if (!cancelled) setSuperprojects(chain); }).catch(() => { if (!cancelled) setSuperprojects([]); });
+    return () => { cancelled = true; };
+  }, [path]);
 
   const submitClone = async (url: string, destination: string, options: CloneOptions = {}) => {
     setBusy(true);
@@ -674,7 +684,7 @@ export default function App() {
   const currentBranch = summary?.branch || "Detached HEAD";
 
   return (
-    <div className={`ux-app${sidebarCollapsed ? " sidebar-collapsed" : ""}${nativeMobile ? " native-mobile" : ""}`}>
+    <div className={`ux-app${sidebarCollapsed ? " sidebar-collapsed" : ""}${nativeMobile ? " native-mobile" : " no-topbar"}`}>
       {nativeMobile && <button className="mobile-connection-button" onClick={() => setConnectionOpen(true)}>Backend</button>}
       {connectionOpen && <div className="connection-backdrop"><form className="connection-dialog" onSubmit={(event) => {
         event.preventDefault(); const data=new FormData(event.currentTarget);
@@ -683,7 +693,7 @@ export default function App() {
       <label>Backend URL<input name="url" type="url" required={nativeMobile} defaultValue={getApiConnection().url} placeholder={nativeMobile ? "https://chrono.example.com" : "(this server)"} /></label>
       <label>API token<input name="token" type="password" required defaultValue={getApiConnection().token} /></label>
       <div className="connection-actions"><button type="button" onClick={()=>setConnectionOpen(false)}>Cancel</button><button type="submit">Save</button></div></form></div>}
-      <header className="ux-topbar">
+      {nativeMobile && <header className="ux-topbar">
         <div className="ux-brand-lockup">
           <img src="/rsrc/icon_32x32.png" alt="" />
           <span>Chrono</span>
@@ -702,7 +712,7 @@ export default function App() {
             <Icon name="command" /><span>Commands</span><kbd>Ctrl⇧P</kbd>
           </button>
         </div>
-      </header>
+      </header>}
 
       <RepositorySidebar
         workspaces={workspaces}
@@ -744,6 +754,11 @@ export default function App() {
           onSearch={() => setPalette(true)}
           onSwitchBranch={(branch) => void runRepositoryAction(`Checkout ${branch.name}`, () => (branch.remote ? api.checkoutRemoteBranch(path, branch.name) : api.switchBranch(path, branch.name)))}
           onOpenRepository={() => void openRepoTab()}
+          workspaces={workspaces}
+          superprojects={superprojects}
+          onSelectRepository={(target) => void openRepoTab(target)}
+          onOpenFolder={() => void openRepository()}
+          onClone={cloneRepository}
         />
         {path && (dirtyCount > 0 || conflictCount > 0) && view !== "history" && view !== "changes" && (
           <div className="gk-dirty-banner">
@@ -817,6 +832,7 @@ export default function App() {
                   onStashCount={setStashCount}
                   onOpenSettings={openSettings}
                   onNewAgentSession={() => setAgentDialogOpen(true)}
+                  onOpenSubmoduleMap={() => setView("submodules")}
                 />
               )}
               <CommitGraph
@@ -910,7 +926,17 @@ export default function App() {
               }}
             />
           )}
-          {path && (view === "worktrees" || view === "submodules" || view === "stashes" || view === "recovery") && (
+          {path && view === "submodules" && (
+            <SubmoduleMap
+              repositoryPath={path}
+              refreshKey={refreshKey}
+              busy={busy}
+              run={runRepositoryAction}
+              onOpenRepository={(target) => void openRepoTab(target).then(() => setView("history"))}
+              onOpenTerminal={(dir) => { setTerminalOpen(true); requestAnimationFrame(() => terminalRef.current?.createTab(dir)); }}
+            />
+          )}
+          {path && (view === "worktrees" || view === "stashes" || view === "recovery") && (
             <WorkflowPanel section={view} repositoryPath={path} operationLocked={operationActive} onOpenWorktree={refresh} onRun={(request) => api.workflow(path, request)} />
           )}
           {view === "cherry" && <CherryParityPanel />}

@@ -16,8 +16,7 @@ import {
   checkedStdout,
   runGit,
   runGitRaw,
-  type CommandResult,
-} from "./lib/git.ts";
+  type CommandResult, HISTORY_ALL_REFS } from "./lib/git.ts";
 import { parseUnifiedHunks, worktreeSummaries, type CommitDiffHunk } from "./insights.ts";
 
 const MAX_FILE_BYTES = 1024 * 1024; // 1MB file-content cap for the repo browser
@@ -394,7 +393,7 @@ export async function commitActivity(inputPath: string, days: number, maxCommits
   const clampedMax = Math.min(Math.max(maxCommits, 100), 1000000);
   const output = await checkedStdout(inputPath, [
     "log",
-    "--all",
+    ...HISTORY_ALL_REFS,
     "-n", String(clampedMax),
     "--date=format:%Y-%m-%d",
     "--pretty=format:%ad",

@@ -706,3 +706,33 @@ export type CloneOptions = { depth?: number | null; filter?: "blob:none" | "tree
 export type DiffSide = "unstaged" | "staged";
 export type LineMode = "stage" | "unstage" | "discard";
 export type SideDiff = { path: string; side: DiffSide; binary: boolean; untracked: boolean; additions: number; deletions: number; fingerprint: string; hunks: CommitDiffHunk[] };
+
+export type SubmoduleState = "ok" | "drift" | "uninitialized" | "conflict";
+export type SubmoduleNode = {
+  path: string;
+  name: string;
+  parent: string | null;
+  depth: number;
+  state: SubmoduleState;
+  commit: string;
+  recorded: string | null;
+  drift: { ahead: number; behind: number } | null;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  changes: number;
+  untracked: number;
+  conflicts: number;
+  url: string | null;
+  children: number;
+  attentionBelow: number;
+};
+export type SubmoduleTree = {
+  root: string;
+  nodes: SubmoduleNode[];
+  maxDepth: number;
+  totals: { all: number; dirty: number; drift: number; uninitialized: number; conflict: number; detached: number };
+  superprojects: Array<{ path: string; name: string }>;
+};
+export type SubmoduleAction = "init" | "update" | "update_remote" | "sync" | "fetch" | "deinit";

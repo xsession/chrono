@@ -204,6 +204,8 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   const [compareSwapped, setCompareSwapped] = useState(false);
   useEffect(() => { setCompareWith(null); setCompareFile(null); }, [repositoryPath]);
   const [worktrees, setWorktrees] = useState<WorktreeSummary[]>([]);
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const viewCustomized = highlightMode !== "all" || graphScope !== "all" || hiddenRefs.length > 0 || filterMode !== "message";
   const [showChanges, setShowChanges] = useState(() => localStorage.getItem("chrono.history.changes") !== "off");
   const [graphColWidthOverride, setGraphColWidthOverride] = useState<number>(() => Number.parseInt(localStorage.getItem("chrono.history.graphWidth") ?? "0", 10) || 0);
   const [tags, setTags] = useState<TagRecord[]>([]);
@@ -558,45 +560,6 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
         <header className="ux-view-toolbar">
           <div><h2>History</h2><span>{commits.length} commits in window{historyHasNewer || historyHasMore ? " · paged" : ""}{filteredCommits !== null ? ` · ${activeCommits.length} match${searchDescription ? ` (${searchDescription})` : ""}` : ""}</span></div>
           <div className="ux-history-toolbar-actions">
-            <div className="ux-highlight-modes" role="group" aria-label="Graph highlight mode">
-              <button type="button" className={highlightMode === "all" ? " is-active" : ""} onClick={() => setHighlight("all")} title="Show all lanes in full color">All</button>
-              <button type="button" className={highlightMode === "current" ? " is-active" : ""} disabled={!currentBranch} onClick={() => setHighlight("current")} title={`Highlight ${currentBranch?.name ?? "the current branch"}'s first-parent chain`}>Branch</button>
-              <button type="button" className={highlightMode === "selected" ? " is-active" : ""} disabled={!selected} onClick={() => setHighlight("selected")} title="Highlight the selected commit's first-parent chain">Selected</button>
-              <button type="button" className={highlightMode === "fork" ? " is-active" : ""} disabled={!headSha} onClick={() => setHighlight("fork")} title={forkInfo?.base ? `Commits on ${currentBranch?.name ?? "HEAD"} since it forked from ${forkInfo.base}; older history is dimmed` : "Dim history before the current branch's fork point"}>Fork</button>
-            </div>
-            <select className="ux-filter-mode" value={graphScope} onChange={(event) => setScope(event.target.value as GraphScope)} aria-label="Graph scope" title="Show the complete graph or focus one branch">
-              <option value="all">All branches</option>
-              <option value="current" disabled={!currentBranch}>Current branch</option>
-              {branches.filter((branch) => !branch.remote).map((branch) => <option key={branch.name} value={`branch:${branch.name}`}>{branch.name}</option>)}
-            </select>
-            <div className="ux-ref-visibility">
-              <button type="button" className={`ux-button${hiddenRefs.length ? " is-active" : ""}`} aria-label="Reference visibility" aria-expanded={refMenuOpen} onClick={() => setRefMenuOpen((open) => !open)} title="Hide or solo local and remote branches">
-                Refs{hiddenRefs.length ? ` · ${hiddenRefs.length} hidden` : ""}
-              </button>
-              {refMenuOpen && <div className="ux-ref-menu" role="dialog" aria-label="Reference visibility">
-                <header><strong>Reference visibility</strong><span>{hiddenRefs.length ? `${hiddenRefs.length} hidden` : "All visible"}</span></header>
-                <div className="ux-ref-menu-actions">
-                  <button type="button" className="ux-button" onClick={() => persistHiddenRefs([])}>Show all</button>
-                  <button type="button" className="ux-button" disabled={!currentBranch} onClick={() => { if (currentBranch) soloRef(currentBranch); }}>Solo current</button>
-                </div>
-                <div className="ux-ref-list">
-                  {refBranches.map((branch) => {
-                    const key = referenceKey(branch);
-                    return <label key={key} title={`${branch.remote ? "Remote" : "Local"} ref ${branch.name}`}>
-                      <input type="checkbox" checked={!hiddenRefs.includes(key)} onChange={() => toggleRef(branch)} />
-                      <span>{branch.remote ? "↗" : "●"} {branch.name}</span>
-                      <code>{branch.target.slice(0, 8)}</code>
-                    </label>;
-                  })}
-                  {!refBranches.length && <span className="ux-help-text">No branch refs were found.</span>}
-                </div>
-              </div>}
-            </div>
-            <select className="ux-filter-mode" value={filterMode} onChange={(event) => setFilterMode(event.target.value as FilterMode)} aria-label="Filter mode" title="Which field to search">
-              <option value="message">message</option>
-              <option value="author">author</option>
-              <option value="path">path</option>
-            </select>
             <label className={`ux-search-field${filterBusy ? " is-busy" : ""}`}>
               <Icon name="search" />
               <input
@@ -608,7 +571,66 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                 aria-label="Filter commits"
               />
             </label>
-            <label className="ux-check-row"><input type="checkbox" checked={showChanges} onChange={(event) => { setShowChanges(event.target.checked); localStorage.setItem("chrono.history.changes", event.target.checked ? "on" : "off"); }} />Changes</label>
+            <div className="ux-view-menu">
+              <button type="button" className={`ux-button${viewCustomized ? " is-active" : ""}`} aria-expanded={viewMenuOpen} onClick={() => setViewMenuOpen((value) => !value)} title="Highlight, scope, branch visibility and columns">
+                <Icon name="eye" />View{viewCustomized ? " •" : ""}<Icon name="chevronDown" />
+              </button>
+              {viewMenuOpen && <>
+                <button type="button" className="ux-context-backdrop" aria-label="Close view options" onClick={() => { setViewMenuOpen(false); setRefMenuOpen(false); }} />
+                <div className="ux-view-popover" role="dialog" aria-label="View options">
+                  <div className="ux-view-field"><span>Highlight</span>
+                    <div className="ux-highlight-modes" role="group" aria-label="Graph highlight mode">
+                      <button type="button" className={highlightMode === "all" ? " is-active" : ""} onClick={() => setHighlight("all")} title="Show all lanes in full color">All</button>
+                      <button type="button" className={highlightMode === "current" ? " is-active" : ""} disabled={!currentBranch} onClick={() => setHighlight("current")} title={`Highlight ${currentBranch?.name ?? "the current branch"}'s first-parent chain`}>Branch</button>
+                      <button type="button" className={highlightMode === "selected" ? " is-active" : ""} disabled={!selected} onClick={() => setHighlight("selected")} title="Highlight the selected commit's first-parent chain">Selected</button>
+                      <button type="button" className={highlightMode === "fork" ? " is-active" : ""} disabled={!headSha} onClick={() => setHighlight("fork")} title={forkInfo?.base ? `Commits on ${currentBranch?.name ?? "HEAD"} since it forked from ${forkInfo.base}; older history is dimmed` : "Dim history before the current branch's fork point"}>Fork</button>
+                    </div>
+                  </div>
+                  <div className="ux-view-field"><span>Show</span>
+                    <select className="ux-filter-mode" value={graphScope} onChange={(event) => setScope(event.target.value as GraphScope)} aria-label="Graph scope" title="Show the complete graph or focus one branch">
+                      <option value="all">All branches</option>
+                      <option value="current" disabled={!currentBranch}>Current branch</option>
+                      {branches.filter((branch) => !branch.remote).map((branch) => <option key={branch.name} value={`branch:${branch.name}`}>{branch.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="ux-view-field"><span>Plain search matches</span>
+                    <select className="ux-filter-mode" value={filterMode} onChange={(event) => setFilterMode(event.target.value as FilterMode)} aria-label="Filter mode" title="Which field to search">
+                      <option value="message">message</option>
+                      <option value="author">author</option>
+                      <option value="path">path</option>
+                    </select>
+                  </div>
+                  <div className="ux-view-field"><span>Columns</span>
+                    <label className="ux-check-row"><input type="checkbox" checked={showChanges} onChange={(event) => { setShowChanges(event.target.checked); localStorage.setItem("chrono.history.changes", event.target.checked ? "on" : "off"); }} />Changes</label>
+                  </div>
+                  <div className="ux-view-field"><span>Branches</span>
+                    <div className="ux-ref-visibility">
+                      <button type="button" className={`ux-button${hiddenRefs.length ? " is-active" : ""}`} aria-label="Reference visibility" aria-expanded={refMenuOpen} onClick={() => setRefMenuOpen((open) => !open)} title="Hide or solo local and remote branches">
+                        Refs{hiddenRefs.length ? ` · ${hiddenRefs.length} hidden` : ""}
+                      </button>
+                      {refMenuOpen && <div className="ux-ref-menu" role="dialog" aria-label="Reference visibility">
+                        <header><strong>Reference visibility</strong><span>{hiddenRefs.length ? `${hiddenRefs.length} hidden` : "All visible"}</span></header>
+                        <div className="ux-ref-menu-actions">
+                          <button type="button" className="ux-button" onClick={() => persistHiddenRefs([])}>Show all</button>
+                          <button type="button" className="ux-button" disabled={!currentBranch} onClick={() => { if (currentBranch) soloRef(currentBranch); }}>Solo current</button>
+                        </div>
+                        <div className="ux-ref-list">
+                          {refBranches.map((branch) => {
+                            const key = referenceKey(branch);
+                            return <label key={key} title={`${branch.remote ? "Remote" : "Local"} ref ${branch.name}`}>
+                              <input type="checkbox" checked={!hiddenRefs.includes(key)} onChange={() => toggleRef(branch)} />
+                              <span>{branch.remote ? "↗" : "●"} {branch.name}</span>
+                              <code>{branch.target.slice(0, 8)}</code>
+                            </label>;
+                          })}
+                          {!refBranches.length && <span className="ux-help-text">No branch refs were found.</span>}
+                        </div>
+                      </div>}
+                    </div>
+                  </div>
+                </div>
+              </>}
+            </div>
           </div>
         </header>
 
@@ -822,19 +844,19 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
         ) : selected ? <>
           <header className="ux-inspector-header"><span className="ux-eyebrow">Selected commit</span><h2>{selected.subject}</h2></header>
           <dl className="ux-metadata-list"><dt>Commit</dt><dd><code>{selected.id}</code></dd><dt>Author</dt><dd>{selected.authorName}<small>{selected.authorEmail}</small></dd><dt>Date</dt><dd>{formatDate(selected.authoredAt)}</dd><dt>Parents</dt><dd>{selected.parents.length ? selected.parents.map((parent) => <code key={parent}>{parent.slice(0, 10)}</code>) : "Root commit"}</dd>{signatures.get(selected.id)?.status && signatures.get(selected.id)!.status !== "N" ? <><dt>Signed</dt><dd><SignatureBadge info={signatures.get(selected.id)} /></dd></> : null}</dl>
-          <section className="ux-inspector-section ux-inspector-actions">
-            <div className="ux-section-title"><strong>Commit actions</strong><span>Apply to the selected revision</span></div>
-            <div className="ux-card-actions wrap">
-              <button type="button" className="ux-button" disabled={actionBusy || !onCopyCommit} onClick={() => { if (onCopyCommit) void onCopyCommit(selected.id); }}>Copy SHA</button>
-              <button type="button" className="ux-button" disabled={actionBusy || !onCommitAction} onClick={() => { if (onCommitAction) void onCommitAction("cherry-pick", selected); }}>Cherry-pick</button>
-              <button type="button" className="ux-button" disabled={actionBusy || !onCommitAction} onClick={() => { if (onCommitAction) void onCommitAction("revert", selected); }}>Revert</button>
-              <button type="button" className="ux-button" disabled={actionBusy || !onCreateBranchAt} onClick={() => { if (onCreateBranchAt) void onCreateBranchAt(selected); }}>Create branch here</button>
-              <button type="button" className="ux-button" disabled={actionBusy || !onCreateTagAt} onClick={() => { if (onCreateTagAt) void onCreateTagAt(selected); }}>Create tag here</button>
-              <button type="button" className="ux-button" disabled={actionBusy || !onResetTo} onClick={() => { if (onResetTo) void onResetTo(selected, "soft"); }}>Reset soft</button>
-              <button type="button" className="ux-button" disabled={actionBusy || !onResetTo} onClick={() => { if (onResetTo) void onResetTo(selected, "mixed"); }}>Reset mixed</button>
-              <button type="button" className="ux-danger-button" disabled={actionBusy || !onResetTo} onClick={() => { if (onResetTo) void onResetTo(selected, "hard"); }}>Reset hard</button>
-            </div>
-          </section>
+          <div className="ux-inspector-quick" role="toolbar" aria-label="Commit actions">
+            <button type="button" className="ux-button compact" disabled={actionBusy || !onCommitAction} onClick={() => { if (onCommitAction) void onCommitAction("cherry-pick", selected); }}>Cherry-pick</button>
+            <button type="button" className="ux-button compact" disabled={actionBusy || !onCommitAction} onClick={() => { if (onCommitAction) void onCommitAction("revert", selected); }}>Revert</button>
+            <button type="button" className="ux-button compact" disabled={actionBusy || !onCreateBranchAt} onClick={() => { if (onCreateBranchAt) void onCreateBranchAt(selected); }}>Branch here</button>
+            <button type="button" className="ux-button compact" aria-label="More commit actions" title="More commit actions (also on right-click in the graph)" onClick={(event) => fileMenu.open(event, [
+              { id: "copy", label: "Copy SHA", icon: "copy", disabled: !onCopyCommit, onSelect: () => { if (onCopyCommit) void onCopyCommit(selected.id); } },
+              { id: "tag", label: "Create tag here…", icon: "tag", disabled: actionBusy || !onCreateTagAt, onSelect: () => { if (onCreateTagAt) void onCreateTagAt(selected); } },
+              { kind: "separator", id: "s" },
+              { id: "soft", label: "Reset soft to here — keep changes staged", disabled: actionBusy || !onResetTo, onSelect: () => { if (onResetTo) void onResetTo(selected, "soft"); } },
+              { id: "mixed", label: "Reset mixed to here — keep working copy", disabled: actionBusy || !onResetTo, onSelect: () => { if (onResetTo) void onResetTo(selected, "mixed"); } },
+              { id: "hard", label: "Reset hard to here — discard changes", danger: true, disabled: actionBusy || !onResetTo, onSelect: () => { if (onResetTo) void onResetTo(selected, "hard"); } },
+            ], selected.id.slice(0, 8))}>More<Icon name="chevronDown" /></button>
+          </div>
           <section className="ux-inspector-section">
             <div className="ux-section-title"><strong>Changes</strong><span>{details ? `${details.files.length} files · +${details.additions} −${details.deletions}` : "Loading…"}</span></div>
             {details ? (

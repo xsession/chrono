@@ -39,6 +39,8 @@ jobs:
         run: npm run test:unit
       - name: Line staging
         run: npm run test:lines
+      - name: Submodule map
+        run: npm run test:submodules
       - name: Roadmap features
         run: npm run test:roadmap
       - name: Git smoke tests
