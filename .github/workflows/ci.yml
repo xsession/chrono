@@ -43,6 +43,8 @@ jobs:
         run: npm run test:submodules
       - name: Repository trust
         run: npm run test:trust
+      - name: Folder picker
+        run: npm run test:folders
       - name: Roadmap features
         run: npm run test:roadmap
       - name: Git smoke tests

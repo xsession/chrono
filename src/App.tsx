@@ -44,19 +44,15 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LiveOutputHost, withLiveOutput } from "./liveOutput";
 import type { ExplorerFocus } from "./components/explorer/FileExplorer";
 import { askFields } from "./components/DialogHost";
+import { chooseFolder, FolderPickerHost } from "./components/FolderPicker";
 
 const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
 
-// The browser cannot open native directory pickers; ask for a repository path
-// via prompt() instead of the Tauri dialog the desktop build used.
+// Folder selection goes through Chrono's own picker: it works in the browser
+// build and does not depend on the native dialog, which fails silently on
+// some Linux desktops. The picker still offers the system dialog.
 const promptRepositoryPath = (title: string, initial = ""): Promise<string | null> =>
-  window.chronoDesktop?.pickDirectory() ?? new Promise((resolve) => {
-    const value = window.prompt(
-      `${title}\nEnter an absolute path to a Git repository on the machine running the Chrono server:`,
-      initial,
-    );
-    resolve(value ? value.trim() : null);
-  });
+  chooseFolder(title, { initial, confirm: "Open" });
 
 const idleOperation: RepositoryOperationState = {
   operation: null,
@@ -343,7 +339,7 @@ export default function App() {
 
   const createBranchAt = useCallback(async (commit: CommitRecord) => {
     if (!path) return;
-    const branch = window.prompt("Create branch at selected commit", "feature/");
+    const branch = await askText("Create branch", `New branch at ${commit.id.slice(0, 8)} — “${commit.subject}”`, "feature/");
     if (!branch?.trim()) return;
     await runRepositoryAction(`Create branch ${branch.trim()}`, async () => {
       await api.createBranchAt(path, branch.trim(), commit.id);
@@ -352,7 +348,7 @@ export default function App() {
 
   const createTagAt = useCallback(async (commit: CommitRecord) => {
     if (!path) return;
-    const name = window.prompt(`Create tag at ${commit.id.slice(0, 8)} — “${commit.subject}”`, "");
+    const name = await askText("Create tag", `Tag ${commit.id.slice(0, 8)} — “${commit.subject}”`, "");
     if (!name?.trim()) return;
     await runRepositoryAction(`Tag ${name.trim()}`, async () => {
       await api.createTag(path, name.trim(), commit.id, `Created from Chrono at ${new Date().toISOString()}`);
@@ -1000,6 +996,7 @@ export default function App() {
       <KeyBindingsModal open={keybindingsOpen} onClose={() => setKeybindingsOpen(false)} onZoom={(direction) => zoom(direction)} />
       <ToastHost />
       <DialogHost />
+      <FolderPickerHost />
       <LiveOutputHost />
       {agentDialogOpen && path && (
         <AgentSessionDialog repositoryPath={path} defaultBase={summary?.branch ?? "HEAD"} onClose={() => setAgentDialogOpen(false)} onStarted={(worktree, command) => {

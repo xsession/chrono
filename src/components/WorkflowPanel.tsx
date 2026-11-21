@@ -4,6 +4,7 @@ import type { CommandResult, RefGroups, StashRef, SubmoduleRef, WorktreeSummary,
 import { api } from "../api";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
+import { askConfirm } from "./DialogHost";
 
 export type WorkflowSection = "worktrees" | "submodules" | "stashes" | "recovery";
 
@@ -186,8 +187,8 @@ export function WorkflowPanel({ section, repositoryPath, onRun, onOpenWorktree, 
                         className="ux-refs-action ux-refs-action--danger"
                         disabled={operationLocked || busy !== null || Boolean(worktree.locked)}
                         title={worktree.locked ? "Unlock this worktree before removing it" : `Remove ${worktree.path}`}
-                        onClick={() => {
-                          if (worktree.locked || !window.confirm(`Remove worktree ${worktree.path}? This deletes its working directory metadata.`)) return;
+                        onClick={async () => {
+                          if (worktree.locked || !(await askConfirm("Remove worktree", `Remove worktree ${worktree.path}? This deletes its working directory metadata.`, { confirm: "Remove", danger: true }))) return;
                           void run("worktree_remove", [worktree.path]).then(() => refreshSection()).catch(() => undefined);
                         }}
                       >Remove</button>}
@@ -259,7 +260,7 @@ export function WorkflowPanel({ section, repositoryPath, onRun, onOpenWorktree, 
                   <code title={stash.message}>{stash.ref} · {stash.message}</code>
                   <span className="ux-card-actions wrap">
                     <button className="ux-refs-action" disabled={operationLocked || busy !== null} onClick={() => void run("stash_apply", [stash.ref]).then(() => refreshSection()).catch(() => undefined)}>Apply</button>
-                    <button className="ux-refs-action ux-refs-action--danger" disabled={operationLocked || busy !== null} onClick={() => { if (window.confirm(`Drop ${stash.ref}? This cannot be undone.`)) void run("stash_drop", [stash.ref]).then(() => refreshSection()).catch(() => undefined); }}>Drop</button>
+                    <button className="ux-refs-action ux-refs-action--danger" disabled={operationLocked || busy !== null} onClick={async () => { if (await askConfirm("Drop stash", `Drop ${stash.ref}? This cannot be undone.`, { confirm: "Drop", danger: true })) void run("stash_drop", [stash.ref]).then(() => refreshSection()).catch(() => undefined); }}>Drop</button>
                   </span>
                 </div>)}
                 {!stashes.length && <span className="ux-help-text">No stashes.</span>}
@@ -289,7 +290,7 @@ export function WorkflowPanel({ section, repositoryPath, onRun, onOpenWorktree, 
                 <label className="ux-inline-field"><span>Current revision</span><input value={bisectRevision} onChange={(event) => setBisectRevision(event.target.value)} placeholder="HEAD" /></label>
                 <button className="ux-button" disabled={operationLocked || busy !== null || !bisectRevision.trim()} onClick={() => void run("bisect_good", [bisectRevision.trim()]).catch(() => undefined)}>Mark good</button>
                 <button className="ux-button" disabled={operationLocked || busy !== null || !bisectRevision.trim()} onClick={() => void run("bisect_bad", [bisectRevision.trim()]).catch(() => undefined)}>Mark bad</button>
-                <button className="ux-danger-button" disabled={operationLocked || busy !== null} onClick={() => { if (window.confirm("Reset the current bisect session?")) void run("bisect_reset").catch(() => undefined); }}>Reset bisect</button>
+                <button className="ux-danger-button" disabled={operationLocked || busy !== null} onClick={async () => { if (await askConfirm("Reset bisect", "Reset the current bisect session?", { confirm: "Reset", danger: true })) void run("bisect_reset").catch(() => undefined); }}>Reset bisect</button>
               </div>
             </article>
             <article className="ux-task-card">
@@ -298,7 +299,7 @@ export function WorkflowPanel({ section, repositoryPath, onRun, onOpenWorktree, 
               <p>TortoiseGit "Clean up": preview or delete untracked files. The dry run lists what would be removed without touching anything.</p>
               <div className="ux-card-actions wrap">
                 <button className="ux-button" disabled={busy !== null} onClick={() => void runDirect("Dry-run clean", async () => (await api.cleanUntracked(repositoryPath, true)).stdout || "Nothing to clean.")}>Dry run (list only)</button>
-                <button className="ux-danger-button" disabled={operationLocked || busy !== null} onClick={() => { if (window.confirm("Delete all untracked files in this repository? This cannot be undone.")) void runDirect("Clean untracked", async () => (await api.cleanUntracked(repositoryPath, false)).stdout || "Untracked files removed."); }}>Clean (delete)</button>
+                <button className="ux-danger-button" disabled={operationLocked || busy !== null} onClick={async () => { if (await askConfirm("Clean untracked files", "Delete all untracked files in this repository? This cannot be undone.", { confirm: "Delete", danger: true })) void runDirect("Clean untracked", async () => (await api.cleanUntracked(repositoryPath, false)).stdout || "Untracked files removed."); }}>Clean (delete)</button>
               </div>
             </article>
             <article className="ux-task-card wide">

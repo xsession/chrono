@@ -8,6 +8,7 @@ import { pushToast } from "../../toastBus";
 import { invalidateAutolinks } from "../../autolinks";
 import { getDisplayPrefs, setDisplayPrefs, type DisplayPrefs } from "../../displayPrefs";
 import { notificationsEnabled, setNotificationsEnabled } from "../../notify";
+import { chooseFolder } from "../FolderPicker";
 
 type Props = {
   repositoryPath: string;
@@ -103,7 +104,7 @@ function IdentityTab({ repositoryPath, busy, run }: Props) {
                 {profile.repos.length
                   ? <button type="button" className="ux-button compact" onClick={() => void run(`Detach ${profile.name}`, () => api.detachProfile(repositoryPath, profile.name)).then(refresh)}>Detach</button>
                   : <button type="button" className="ux-button compact" onClick={() => void run(`Apply ${profile.name}`, () => api.applyProfile(repositoryPath, profile.name, "repo")).then(refresh)}>Use here</button>}
-                <button type="button" className="ux-button compact" onClick={async () => { const folder = window.prompt("Apply to every repository under this folder (absolute path):", repositoryPath.replace(/\/[^/]+\/?$/, "")); if (folder) await run(`Apply ${profile.name} to folder`, () => api.applyProfile(repositoryPath, profile.name, "folder", folder)); refresh(); }}>Apply to folder…</button>
+                <button type="button" className="ux-button compact" onClick={async () => { const folder = await chooseFolder(`Apply ${profile.name} to every repository under…`, { initial: repositoryPath.replace(/\/[^/]+\/?$/, ""), confirm: "Apply to" }); if (folder) await run(`Apply ${profile.name} to folder`, () => api.applyProfile(repositoryPath, profile.name, "folder", folder)); refresh(); }}>Apply to folder…</button>
                 <button type="button" className="ux-danger-button compact" onClick={async () => { if (await askConfirm("Delete profile", `Delete profile ${profile.name} and its includes?`, { confirm: "Delete", danger: true })) { await run("Delete profile", () => api.deleteProfile(profile.name)); refresh(); } }}>Delete</button>
               </div>
             </div>

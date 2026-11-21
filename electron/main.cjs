@@ -93,7 +93,20 @@ async function launch() {
   });
 }
 
-ipcMain.handle("chrono:pick-directory", async () => { const r = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); return r.canceled ? null : r.filePaths[0]; });
+// Attach the native dialog to the calling window so it opens modal and in
+// front. If it fails (e.g. GTK cannot start), return null; the renderer's
+// in-app folder picker stays open as the fallback.
+ipcMain.handle("chrono:pick-directory", async (event) => {
+  try {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const options = { properties: ["openDirectory", "createDirectory"] };
+    const r = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    return r.canceled ? null : r.filePaths[0];
+  } catch (error) {
+    console.error("folder dialog failed:", error);
+    return null;
+  }
+});
 
 // GitKraken RE §11.2 — renderer may invoke registered sagas through the shell.
 ipcMain.handle("chrono:invoke-saga", async (_event, name, payload) => {

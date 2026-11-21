@@ -3,6 +3,7 @@ import type { ChangeEvent } from "react";
 import type { RefGroups, TagRecord } from "../types";
 import { api } from "../api";
 import { Icon } from "./Icon";
+import { askConfirm } from "./DialogHost";
 
 /**
  * GitKraken-style consolidated References browser: one collapsible tree for
@@ -358,7 +359,7 @@ export function RefsBrowser({ repositoryPath, headSha, onCheckout, onCheckoutRem
             {stashes.map((stash) => {
               const busyKey = `stash:${stash.ref}`;
               const stashAction = async (operation: "stash_pop" | "stash_apply" | "stash_drop") => {
-                if (operation === "stash_drop" && !window.confirm(`Drop ${stash.ref}? This cannot be undone.`)) return;
+                if (operation === "stash_drop" && !(await askConfirm("Drop stash", `Drop ${stash.ref}? This cannot be undone.`, { confirm: "Drop", danger: true }))) return;
                 setBusy(busyKey);
                 try {
                   const result = await api.workflow(repositoryPath, { operation, args: [stash.ref] });

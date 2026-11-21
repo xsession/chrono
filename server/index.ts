@@ -25,6 +25,7 @@ import * as features from "./src/features.ts";
 import * as lineStaging from "./src/lineStaging.ts";
 import * as submodules from "./src/submodules.ts";
 import * as trust from "./src/trust.ts";
+import * as folders from "./src/folders.ts";
 import { withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
 import { readStream, validStreamId } from "./src/lib/streams.ts";
 import { rejectReason, type GuardOptions } from "./src/lib/requestGuard.ts";
@@ -400,6 +401,7 @@ const routes: Record<string, Handler> = {
   superproject_chain: (body) => submodules.superprojectChain(bodyPath(body)),
   repository_trust: (body) => trust.checkTrust(bodyPath(body)),
   trust_repository: (body) => trust.trustRepository(bodyPath(body)),
+  list_folders: (body) => folders.listFolders(typeof body.path === "string" ? body.path : null, body.showHidden === true),
   file_diff_side: (body) => lineStaging.sideDiff(bodyPath(body), str(body.file, "file"), body.side === "staged" ? "staged" : "unstaged"),
   apply_lines: (body) => {
     const mode = body.mode === "unstage" || body.mode === "discard" ? body.mode : "stage";

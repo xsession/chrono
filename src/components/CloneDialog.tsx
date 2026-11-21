@@ -1,15 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, MouseEvent } from "react";
 import { Icon } from "./Icon";
+import { chooseFolder } from "./FolderPicker";
 import type { CloneOptions } from "../types";
-
-// Browser fallback for the native "select a directory" picker: ask for the
-// destination path directly (it must exist or be creatable on the server host).
-const promptCloneDestination = (initial: string): Promise<string | null> =>
-  new Promise((resolve) => {
-    const value = window.prompt("Clone destination", initial);
-    resolve(value ? value.trim() : null);
-  });
 
 type Props = {
   openDialog: boolean;
@@ -39,7 +32,7 @@ export function CloneDialog({ openDialog, busy, onClose, onClone }: Props) {
   if (!openDialog) return null;
 
   const browse = async () => {
-    const selected = await promptCloneDestination(destination);
+    const selected = await chooseFolder("Clone into folder", { initial: destination, confirm: "Use" });
     if (selected) setDestination(selected);
   };
 

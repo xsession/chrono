@@ -669,3 +669,29 @@ button.sm-twisty:hover { background: var(--gk-bg-3); color: #fff; }
 .sm-commit code { color: var(--gk-grey); font-size: 11px; }
 .sm-ab { color: var(--gk-blue); }
 .sm-url { color: var(--gk-grey); font-size: 11px; }
+
+/* In-app folder picker */
+.fp-dialog { width: min(760px, calc(100vw - 30px)); height: min(560px, calc(100vh - 40px)); display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.fp-pathbar { display: flex; gap: 6px; align-items: center; padding: 0 16px 10px; }
+.fp-pathbar input { flex: 1; min-width: 0; font-family: var(--ux-mono); font-size: 12px; }
+.fp-body { display: grid; grid-template-columns: 170px minmax(0, 1fr); min-height: 0; border-top: 1px solid var(--gk-line); border-bottom: 1px solid var(--gk-line); }
+.fp-places { display: flex; flex-direction: column; gap: 1px; padding: 6px; overflow: auto; border-right: 1px solid var(--gk-line); background: var(--gk-bg-1); }
+.fp-places button { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border: 0; border-radius: 4px; background: transparent; color: inherit; text-align: left; cursor: pointer; font-size: 12px; }
+.fp-places button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-places button:hover { background: var(--gk-bg-3); }
+.fp-places button.is-active { background: var(--gk-bg-3); color: var(--gk-teal); }
+.fp-list { overflow: auto; padding: 4px; outline: none; }
+.fp-list:focus-visible { box-shadow: inset 0 0 0 1px var(--gk-teal); }
+.fp-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: 4px; cursor: default; font-size: 13px; user-select: none; }
+.fp-row:hover { background: var(--gk-bg-2); }
+.fp-row.is-selected { background: color-mix(in srgb, var(--gk-teal) 22%, transparent); }
+.fp-row.is-hidden { opacity: 0.6; }
+.fp-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fp-badge { font-size: 10px; padding: 0 6px; border-radius: 8px; color: var(--gk-green); border: 1px solid color-mix(in srgb, var(--gk-green) 50%, transparent); }
+.fp-filter, .fp-empty, .fp-error { padding: 6px 8px; font-size: 12px; color: var(--gk-grey); }
+.fp-error { color: var(--gk-red); }
+.fp-footer { display: flex !important; align-items: center; gap: 8px; }
+.fp-spacer { flex: 1; }
+.fp-hidden { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--gk-grey); }
+.fp-hint { font-size: 12px; color: var(--gk-green); }
+.fp-footer .ux-primary-button { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

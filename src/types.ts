@@ -736,3 +736,13 @@ export type SubmoduleTree = {
   superprojects: Array<{ path: string; name: string }>;
 };
 export type SubmoduleAction = "init" | "update" | "update_remote" | "sync" | "fetch" | "deinit";
+
+export type FolderEntry = { name: string; path: string; repo: boolean; hidden: boolean };
+export type FolderListing = {
+  path: string;
+  parent: string | null;
+  repo: boolean;
+  entries: FolderEntry[];
+  truncated: boolean;
+  places: Array<{ name: string; path: string }>;
+};
