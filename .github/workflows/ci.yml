@@ -41,6 +41,8 @@ jobs:
         run: npm run test:lines
       - name: Submodule map
         run: npm run test:submodules
+      - name: Repository trust
+        run: npm run test:trust
       - name: Roadmap features
         run: npm run test:roadmap
       - name: Git smoke tests

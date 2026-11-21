@@ -96,6 +96,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [superprojects, setSuperprojects] = useState<Array<{ path: string; name: string }>>([]);
   const [message, setMessage] = useState("Ready");
+  // Set when git refuses a repository owned by another user ("dubious ownership").
+  const [untrusted, setUntrusted] = useState<{ path: string; directory: string | null } | null>(null);
   const [palette, setPalette] = useState(false);
   // v2 key: the navigation now defaults to the slim icon rail (Ctrl+B expands it).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem("chrono.sidebar.v2") !== "expanded");
@@ -165,13 +167,37 @@ export default function App() {
       setUndoState(nextUndo);
       setRefreshKey((value) => value + 1);
       if (nextChanges.length === 0) { setWipSelected(false); setWipDiff(null); }
+      setUntrusted((current) => (current?.path === repositoryPath ? null : current));
       setMessage(`Refreshed ${nextSummary.name}`);
     } catch (error) {
-      setMessage(String(error));
+      const text = String(error);
+      if (/dubious ownership/i.test(text)) {
+        const directory = text.match(/repository at '([^']+)'/)?.[1] ?? null;
+        setUntrusted({ path: repositoryPath, directory });
+        setMessage(`Git refuses ${directory ?? repositoryPath}: the folder belongs to another user`);
+      } else {
+        setMessage(text);
+      }
     } finally {
       setBusy(false);
     }
   }, [path]);
+
+  const trustUntrusted = useCallback(async () => {
+    if (!untrusted) return;
+    setBusy(true);
+    try {
+      await api.trustRepository(untrusted.path);
+      const target = untrusted.path;
+      setUntrusted(null);
+      pushToast(`Trusted ${untrusted.directory ?? target}`, "success");
+      setBusy(false);
+      await refresh(target);
+    } catch (error) {
+      setBusy(false);
+      pushToast(String(error).replace(/^Error: /, ""), "error", 9000);
+    }
+  }, [untrusted, refresh]);
 
   const loadOlderHistory = useCallback(async () => {
     const cursor = historyWindow.olderCursor;
@@ -776,6 +802,20 @@ export default function App() {
             onClose={(id) => closeTab(id)}
             onNew={() => void openRepoTab()}
           />
+        )}
+
+        {untrusted && (
+          <section className="ux-git-operation has-conflicts ux-trust-banner" role="alert" aria-label="Repository not trusted">
+            <div className="ux-operation-status-icon"><Icon name="warning" /></div>
+            <div className="ux-operation-copy">
+              <div className="ux-operation-title-row"><strong>Git won't open {untrusted.directory ?? untrusted.path}</strong></div>
+              <p>The folder belongs to another user, so git treats it as unsafe. Trusting it adds the folder to <code>safe.directory</code> in your global git config. Only do this for folders you own or trust; submodules may need trusting separately.</p>
+            </div>
+            <div className="ux-operation-actions" role="toolbar" aria-label="Trust controls">
+              <button className="ux-primary-button" disabled={busy} onClick={() => void trustUntrusted()}>Trust this folder</button>
+              <button className="ux-button" onClick={() => setUntrusted(null)}>Dismiss</button>
+            </div>
+          </section>
         )}
 
         {path && operationActive && (

@@ -249,6 +249,8 @@ export const api = {
   submoduleTree: (path: string) => invoke<SubmoduleTree>("submodule_tree", { path }),
   submoduleAction: (path: string, action: SubmoduleAction, target = "") => invoke<string>("submodule_action", { path, action, target }),
   superprojectChain: (path: string) => invoke<Array<{ path: string; name: string }>>("superproject_chain", { path }),
+  repositoryTrust: (path: string) => invoke<{ trusted: boolean; directory: string | null }>("repository_trust", { path }),
+  trustRepository: (path: string) => invoke<{ trusted: boolean; directory: string | null }>("trust_repository", { path }),
   fileDiffSide: (path: string, file: string, side: DiffSide) => invoke<SideDiff>("file_diff_side", { path, file, side }),
   applyLines: (path: string, file: string, mode: LineMode, selection: Array<{ hunk: number; lines: number[] }>, fingerprint: string | null) =>
     invoke<CommandResult>("apply_lines", { path, file, mode, selection, fingerprint }),
