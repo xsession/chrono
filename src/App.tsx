@@ -536,25 +536,27 @@ export default function App() {
     }
   }, [refresh]);
 
-  const closeActiveTab = useCallback(() => {
-    if (!path) return;
-    lastClosedTabRef.current = path;
-    setRepoTabs((current) => {
-      const next = current.filter((tab) => tab !== path);
-      if (next.length > 0) void refresh(next[next.length - 1]).catch(() => undefined);
-      else { setSummary(null); setHistorySegments([]); setSelectedCommit(null); setChanges([]); setBranches([]); }
-      return next;
-    });
-  }, [path, refresh]);
+  // Drop the shown repository before switching tabs. If the next tab fails to
+  // load (for example git refuses it), the closed repository must not stay on screen.
+  const clearRepositoryView = useCallback(() => {
+    historyRequestRef.current++;
+    setPath(""); setSummary(null); setHistorySegments([]); setSelectedCommit(null); setChanges([]); setBranches([]);
+    setOperation(idleOperation); setUndoState(null); setSuperprojects([]); setWipSelected(false); setWipDiff(null);
+  }, []);
 
   const closeTab = useCallback((target: string) => {
+    if (!target) return;
     lastClosedTabRef.current = target;
-    setRepoTabs((current) => {
-      const next = current.filter((tab) => tab !== target);
-      if (next.length > 0 && target === path) void refresh(next[next.length - 1]).catch(() => undefined);
-      return next;
-    });
-  }, [path, refresh]);
+    const next = repoTabs.filter((tab) => tab !== target);
+    setRepoTabs(next);
+    setUntrusted((current) => (current?.path === target ? null : current));
+    if (target === path || next.length === 0) {
+      clearRepositoryView();
+      if (next.length > 0) void refresh(next[next.length - 1]).catch(() => undefined);
+    }
+  }, [repoTabs, path, refresh, clearRepositoryView]);
+
+  const closeActiveTab = useCallback(() => { if (path) closeTab(path); }, [path, closeTab]);
 
   const selectTab = useCallback((index: number) => {
     setRepoTabs((current) => {

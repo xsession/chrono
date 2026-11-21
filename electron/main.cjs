@@ -1,11 +1,13 @@
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
 const { spawn } = require("node:child_process");
 const path = require("node:path");
+const fs = require("node:fs");
 
 let backend;
 let backendPort;
 let mainWindow;
 let pendingDeepLinks = [];
+let quitting = false;
 
 const PROTOCOL = "chrono";
 // Packaged builds keep server/, dist/ and public/ (plus ws/node-pty) in
@@ -60,14 +62,35 @@ async function launch() {
   backendPort = String(14210 + Math.floor(Math.random() * 1000));
   backend = spawn(process.execPath, ["--experimental-strip-types", path.join(root(), "server", "index.ts")], { cwd: root(), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", CHRONO_PORT: backendPort, CHRONO_HOST: "127.0.0.1" }, stdio: ["ignore", "pipe", "pipe"] });
   let backendLog = "";
-  backend.stdout.on("data", (chunk) => { backendLog = (backendLog + chunk).slice(-4000); });
-  backend.stderr.on("data", (chunk) => { backendLog = (backendLog + chunk).slice(-4000); });
-  backend.on("exit", (code) => { if (!mainWindow) dialog.showErrorBox("Chrono backend stopped", `exit code ${code}\n\n${backendLog}`); });
+  // Keep the backend's output on disk too (<userData>/logs/backend.log), so a
+  // crash can be investigated after the app has closed.
+  const logFile = path.join(app.getPath("userData"), "logs", "backend.log");
+  let logStream = null;
+  try {
+    fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    try { if (fs.statSync(logFile).size > 2_000_000) fs.renameSync(logFile, `${logFile}.1`); } catch {}
+    logStream = fs.createWriteStream(logFile, { flags: "a" });
+    logStream.write(`\n--- ${new Date().toISOString()} Chrono ${app.getVersion()} backend on port ${backendPort} ---\n`);
+  } catch {}
+  const capture = (chunk) => { backendLog = (backendLog + chunk).slice(-4000); logStream?.write(chunk); };
+  backend.stdout.on("data", capture);
+  backend.stderr.on("data", capture);
+  backend.on("exit", (code, signal) => {
+    logStream?.write(`--- backend exited: code ${code} signal ${signal} ---\n`);
+    if (quitting) return;
+    dialog.showErrorBox("Chrono backend stopped", `exit code ${code}${signal ? ` (${signal})` : ""}\n\nLog: ${logFile}\n\n${backendLog}`);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+  });
   await wait(`http://127.0.0.1:${backendPort}/api/health`);
   mainWindow = new BrowserWindow({ width: 1440, height: 900, minWidth: 860, minHeight: 600, backgroundColor: "#111318", title: "Chrono", autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true } });
   await mainWindow.loadURL(`http://127.0.0.1:${backendPort}`);
   for (const uri of pendingDeepLinks.splice(0)) forwardDeepLink(uri);
   mainWindow.on("closed", () => { mainWindow = null; });
+  // A crashed or killed renderer leaves a blank window: record why, then reload.
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    logStream?.write(`--- window renderer gone: ${details.reason} (exit ${details.exitCode}) ---\n`);
+    if (details.reason !== "clean-exit" && mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+  });
 }
 
 ipcMain.handle("chrono:pick-directory", async () => { const r = await dialog.showOpenDialog({ properties: ["openDirectory", "createDirectory"] }); return r.canceled ? null : r.filePaths[0]; });
@@ -88,4 +111,4 @@ if (process.platform === "linux") {
 }
 app.whenReady().then(launch).catch((e) => { dialog.showErrorBox("Chrono failed to start", String(e)); app.quit(); });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-app.on("before-quit", () => backend?.kill());
+app.on("before-quit", () => { quitting = true; backend?.kill(); });
