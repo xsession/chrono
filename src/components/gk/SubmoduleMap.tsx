@@ -1,13 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { api } from "../../api";
-import type { SubmoduleAction, SubmoduleNode, SubmoduleTree } from "../../types";
+import type { SubmoduleAction, SubmoduleBulkAction, SubmoduleBulkResult, SubmoduleForeachResult, SubmoduleNode, SubmoduleTree } from "../../types";
+import { SubmoduleMindMap } from "./SubmoduleMindMap";
 import { Icon } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
-import { askConfirm } from "../DialogHost";
+import { askConfirm, askText } from "../DialogHost";
 import { pushToast } from "../../toastBus";
 
-type Filter = "all" | "attention" | "dirty" | "drift" | "uninitialized";
+type Filter = "all" | "attention" | "dirty" | "drift" | "uninitialized" | "outdated";
+type Mode = "list" | "mindmap";
+type Results =
+  | { kind: "bulk"; label: string; items: SubmoduleBulkResult[] }
+  | { kind: "foreach"; label: string; items: SubmoduleForeachResult[] };
+
+const BULK: Array<{ action: SubmoduleBulkAction; label: string; title: string }> = [
+  { action: "fetch", label: "Fetch", title: "git fetch --all --prune in each" },
+  { action: "update", label: "Update", title: "Check out the commit each parent records (initializes missing ones)" },
+  { action: "update_remote", label: "Update to remote", title: "git submodule update --remote: move each to its tracked branch tip" },
+  { action: "pull", label: "Pull", title: "Fast-forward pull, only for submodules on a branch" },
+  { action: "attach", label: "Attach to branch", title: "Switch detached submodules to a branch that points at the same commit (never moves code)" },
+  { action: "record", label: "Record pointer", title: "Stage moved submodules' current commits in their parent repositories" },
+];
+const MODE_KEY = "chrono.submodules.mode";
 
 type Props = {
   repositoryPath: string;
@@ -46,7 +61,13 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<Set<string> | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<Mode>(() => (localStorage.getItem(MODE_KEY) === "mindmap" ? "mindmap" : "list"));
+  const [results, setResults] = useState<Results | null>(null);
+  const [working, setWorking] = useState<string | null>(null);
+  const [manifest, setManifest] = useState<string | null>(null);
   const menu = useContextMenu();
+  const switchMode = (next: Mode) => { setMode(next); localStorage.setItem(MODE_KEY, next); };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,7 +84,7 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
     }
   }, [repositoryPath]);
 
-  useEffect(() => { setOpen(null); setSelected(null); }, [repositoryPath]);
+  useEffect(() => { setOpen(null); setSelected(null); setPicked(new Set()); setResults(null); }, [repositoryPath]);
   useEffect(() => { void load(); }, [load, refreshKey]);
 
   const children = useMemo(() => {
@@ -80,6 +101,7 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
       case "dirty": return node.changes + node.untracked > 0;
       case "drift": return node.state === "drift";
       case "uninitialized": return node.state === "uninitialized";
+      case "outdated": return (node.tracking?.behind ?? 0) > 0;
       default: return true;
     }
   }, [filter, needle]);
@@ -118,6 +140,56 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
   const act = (label: string, action: SubmoduleAction, target: string) =>
     run(label, () => api.submoduleAction(repositoryPath, action, target)).then(() => load());
 
+  /** A node plus everything nested below it. */
+  const subtree = useCallback((path: string) => (tree?.nodes ?? []).filter((node) => node.path === path || node.path.startsWith(`${path}/`)).map((node) => node.path), [tree]);
+
+  const bulk = async (action: SubmoduleBulkAction, targets: string[], label: string) => {
+    if (!targets.length) return;
+    setWorking(label);
+    try {
+      const items = await api.submoduleBulk(repositoryPath, action, targets);
+      setResults({ kind: "bulk", label, items });
+      const failed = items.filter((item) => item.status === "failed").length;
+      pushToast(`${label}: ${items.filter((item) => item.status === "ok").length} done${failed ? `, ${failed} failed` : ""}`, failed ? "error" : "success", 4000);
+    } catch (reason) {
+      pushToast(String(reason).replace(/^Error: /, ""), "error", 8000);
+    } finally {
+      setWorking(null);
+      await load();
+    }
+  };
+
+  const foreach = async (targets: string[]) => {
+    if (!targets.length) return;
+    const command = await askText("Run command in submodules", `Runs in each of the ${targets.length} selected submodule folder(s), 4 at a time. $sm_path, $sha1 and $toplevel are set like git submodule foreach.`, localStorage.getItem("chrono.submodules.foreach") ?? "git status -sb", { confirm: "Run", placeholder: "git log -1 --oneline" });
+    if (!command?.trim()) return;
+    localStorage.setItem("chrono.submodules.foreach", command);
+    setWorking(`Running ${command}`);
+    try {
+      const items = await api.submoduleForeach(repositoryPath, command, targets);
+      setResults({ kind: "foreach", label: command, items });
+    } catch (reason) {
+      pushToast(String(reason).replace(/^Error: /, ""), "error", 8000);
+    } finally {
+      setWorking(null);
+      await load();
+    }
+  };
+
+  const showManifest = async () => {
+    try {
+      setManifest(JSON.stringify(await api.submoduleManifest(repositoryPath), null, 2));
+    } catch (reason) {
+      pushToast(String(reason).replace(/^Error: /, ""), "error", 8000);
+    }
+  };
+
+  const pick = (path: string | null, additive: boolean) => {
+    if (!path) { if (!additive) setSelected(null); return; }
+    setSelected(path);
+    if (additive) setPicked((current) => { const next = new Set(current); if (next.has(path)) next.delete(path); else next.add(path); return next; });
+  };
+
   const nodeMenu = (event: ReactMouseEvent, node: SubmoduleNode) => {
     const absolute = join(tree?.root ?? repositoryPath, node.path);
     const initialized = node.state !== "uninitialized";
@@ -131,6 +203,11 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
       { id: "remote", label: "Update to latest remote commit", icon: "cloud", disabled: busy, onSelect: () => act(`Update ${node.path} from remote`, "update_remote", node.path) },
       { id: "fetch", label: "Fetch", icon: "refresh", disabled: busy || !initialized, onSelect: () => act(`Fetch ${node.path}`, "fetch", node.path) },
       { id: "sync", label: "Sync URL from .gitmodules", disabled: busy, onSelect: () => act(`Sync ${node.path}`, "sync", node.path) },
+      { kind: "separator", id: "s-tree" },
+      { id: "pick-tree", label: node.children ? `Select with ${subtree(node.path).length - 1} nested` : "Select", onSelect: () => setPicked((current) => new Set([...current, ...subtree(node.path)])) },
+      { id: "fetch-tree", label: "Fetch with nested", icon: "refresh", disabled: busy || !initialized || !node.children, onSelect: () => void bulk("fetch", subtree(node.path), `Fetch ${node.name} and nested`) },
+      { id: "update-tree", label: "Update with nested", icon: "download", disabled: busy || !node.children, onSelect: () => void bulk("update", subtree(node.path), `Update ${node.name} and nested`) },
+      { id: "run-tree", label: "Run command here and nested…", icon: "terminal", disabled: busy || !initialized, onSelect: () => void foreach(subtree(node.path)) },
       { kind: "separator", id: "s2" },
       { id: "copy", label: "Copy path", icon: "copy", onSelect: () => { void navigator.clipboard?.writeText(node.path); pushToast(`Copied ${node.path}`, "success", 2000); } },
       { id: "copy-url", label: "Copy URL", icon: "copy", disabled: !node.url, onSelect: () => { void navigator.clipboard?.writeText(node.url ?? ""); } },
@@ -159,6 +236,11 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
           <span>{tree ? `${totals?.all ?? 0} submodule${totals?.all === 1 ? "" : "s"} · ${tree.maxDepth} level${tree.maxDepth === 1 ? "" : "s"} deep` : "Loading…"}</span>
         </div>
         <div className="sm-actions">
+          <div className="sm-mode" role="group" aria-label="Layout">
+            <button type="button" className={mode === "list" ? "is-active" : ""} aria-pressed={mode === "list"} onClick={() => switchMode("list")}>List</button>
+            <button type="button" className={mode === "mindmap" ? "is-active" : ""} aria-pressed={mode === "mindmap"} onClick={() => switchMode("mindmap")}>Mind map</button>
+          </div>
+          <button type="button" className="ux-button compact" disabled={!tree?.nodes.length} onClick={() => void showManifest()} title="Every submodule's URL, pinned and checked-out commit as JSON">Manifest</button>
           <button type="button" className="ux-button compact" disabled={busy || !tree?.nodes.length} onClick={() => void act("Update all submodules", "update", "")} title="git submodule update --init --recursive">Update all</button>
           <button type="button" className="ux-button compact" disabled={busy || !tree?.nodes.length} onClick={() => void act("Fetch all submodules", "fetch", "")}>Fetch all</button>
           <button type="button" className="ux-icon-button" disabled={loading} onClick={() => void load()} title="Refresh" aria-label="Refresh"><Icon name="refresh" /></button>
@@ -173,16 +255,37 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
             {chip("dirty", "changed", totals?.dirty, "dirty")}
             {chip("drift", "moved", totals?.drift, "drift")}
             {chip("uninitialized", "not initialized", totals?.uninitialized, "off")}
+            {chip("outdated", "behind branch", totals?.outdated, "drift")}
           </div>
           <label className="sm-search">
             <Icon name="search" />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Find submodule, branch or URL" aria-label="Find submodule" />
             {query && <button type="button" onClick={() => setQuery("")} aria-label="Clear">✕</button>}
           </label>
-          <span className="sm-expand">
+          {mode === "list" && <span className="sm-expand">
             <button type="button" className="gk-link-button" onClick={() => setOpen(new Set(tree.nodes.filter((node) => node.children > 0).map((node) => node.path)))}>Expand all</button>
             <button type="button" className="gk-link-button" onClick={() => setOpen(new Set())}>Collapse all</button>
+          </span>}
+        </div>
+      )}
+
+      {tree && tree.nodes.length > 0 && (
+        <div className={`sm-bulk${picked.size ? " has-picked" : ""}`} role="toolbar" aria-label="Bulk actions">
+          {picked.size ? <strong>{picked.size} selected</strong> : <span className="sm-bulk-hint">Select submodules (checkboxes, Ctrl/Shift+click, or right-click › Select with nested) to act on many at once</span>}
+          <span className="sm-bulk-pickers">
+            <button type="button" className="gk-link-button" onClick={() => setPicked(new Set((tree.nodes).filter(passes).map((node) => node.path)))}>Select {filter === "all" && !needle ? "all" : "shown"}</button>
+            <button type="button" className="gk-link-button" disabled={!attention} onClick={() => setPicked(new Set(tree.nodes.filter(needsAttention).map((node) => node.path)))}>Select needing attention</button>
+            {picked.size > 0 && <button type="button" className="gk-link-button" onClick={() => setPicked(new Set())}>Clear</button>}
           </span>
+          {picked.size > 0 && (
+            <span className="sm-bulk-actions">
+              {BULK.map((entry) => (
+                <button key={entry.action} type="button" className="ux-button compact" disabled={busy || working !== null} title={entry.title} onClick={() => void bulk(entry.action, [...picked], `${entry.label} (${picked.size})`)}>{entry.label}</button>
+              ))}
+              <button type="button" className="ux-button compact" disabled={busy || working !== null} onClick={() => void foreach([...picked])} title="Run a shell command in every selected submodule">Run command…</button>
+            </span>
+          )}
+          {working && <span className="sm-working"><i className="ux-spinner" />{working}…</span>}
         </div>
       )}
 
@@ -190,6 +293,19 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
         {error ? <div className="ux-empty-state compact">{error}</div>
           : !tree ? <div className="ux-empty-state compact"><i className="ux-spinner" />Scanning submodules…</div>
           : !tree.nodes.length ? <div className="ux-empty-state">This repository has no submodules.</div>
+          : mode === "mindmap" ? (
+            <SubmoduleMindMap
+              tree={tree}
+              rootName={tree.root.split(/[\\/]/).filter(Boolean).pop() ?? tree.root}
+              selected={selected}
+              picked={picked}
+              passes={passes}
+              filtering={filter !== "all" || needle !== ""}
+              onSelect={pick}
+              onOpen={(node) => node.state !== "uninitialized" && onOpenRepository(join(tree.root, node.path))}
+              onContextMenu={nodeMenu}
+            />
+          )
           : (
             <div className="sm-table" role="treegrid" aria-label="Submodule tree">
               <div className="sm-row sm-header" role="row"><span>Submodule</span><span>Status</span><span>Checked out</span><span>Remote</span></div>
@@ -204,7 +320,7 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
                     aria-expanded={node.children ? isOpen : undefined}
                     tabIndex={0}
                     className={`sm-row${selected === node.path ? " is-selected" : ""}${passes(node) ? "" : " is-context"}`}
-                    onClick={() => setSelected(node.path)}
+                    onClick={(event) => pick(node.path, event.ctrlKey || event.metaKey || event.shiftKey)}
                     onDoubleClick={() => node.state !== "uninitialized" && onOpenRepository(join(tree.root, node.path))}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && node.state !== "uninitialized") onOpenRepository(join(tree.root, node.path));
@@ -213,7 +329,9 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
                     onContextMenu={(event) => { setSelected(node.path); nodeMenu(event, node); }}
                     title={node.path}
                   >
-                    <span className="sm-name" style={{ paddingLeft: 6 + node.depth * 18 }}>
+                    <span className="sm-name" style={{ paddingLeft: 6 }}>
+                      <input type="checkbox" className="sm-check" checked={picked.has(node.path)} aria-label={`Select ${node.path}`} onClick={(event) => event.stopPropagation()} onChange={() => pick(node.path, true)} />
+                      <span aria-hidden="true" style={{ flex: "none", width: node.depth * 18 }} />
                       {node.children ? (
                         <button type="button" className="sm-twisty" onClick={(event) => { event.stopPropagation(); toggle(node.path); }} aria-label={isOpen ? "Collapse" : "Expand"}>
                           <Icon name={isOpen ? "chevronDown" : "chevronRight"} />
@@ -233,6 +351,7 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
                       {node.state === "uninitialized" ? <small>—</small> : <>
                         {node.branch ? <><Icon name="branch" />{node.branch}</> : <code>{node.commit.slice(0, 8)}</code>}
                         {(node.ahead > 0 || node.behind > 0) && <small className="sm-ab">{node.ahead ? `↑${node.ahead}` : ""}{node.behind ? `↓${node.behind}` : ""}</small>}
+                        {(node.tracking?.behind ?? 0) > 0 && <small className="sm-outdated" title={`The checked-out commit is ${node.tracking!.behind} commit(s) behind origin/${node.tracking!.branch} (as of the last fetch). Update to remote moves it there.`}>{node.tracking!.behind} behind {node.tracking!.branch}</small>}
                       </>}
                     </span>
                     <span className="sm-url" title={node.url ?? undefined}>{node.url ? node.url.replace(/^(https?:\/\/|git@|file:\/\/)/, "").replace(/\.git$/, "") : ""}</span>
@@ -243,7 +362,82 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
             </div>
           )}
       </div>
+      {mode === "mindmap" && tree && selected && (() => {
+        const node = tree.nodes.find((entry) => entry.path === selected);
+        if (!node) return null;
+        const status = submoduleStatus(node);
+        return (
+          <aside className="sm-detail" aria-label={`Details of ${node.path}`}>
+            <header><i className={`sm-dot sm-tone-${status.tone}`} /><strong>{node.path}</strong><button type="button" className="ux-icon-button" aria-label="Close details" onClick={() => setSelected(null)}>✕</button></header>
+            <dl>
+              <dt>Status</dt><dd className={`sm-tone-${status.tone}`}>{status.label}</dd>
+              <dt>Checked out</dt><dd>{node.state === "uninitialized" ? "—" : <>{node.branch ?? "detached"} <code>{node.commit.slice(0, 10)}</code>{(node.ahead || node.behind) ? ` ↑${node.ahead} ↓${node.behind}` : ""}</>}</dd>
+              {node.tracking && <><dt>Tracks</dt><dd>origin/{node.tracking.branch}{node.tracking.behind ? <span className="sm-outdated"> · {node.tracking.behind} commits behind</span> : " · up to date"}</dd></>}
+              {node.recorded && <><dt>Parent records</dt><dd><code>{node.recorded.slice(0, 10)}</code></dd></>}
+              {node.children > 0 && <><dt>Nested</dt><dd>{node.children} direct{node.attentionBelow ? `, ${node.attentionBelow} need attention` : ""}</dd></>}
+              {node.url && <><dt>Remote</dt><dd className="sm-detail-url">{node.url}</dd></>}
+            </dl>
+            <footer>
+              <button type="button" className="ux-primary-button" disabled={node.state === "uninitialized"} onClick={() => onOpenRepository(join(tree.root, node.path))}>Open</button>
+              <button type="button" className="ux-button" onClick={(event) => nodeMenu(event, node)}>Actions…</button>
+              <button type="button" className="ux-button" onClick={() => setPicked((current) => new Set([...current, ...subtree(node.path)]))}>Select{node.children ? " with nested" : ""}</button>
+            </footer>
+          </aside>
+        );
+      })()}
+
+      {results && (
+        <section className="sm-results" aria-label="Results">
+          <header>
+            <strong>{results.kind === "foreach" ? <>Ran <code>{results.label}</code></> : results.label}</strong>
+            <span>{summarize(results)}</span>
+            {results.kind === "bulk" && results.items.some((item) => item.status !== "ok") && (
+              <button type="button" className="gk-link-button" onClick={() => setPicked(new Set(results.items.filter((item) => item.status !== "ok").map((item) => item.path)))}>Select the ones not done</button>
+            )}
+            {results.kind === "foreach" && results.items.some((item) => item.code !== 0) && (
+              <button type="button" className="gk-link-button" onClick={() => setPicked(new Set(results.items.filter((item) => item.code !== 0).map((item) => item.path)))}>Select failures</button>
+            )}
+            <button type="button" className="ux-icon-button" aria-label="Close results" onClick={() => setResults(null)}>✕</button>
+          </header>
+          <div className="sm-results-body">
+            {results.kind === "bulk" ? results.items.map((item) => (
+              <div key={item.path} className={`sm-result is-${item.status}`}><b>{item.status === "ok" ? "✓" : item.status === "skipped" ? "–" : "✕"}</b><span>{item.path}</span><small>{item.message}</small></div>
+            )) : results.items.map((item) => (
+              <details key={item.path} className={`sm-result-run${item.code === 0 ? "" : " is-failed"}`} open={results.items.length <= 4 || item.code !== 0}>
+                <summary><b>{item.code === 0 ? "✓" : item.code === null ? "–" : `exit ${item.code}`}</b><span>{item.path}</span><small>{item.ms ? `${item.ms} ms` : ""}{!item.stdout.trim() && !item.stderr.trim() ? " · no output" : ""}</small></summary>
+                {(item.stdout || item.stderr) && <pre>{item.stdout}{item.stderr && <span className="sm-stderr">{item.stderr}</span>}</pre>}
+              </details>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {manifest && (
+        <div className="ux-modal-backdrop gk-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setManifest(null); }} onKeyDown={(event) => { if (event.key === "Escape") setManifest(null); }}>
+          <div className="ux-dialog gk-dialog sm-manifest" role="dialog" aria-modal="true" aria-label="Submodule manifest">
+            <header><h2>Submodule manifest</h2></header>
+            <div className="ux-dialog-body gk-dialog-body">
+              <p className="gk-dialog-message">URL, pinned commit and checked-out commit of every submodule. Share it, attach it to a bug report, or diff it against another checkout.</p>
+              <textarea readOnly value={manifest} rows={16} spellCheck={false} />
+            </div>
+            <footer>
+              <button type="button" className="ux-button" onClick={() => setManifest(null)}>Close</button>
+              <button type="button" className="ux-button" onClick={() => { const blob = new Blob([manifest], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `${(tree?.root ?? "repo").split(/[\\/]/).pop()}-submodules.json`; link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000); }}>Download</button>
+              <button type="button" className="ux-primary-button" autoFocus onClick={() => { void navigator.clipboard?.writeText(manifest); pushToast("Manifest copied", "success", 2000); }}>Copy</button>
+            </footer>
+          </div>
+        </div>
+      )}
       {menu.element}
     </section>
   );
+}
+
+function summarize(results: Results): string {
+  if (results.kind === "bulk") {
+    const count = (status: SubmoduleBulkResult["status"]) => results.items.filter((item) => item.status === status).length;
+    return [`${count("ok")} done`, count("skipped") ? `${count("skipped")} skipped` : "", count("failed") ? `${count("failed")} failed` : ""].filter(Boolean).join(" · ");
+  }
+  const failed = results.items.filter((item) => item.code !== 0).length;
+  return `${results.items.length - failed} succeeded${failed ? ` · ${failed} failed or skipped` : ""}`;
 }

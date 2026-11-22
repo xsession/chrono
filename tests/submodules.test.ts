@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { submoduleAction, submoduleTree, superprojectChain } from "../server/src/submodules.ts";
+import { submoduleAction, submoduleBulk, submoduleForeach, submoduleManifest, submoduleTree, superprojectChain } from "../server/src/submodules.ts";
 import { repositoryHistoryPage } from "../server/src/backend.ts";
 
 const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "chrono-subs-")));
@@ -52,7 +52,7 @@ eq(byPath.get("lib/c")?.url?.endsWith("c.git"), true, "uninitialized url read fr
 eq(byPath.get("src/infra/lib/mid/lib/leaf")?.untracked, 1, "untracked file at level 3");
 eq(byPath.get("src/infra")?.attentionBelow, 1, "problems bubble up to the top-level parent");
 eq(byPath.get("src/infra")?.changes, 0, "parent does not count nested dirt as its own change");
-eq(tree.totals, { all: 6, dirty: 2, drift: 1, uninitialized: 1, conflict: 0, detached: 5 }, "totals");
+eq(tree.totals, { all: 6, dirty: 2, drift: 1, uninitialized: 1, conflict: 0, detached: 5, outdated: 1 }, "totals (lib/b sits one commit behind main)");
 
 eq((await superprojectChain(path.join(root, "src/infra/lib/mid/lib/leaf"))).map((entry) => entry.name), ["top", "infra", "mid"], "breadcrumb chain outermost first");
 eq(await superprojectChain(root), [], "top-level repo has no superproject");
@@ -65,6 +65,42 @@ eq(tree.nodes.find((node) => node.path === "lib/c")?.state, "ok", "nested-safe i
 eq(tree.nodes.find((node) => node.path === "lib/b")?.state, "ok", "update restores the recorded commit");
 await assert.rejects(() => submoduleAction(root, "update", "../escape"), /relative/); checks += 1;
 await assert.rejects(() => submoduleAction(root, "update", "lib/nope"), /not a submodule/); checks += 1;
+
+// ---- bulk management -------------------------------------------------
+// New upstream commit in "a": after a bulk fetch, lib/a reports it is behind its branch.
+const aSrc = path.join(temp, "a.src");
+fs.writeFileSync(path.join(aSrc, "f3.txt"), "a 3\n"); git(aSrc, "add", "."); git(aSrc, "commit", "-qm", "a 3");
+git(aSrc, "push", "-q", path.join(temp, "a.git"), "main");
+let bulk = await submoduleBulk(root, "fetch", ["lib/a", "lib/c"]);
+eq(bulk.map((item) => item.status), ["ok", "ok"], "bulk fetch");
+let node = (await submoduleTree(root)).nodes.find((entry) => entry.path === "lib/a")!;
+eq(node.tracking, { branch: "main", behind: 1 }, "pin is one commit behind its tracked branch");
+git(path.join(root, "lib/a"), "checkout", "-q", "--", ".");
+bulk = await submoduleBulk(root, "update_remote", ["lib/a"]);
+eq(bulk[0].status, "ok", "update to remote");
+node = (await submoduleTree(root)).nodes.find((entry) => entry.path === "lib/a")!;
+eq([node.state, node.tracking?.behind], ["drift", 0], "moved to the branch tip, now differs from the recorded pin");
+eq((await submoduleBulk(root, "pull", ["lib/a"]))[0].status, "skipped", "pull skips a detached submodule");
+bulk = await submoduleBulk(root, "attach", ["lib/a", "lib/c"]);
+eq(bulk[0].status, "ok", `attach puts lib/a on main (${bulk[0].message})`);
+eq(git(path.join(root, "lib/a"), "symbolic-ref", "--short", "HEAD").trim(), "main", "lib/a is on main");
+eq(bulk[1].status, "ok", "lib/c's pin is its branch tip, so it attaches too");
+git(path.join(root, "lib/b"), "checkout", "-q", "--detach", "HEAD~1");
+eq((await submoduleBulk(root, "attach", ["lib/b"]))[0].status, "skipped", "attach never moves a submodule whose commit is not a branch tip");
+await submoduleBulk(root, "update", ["lib/b"]);
+eq((await submoduleBulk(root, "pull", ["lib/a"]))[0].status, "ok", "pull works once on a branch");
+bulk = await submoduleBulk(root, "record", ["lib/a", "lib/c"]);
+eq(bulk.map((item) => item.status), ["ok", "skipped"], "record stages only moved pins");
+eq(git(root, "diff", "--cached", "--name-only").trim(), "lib/a", "new pointer staged in the superproject");
+bulk = await submoduleBulk(root, "fetch", ["src/infra/lib/mid/lib/leaf", "src/infra"]);
+eq(bulk.map((item) => item.path), ["src/infra", "src/infra/lib/mid/lib/leaf"], "bulk runs parents before nested submodules");
+await assert.rejects(() => submoduleBulk(root, "fetch", ["../x"]), /invalid submodule path/); checks += 1;
+await assert.rejects(() => submoduleBulk(root, "fetch", []), /select at least one/); checks += 1;
+const runs = await submoduleForeach(root, 'printf "%s|%s" "$sm_path" "$(git rev-parse --abbrev-ref HEAD)"', ["lib/a", "src/infra/lib/mid"]);
+eq(runs.map((run) => [run.code, run.stdout]), [[0, "lib/a|main"], [0, "src/infra/lib/mid|HEAD"]], "foreach runs in each submodule with $sm_path");
+eq((await submoduleForeach(root, "exit 3", ["lib/a"]))[0].code, 3, "foreach reports exit codes");
+const manifest = await submoduleManifest(root);
+eq([manifest.submodules.length, manifest.root, manifest.submodules.find((entry) => entry.path === "lib/a")?.branch], [6, root, "main"], "manifest lists every submodule");
 
 // git notes must not appear as an orphan commit in the graph
 git(root, "notes", "add", "-m", "a note", "HEAD");

@@ -85,6 +85,10 @@ import type {
   LineMode,
   SideDiff,
   SubmoduleAction,
+  SubmoduleBulkAction,
+  SubmoduleBulkResult,
+  SubmoduleForeachResult,
+  SubmoduleManifest,
   SubmoduleTree,
 } from "./types";
 
@@ -249,6 +253,9 @@ export const api = {
     invoke<CommitFileChange[]>("diff_commit_files", { path, from, to }),
   submoduleTree: (path: string) => invoke<SubmoduleTree>("submodule_tree", { path }),
   submoduleAction: (path: string, action: SubmoduleAction, target = "") => invoke<string>("submodule_action", { path, action, target }),
+  submoduleBulk: (path: string, action: SubmoduleBulkAction, targets: string[]) => invoke<SubmoduleBulkResult[]>("submodule_bulk", { path, action, targets }),
+  submoduleForeach: (path: string, command: string, targets: string[]) => invoke<SubmoduleForeachResult[]>("submodule_foreach", { path, command, targets }),
+  submoduleManifest: (path: string) => invoke<SubmoduleManifest>("submodule_manifest", { path }),
   superprojectChain: (path: string) => invoke<Array<{ path: string; name: string }>>("superproject_chain", { path }),
   repositoryTrust: (path: string) => invoke<{ trusted: boolean; directory: string | null }>("repository_trust", { path }),
   listFolders: (path: string | null, showHidden = false) => invoke<FolderListing>("list_folders", { path, showHidden }),

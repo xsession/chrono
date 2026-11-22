@@ -398,6 +398,9 @@ const routes: Record<string, Handler> = {
     if (!["init", "update", "update_remote", "sync", "fetch", "deinit"].includes(action)) throw new AppError("invalid", `unknown submodule action ${action}`);
     return submodules.submoduleAction(bodyPath(body), action as submodules.SubmoduleAction, typeof body.target === "string" ? body.target : "");
   },
+  submodule_bulk: (body) => submodules.submoduleBulk(bodyPath(body), str(body.action, "action") as submodules.SubmoduleBulkAction, strArray(body.targets, "targets")),
+  submodule_foreach: (body) => submodules.submoduleForeach(bodyPath(body), str(body.command, "command"), strArray(body.targets, "targets")),
+  submodule_manifest: (body) => submodules.submoduleManifest(bodyPath(body)),
   superproject_chain: (body) => submodules.superprojectChain(bodyPath(body)),
   repository_trust: (body) => trust.checkTrust(bodyPath(body)),
   trust_repository: (body) => trust.trustRepository(bodyPath(body)),

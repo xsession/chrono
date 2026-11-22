@@ -41,13 +41,16 @@ export interface SubmoduleNode {
   children: number;
   /** Descendant nodes that need attention (dirty, drifted, uninitialized, conflicted). */
   attentionBelow: number;
+  /** Branch the submodule follows (.gitmodules `branch`, else origin's default) and
+   *  how many commits the checked-out commit is behind its last-fetched tip. */
+  tracking: { branch: string; behind: number } | null;
 }
 
 export interface SubmoduleTree {
   root: string;
   nodes: SubmoduleNode[];
   maxDepth: number;
-  totals: { all: number; dirty: number; drift: number; uninitialized: number; conflict: number; detached: number };
+  totals: { all: number; dirty: number; drift: number; uninitialized: number; conflict: number; detached: number; outdated: number };
   /** Superprojects enclosing `root`, outermost first (for breadcrumbs). */
   superprojects: Array<{ path: string; name: string }>;
 }
@@ -167,6 +170,8 @@ export async function submoduleTree(inputPath: string): Promise<SubmoduleTree> {
   const root = await repositoryRoot(inputPath);
   const [links, superprojects] = await Promise.all([walkGitlinks(root), superprojectChain(root)]);
 
+  const modulesCache = new Map<string, Promise<ModulesFile>>();
+  const modulesOf = (repo: string) => { let cached = modulesCache.get(repo); if (!cached) { cached = readModulesFile(repo); modulesCache.set(repo, cached); } return cached; };
   const nodes = await pool(links, 8, async (link): Promise<SubmoduleNode> => {
     const absolute = path.join(root, link.path);
     const state: SubmoduleState = link.stage !== 0 ? "conflict" : !link.head ? "uninitialized" : link.head !== link.recorded ? "drift" : "ok";
@@ -189,12 +194,13 @@ export async function submoduleTree(inputPath: string): Promise<SubmoduleTree> {
       url: null,
       children: 0,
       attentionBelow: 0,
+      tracking: null,
     };
     const parentAbsolute = link.parent ? path.join(root, link.parent) : root;
     const relativeToParent = link.parent ? link.path.slice(link.parent.length + 1) : link.path;
+    const modules = await modulesOf(parentAbsolute);
     if (!link.head) {
-      const url = await runGit(parentAbsolute, ["config", "-f", ".gitmodules", "--get", `submodule.${relativeToParent}.url`]);
-      node.url = url.code === 0 ? url.stdout.trim() || null : null;
+      node.url = modules.get(relativeToParent)?.url ?? null;
       return node;
     }
     const [status, url] = await Promise.all([
@@ -202,6 +208,11 @@ export async function submoduleTree(inputPath: string): Promise<SubmoduleTree> {
       runGit(absolute, ["config", "--get", "remote.origin.url"]),
     ]);
     if (status.code === 0) Object.assign(node, parsePorcelainV2(status.stdout));
+    const wanted = await trackingBranch(modules, relativeToParent, absolute);
+    if (wanted) {
+      const behind = await runGit(absolute, ["rev-list", "--count", `HEAD..refs/remotes/origin/${wanted}`]);
+      if (behind.code === 0) node.tracking = { branch: wanted, behind: Number(behind.stdout.trim()) || 0 };
+    }
     node.url = url.code === 0 ? url.stdout.trim() || null : null;
     if (state === "drift") {
       node.recorded = link.recorded;
@@ -232,6 +243,7 @@ export async function submoduleTree(inputPath: string): Promise<SubmoduleTree> {
       uninitialized: nodes.filter((node) => node.state === "uninitialized").length,
       conflict: nodes.filter((node) => node.state === "conflict" || node.conflicts > 0).length,
       detached: nodes.filter((node) => node.state !== "uninitialized" && !node.branch).length,
+      outdated: nodes.filter((node) => (node.tracking?.behind ?? 0) > 0).length,
     },
     superprojects,
   };
@@ -269,4 +281,215 @@ export async function submoduleAction(inputPath: string, action: SubmoduleAction
     return checkedStdout(where, target ? ["fetch", "--all", "--prune"] : ["fetch", "--all", "--prune", "--recurse-submodules=yes"]);
   }
   return checkedStdout(cwd, args[action]);
+}
+
+// ---------------------------------------------------------------------------
+// Bulk management for large multi-repo trees (Renode-style superprojects):
+// one action over a chosen set of submodules, a command run in each of them,
+// and a manifest of every pinned commit.
+// ---------------------------------------------------------------------------
+
+export type SubmoduleBulkAction = "fetch" | "update" | "update_remote" | "pull" | "attach" | "record";
+export const SUBMODULE_BULK_ACTIONS: SubmoduleBulkAction[] = ["fetch", "update", "update_remote", "pull", "attach", "record"];
+
+export interface SubmoduleBulkResult {
+  path: string;
+  status: "ok" | "skipped" | "failed";
+  message: string;
+}
+
+/** Validates targets against the live gitlink list and returns them in
+ *  depth order, so parents are updated before their nested submodules. */
+async function resolveTargets(root: string, targets: string[]) {
+  const links = await walkGitlinks(root);
+  const byPath = new Map(links.map((link) => [link.path, link]));
+  const picked = [...new Set(targets)].map((target) => {
+    if (!target || path.isAbsolute(target) || target.split(/[\\/]/).includes("..")) throw new AppError("invalid", `invalid submodule path: ${target}`);
+    const link = byPath.get(target);
+    if (!link) throw new AppError("invalid", `${target} is not a submodule of this repository`);
+    return link;
+  });
+  return picked.sort((a, b) => a.depth - b.depth || a.path.localeCompare(b.path));
+}
+
+const firstLine = (text: string) => text.trim().split("\n").filter(Boolean).pop() ?? "";
+
+/** `.gitmodules` of one repository, keyed by submodule path. */
+type ModulesFile = Map<string, { name: string; branch: string | null; url: string | null }>;
+
+async function readModulesFile(repoAbsolute: string): Promise<ModulesFile> {
+  const output = await runGit(repoAbsolute, ["config", "-f", ".gitmodules", "--get-regexp", "^submodule\\."]);
+  const byName = new Map<string, { path?: string; branch?: string; url?: string }>();
+  for (const line of output.stdout.split("\n")) {
+    const match = /^submodule\.(.+)\.(path|branch|url) (.*)$/.exec(line.trim());
+    if (!match) continue;
+    const entry = byName.get(match[1]) ?? {};
+    entry[match[2] as "path" | "branch" | "url"] = match[3];
+    byName.set(match[1], entry);
+  }
+  const result: ModulesFile = new Map();
+  for (const [name, entry] of byName) if (entry.path) result.set(entry.path, { name, branch: entry.branch ?? null, url: entry.url ?? null });
+  return result;
+}
+
+/** Branch a submodule is meant to follow: `.gitmodules` branch, else the remote's default. */
+async function trackingBranch(modules: ModulesFile, relative: string, absolute: string): Promise<string | null> {
+  const configured = modules.get(relative)?.branch ?? "";
+  if (configured && configured !== ".") return configured;
+  const head = await runGit(absolute, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+  return head.code === 0 ? head.stdout.trim().replace(/^origin\//, "") : null;
+}
+
+/** Puts a detached submodule on a branch without moving it: only switches
+ *  when a local or remote branch points exactly at the checked-out commit. */
+async function attachToBranch(parentAbsolute: string, relative: string, absolute: string): Promise<SubmoduleBulkResult["status"] | string> {
+  const current = await runGit(absolute, ["symbolic-ref", "-q", "--short", "HEAD"]);
+  if (current.code === 0) return `already on ${current.stdout.trim()}`;
+  const head = (await runGit(absolute, ["rev-parse", "HEAD"])).stdout.trim();
+  const wanted = await trackingBranch(await readModulesFile(parentAbsolute), relative, absolute);
+  if (wanted) {
+    const local = await runGit(absolute, ["rev-parse", "-q", "--verify", `refs/heads/${wanted}`]);
+    if (local.code === 0 && local.stdout.trim() === head) { await checkedStdout(absolute, ["switch", wanted]); return `ok:switched to ${wanted}`; }
+    // A local branch that is merely behind HEAD can be fast-forwarded to it: no commit is lost.
+    if (local.code === 0 && (await runGit(absolute, ["merge-base", "--is-ancestor", local.stdout.trim(), head])).code === 0) {
+      await checkedStdout(absolute, ["branch", "-f", wanted, head]);
+      await checkedStdout(absolute, ["switch", wanted]);
+      return `ok:fast-forwarded ${wanted} and switched to it`;
+    }
+    const remote = await runGit(absolute, ["rev-parse", "-q", "--verify", `refs/remotes/origin/${wanted}`]);
+    if (local.code !== 0 && remote.code === 0 && remote.stdout.trim() === head) {
+      await checkedStdout(absolute, ["switch", "-c", wanted, "--track", `origin/${wanted}`]);
+      return `ok:created ${wanted} tracking origin/${wanted}`;
+    }
+  }
+  const pointing = await runGit(absolute, ["for-each-ref", "--points-at", "HEAD", "--format=%(refname:short)", "refs/heads"]);
+  const candidate = pointing.stdout.split("\n").map((line) => line.trim()).filter(Boolean)[0];
+  if (candidate) { await checkedStdout(absolute, ["switch", candidate]); return `ok:switched to ${candidate}`; }
+  return wanted ? `HEAD ${head.slice(0, 8)} is not the tip of ${wanted}; left detached` : "no branch points at HEAD; left detached";
+}
+
+export async function submoduleBulk(inputPath: string, action: SubmoduleBulkAction, targets: string[]): Promise<SubmoduleBulkResult[]> {
+  if (!SUBMODULE_BULK_ACTIONS.includes(action)) throw new AppError("invalid", `unknown bulk action ${action}`);
+  if (!targets.length) throw new AppError("invalid", "select at least one submodule");
+  const root = await repositoryRoot(inputPath);
+  const picked = await resolveTargets(root, targets);
+  const results = new Map<string, SubmoduleBulkResult>();
+  // One depth level at a time: initializing a parent makes its children exist.
+  const depths = [...new Set(picked.map((link) => link.depth))].sort((a, b) => a - b);
+  for (const depth of depths) {
+    await pool(picked.filter((link) => link.depth === depth), 6, async (link) => {
+      const absolute = path.join(root, link.path);
+      const parentAbsolute = link.parent ? path.join(root, link.parent) : root;
+      const relative = link.parent ? link.path.slice(link.parent.length + 1) : link.path;
+      const head = await checkedOutHead(absolute);
+      const done = (status: SubmoduleBulkResult["status"], message: string) => results.set(link.path, { path: link.path, status, message });
+      try {
+        if (!head && action !== "update" && action !== "update_remote") return done("skipped", "not initialized");
+        switch (action) {
+          case "fetch": {
+            const output = await runGit(absolute, ["fetch", "--all", "--prune"]);
+            return output.code === 0 ? done("ok", firstLine(output.stderr) || "up to date") : done("failed", firstLine(output.stderr));
+          }
+          case "update":
+          case "update_remote": {
+            const args = ["submodule", "update", "--init", ...(action === "update_remote" ? ["--remote"] : []), "--", relative];
+            await checkedStdout(parentAbsolute, args);
+            const now = await checkedOutHead(absolute);
+            return done("ok", now ? `at ${now.slice(0, 8)}` : "updated");
+          }
+          case "pull": {
+            const branch = await runGit(absolute, ["symbolic-ref", "-q", "--short", "HEAD"]);
+            if (branch.code !== 0) return done("skipped", "detached HEAD — attach to a branch first");
+            const output = await runGit(absolute, ["pull", "--ff-only"]);
+            return output.code === 0 ? done("ok", firstLine(output.stdout) || "pulled") : done("failed", firstLine(output.stderr));
+          }
+          case "attach": {
+            const outcome = await attachToBranch(parentAbsolute, relative, absolute);
+            if (outcome.startsWith("ok:")) return done("ok", outcome.slice(3));
+            return done("skipped", outcome);
+          }
+          case "record": {
+            if (head === link.recorded) return done("skipped", "already recorded");
+            await checkedStdout(parentAbsolute, ["add", "--", relative]);
+            return done("ok", `staged ${head!.slice(0, 8)} in ${link.parent ?? "the superproject"}`);
+          }
+        }
+      } catch (error) {
+        return done("failed", firstLine(String((error as Error).message ?? error)));
+      }
+    });
+  }
+  return picked.map((link) => results.get(link.path)!);
+}
+
+export interface ForeachResult {
+  path: string;
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  ms: number;
+}
+
+const FOREACH_TIMEOUT_MS = 120_000;
+const FOREACH_OUTPUT = 200_000;
+
+/** Runs a shell command in each selected (initialized) submodule, like
+ *  `git submodule foreach` but in parallel and with per-repo results. */
+export async function submoduleForeach(inputPath: string, command: string, targets: string[]): Promise<ForeachResult[]> {
+  if (!command.trim()) throw new AppError("invalid", "enter a command");
+  const root = await repositoryRoot(inputPath);
+  const picked = await resolveTargets(root, targets);
+  const { execFile } = await import("node:child_process");
+  const shell = process.platform === "win32" ? ["cmd.exe", ["/d", "/s", "/c", command]] as const : ["/bin/sh", ["-c", command]] as const;
+  return pool(picked, 4, async (link) => {
+    const absolute = path.join(root, link.path);
+    const head = await checkedOutHead(absolute);
+    if (!head) return { path: link.path, code: null, stdout: "", stderr: "not initialized — skipped", ms: 0 };
+    const started = performance.now();
+    return new Promise<ForeachResult>((resolve) => {
+      execFile(shell[0], [...shell[1]], {
+        cwd: absolute,
+        timeout: FOREACH_TIMEOUT_MS,
+        maxBuffer: 8 * 1024 * 1024,
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", name: link.path, sm_path: link.path, displaypath: link.path, sha1: head, toplevel: root },
+      }, (error, stdout, stderr) => {
+        const code = error ? (typeof (error as NodeJS.ErrnoException & { code?: unknown }).code === "number" ? (error as unknown as { code: number }).code : 1) : 0;
+        const killed = error && (error as { killed?: boolean }).killed;
+        resolve({
+          path: link.path,
+          code,
+          stdout: String(stdout ?? "").slice(-FOREACH_OUTPUT),
+          stderr: (killed ? `timed out after ${FOREACH_TIMEOUT_MS / 1000}s\n` : "") + String(stderr ?? "").slice(-FOREACH_OUTPUT),
+          ms: Math.round(performance.now() - started),
+        });
+      });
+    });
+  });
+}
+
+export interface SubmoduleManifest {
+  root: string;
+  head: string | null;
+  generatedAt: string;
+  submodules: Array<{ path: string; url: string | null; recorded: string; checkedOut: string | null; branch: string | null; state: SubmoduleState }>;
+}
+
+/** Every submodule's pinned and checked-out commit: a reproducible snapshot
+ *  of a multi-repo tree to share, diff or attach to a bug report. */
+export async function submoduleManifest(inputPath: string): Promise<SubmoduleManifest> {
+  const tree = await submoduleTree(inputPath);
+  const head = await runGit(tree.root, ["rev-parse", "HEAD"]);
+  return {
+    root: tree.root,
+    head: head.code === 0 ? head.stdout.trim() : null,
+    generatedAt: new Date().toISOString(),
+    submodules: tree.nodes.map((node) => ({
+      path: node.path,
+      url: node.url,
+      recorded: node.recorded ?? node.commit,
+      checkedOut: node.state === "uninitialized" ? null : node.commit,
+      branch: node.branch,
+      state: node.state,
+    })),
+  };
 }

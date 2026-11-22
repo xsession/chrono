@@ -727,12 +727,13 @@ export type SubmoduleNode = {
   url: string | null;
   children: number;
   attentionBelow: number;
+  tracking: { branch: string; behind: number } | null;
 };
 export type SubmoduleTree = {
   root: string;
   nodes: SubmoduleNode[];
   maxDepth: number;
-  totals: { all: number; dirty: number; drift: number; uninitialized: number; conflict: number; detached: number };
+  totals: { all: number; dirty: number; drift: number; uninitialized: number; conflict: number; detached: number; outdated: number };
   superprojects: Array<{ path: string; name: string }>;
 };
 export type SubmoduleAction = "init" | "update" | "update_remote" | "sync" | "fetch" | "deinit";
@@ -745,4 +746,14 @@ export type FolderListing = {
   entries: FolderEntry[];
   truncated: boolean;
   places: Array<{ name: string; path: string }>;
+};
+
+export type SubmoduleBulkAction = "fetch" | "update" | "update_remote" | "pull" | "attach" | "record";
+export type SubmoduleBulkResult = { path: string; status: "ok" | "skipped" | "failed"; message: string };
+export type SubmoduleForeachResult = { path: string; code: number | null; stdout: string; stderr: string; ms: number };
+export type SubmoduleManifest = {
+  root: string;
+  head: string | null;
+  generatedAt: string;
+  submodules: Array<{ path: string; url: string | null; recorded: string; checkedOut: string | null; branch: string | null; state: SubmoduleNode["state"] }>;
 };
