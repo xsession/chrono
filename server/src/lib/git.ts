@@ -53,68 +53,201 @@ function spawnArgs(path: string | null, args: string[]): string[] {
   return path ? ["-C", path, ...effective] : [...effective];
 }
 
+// ---------------------------------------------------------------------------
+// Per-repository git lanes.
+//
+// Every repository (keyed by the -C path) gets its own lane: its own pool of
+// git processes, so a slow repository (a huge submodule tree on a fuse mount)
+// never delays git calls for another open tab. Within a lane:
+//  - identical read commands that are already running are shared instead of
+//    spawning a second process (tab switches fire the same reads repeatedly);
+//    any write bumps the lane's generation so a read issued after a write never
+//    reuses output from before it;
+//  - read commands started for an HTTP request that the client abandoned (it
+//    switched to another tab) are killed, freeing CPU and the connection.
+// ---------------------------------------------------------------------------
+
+const READ_COMMANDS = new Set([
+  "status", "log", "rev-parse", "rev-list", "for-each-ref", "show", "show-ref", "diff", "ls-files", "ls-tree",
+  "cat-file", "merge-base", "describe", "blame", "shortlog", "name-rev", "count-objects", "symbolic-ref", "range-diff",
+  "grep", "cherry", "check-ignore", "check-attr", "worktree", "stash", "branch", "tag", "remote", "config", "notes",
+]);
+// Sub-commands of the list above that only read for a given first argument.
+function isReadCommand(args: string[]): boolean {
+  const [command, sub] = args;
+  if (!READ_COMMANDS.has(command)) return false;
+  switch (command) {
+    case "worktree": return sub === "list";
+    case "stash": return sub === "list" || sub === "show";
+    case "notes": return sub === "show" || sub === "list";
+    case "remote": return sub === undefined || sub === "-v" || sub === "get-url" || sub === "show";
+    case "config": return args.some((arg) => arg === "--get" || arg === "--get-all" || arg === "--get-regexp" || arg === "--list" || arg === "-l");
+    case "branch": return args.slice(1).every((arg) => arg.startsWith("-") && !/^-(d|D|m|M|c|C|f|u)$|^--(delete|move|copy|force|set-upstream|unset-upstream|edit-description)/.test(arg)) || args.includes("--list");
+    case "tag": return args.length === 1 || args.includes("-l") || args.includes("--list") || args.includes("--contains") || args.includes("--points-at");
+    case "symbolic-ref": return args.length <= 3 && !args.slice(1).some((arg) => arg === "-d" || arg === "--delete") && args.filter((arg) => !arg.startsWith("-")).length <= 2;
+    default: return true;
+  }
+}
+
+const LANE_CONCURRENCY = Math.max(2, Number.parseInt(process.env.CHRONO_GIT_PER_REPO ?? "8", 10) || 8);
+
+type RawOutput = { stdout: Buffer | string; stderr: string; code: number };
+
+interface SharedRun {
+  promise: Promise<RawOutput>;
+  holders: number;        // callers that can still abort; Infinity once a non-abortable caller joins
+  controller: AbortController;
+}
+
+class GitLane {
+  active = 0;
+  generation = 0;
+  lastUsed = Date.now();
+  private waiting: Array<{ start: () => void; signal?: AbortSignal; cancel: () => void }> = [];
+  readonly inflight = new Map<string, SharedRun>();
+
+  acquire(signal?: AbortSignal): Promise<boolean> {
+    this.lastUsed = Date.now();
+    if (this.active < LANE_CONCURRENCY) { this.active++; return Promise.resolve(true); }
+    return new Promise((resolve) => {
+      const entry = {
+        signal,
+        start: () => { signal?.removeEventListener("abort", entry.cancel); this.active++; resolve(true); },
+        cancel: () => { this.waiting = this.waiting.filter((item) => item !== entry); resolve(false); },
+      };
+      if (signal?.aborted) { resolve(false); return; }
+      signal?.addEventListener("abort", entry.cancel, { once: true });
+      this.waiting.push(entry);
+    });
+  }
+
+  release(): void {
+    this.active--;
+    this.lastUsed = Date.now();
+    const next = this.waiting.shift();
+    if (next) next.start();
+  }
+}
+
+const lanes = new Map<string, GitLane>();
+function laneFor(path: string | null): GitLane {
+  const key = path ?? "";
+  let lane = lanes.get(key);
+  if (!lane) {
+    lane = new GitLane();
+    lanes.set(key, lane);
+    if (lanes.size > 64) {
+      // Forget idle lanes of repositories that are no longer used.
+      for (const [other, candidate] of lanes) {
+        if (candidate !== lane && candidate.active === 0 && candidate.inflight.size === 0 && Date.now() - candidate.lastUsed > 60_000) lanes.delete(other);
+      }
+    }
+  }
+  return lane;
+}
+
+/** Diagnostic snapshot: active git processes per repository. */
+export function gitLaneStats(): Array<{ path: string; active: number; shared: number }> {
+  return [...lanes].filter(([, lane]) => lane.active > 0 || lane.inflight.size > 0)
+    .map(([path, lane]) => ({ path, active: lane.active, shared: lane.inflight.size }));
+}
+
+// Abort signal of the HTTP request being served (read routes only).
+const requestSignalStore = new AsyncLocalStorage<AbortSignal>();
+export function withAbortSignal<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
+  return requestSignalStore.run(signal, run);
+}
+
+const ABORTED: RawOutput = { stdout: "", stderr: "aborted: the client no longer needs this result", code: 130 };
+
+function execGit(path: string | null, args: string[], extraEnv: Record<string, string>, binary: boolean): Promise<RawOutput> {
+  const lane = laneFor(path);
+  const read = isReadCommand(args);
+  const spawned = spawnArgs(path, args);
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv };
+  const signal = read ? requestSignalStore.getStore() : undefined;
+  if (!read) lane.generation++;
+
+  const key = read ? `${lane.generation}\u0000${binary ? "b" : "t"}\u0000${spawned.join("\u0000")}\u0000${JSON.stringify(extraEnv)}` : null;
+  let shared = key ? lane.inflight.get(key) : undefined;
+  if (!shared) {
+    const controller = new AbortController();
+    const promise = (async (): Promise<RawOutput> => {
+      const admitted = await lane.acquire(controller.signal);
+      if (!admitted) return ABORTED;
+      try {
+        return await new Promise<RawOutput>((resolve) => {
+          const startedAt = new Date().toISOString();
+          const start = performance.now();
+          execFile("git", spawned, {
+            maxBuffer: MAX_BUFFER,
+            env,
+            signal: controller.signal,
+            ...(binary ? { encoding: "buffer" as const } : {}),
+          }, (error, stdout, stderr) => {
+            const aborted = controller.signal.aborted;
+            const code = aborted ? 130 : resolveCode(error);
+            const stderrText = Buffer.isBuffer(stderr) ? stderr.toString("utf8") : (stderr ?? "");
+            if (!binary) {
+              recordGitCommand({
+                args,
+                cwd: path,
+                exitCode: code,
+                durationMs: performance.now() - start,
+                startedAt,
+                stdoutTail: (stdout as string) ?? "",
+                stderrTail: aborted ? ABORTED.stderr : stderrText,
+              });
+            }
+            resolve(aborted ? ABORTED : { stdout: stdout ?? (binary ? Buffer.alloc(0) : ""), stderr: stderrText, code });
+          });
+        });
+      } finally {
+        lane.release();
+      }
+    })();
+    shared = { promise, holders: 0, controller };
+    if (key) {
+      lane.inflight.set(key, shared);
+      const entry = shared;
+      void promise.finally(() => { if (lane.inflight.get(key) === entry) lane.inflight.delete(key); });
+    }
+  }
+
+  // Abort the shared process only when every caller that joined it gave up.
+  const run = shared;
+  if (!signal) {
+    run.holders = Number.POSITIVE_INFINITY;
+  } else if (signal.aborted) {
+    if (run.holders === 0) run.controller.abort();
+    return Promise.resolve(ABORTED);
+  } else {
+    run.holders++;
+    const onAbort = () => { run.holders--; if (run.holders <= 0) run.controller.abort(); };
+    signal.addEventListener("abort", onAbort, { once: true });
+    void run.promise.finally(() => signal.removeEventListener("abort", onAbort));
+  }
+  return run.promise;
+}
+
 // Run git and always resolve (never reject) with utf8 stdout/stderr and the exit code.
-export function runGit(
+export async function runGit(
   path: string | null,
   args: string[],
   extraEnv: Record<string, string> = {},
 ): Promise<GitOutput> {
-  return new Promise((resolve) => {
-    const startedAt = new Date().toISOString();
-    const start = performance.now();
-    execFile(
-      "git",
-      spawnArgs(path, args),
-      {
-        maxBuffer: MAX_BUFFER,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv },
-      },
-      (error, stdout, stderr) => {
-        const code = resolveCode(error);
-        // v6 executor log (GitKraken RE §6): correlate every git invocation.
-        recordGitCommand({
-          args,
-          cwd: path,
-          exitCode: code,
-          durationMs: performance.now() - start,
-          startedAt,
-          stdoutTail: stdout ?? "",
-          stderrTail: stderr ?? "",
-        });
-        resolve({
-          stdout: stdout ?? "",
-          stderr: stderr ?? "",
-          code,
-        });
-      },
-    );
-  });
+  const output = await execGit(path, args, extraEnv, false);
+  return { stdout: output.stdout as string, stderr: output.stderr, code: output.code };
 }
 
 // Run git returning raw stdout bytes (used for binary/blob detection).
-export function runGitRaw(
+export async function runGitRaw(
   path: string | null,
   args: string[],
   extraEnv: Record<string, string> = {},
 ): Promise<{ stdout: Buffer; stderr: string; code: number }> {
-  return new Promise((resolve) => {
-    execFile(
-      "git",
-      spawnArgs(path, args),
-      {
-        maxBuffer: MAX_BUFFER,
-        encoding: "buffer",
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv },
-      },
-      (error, stdout, stderr) => {
-        resolve({
-          stdout: (stdout as Buffer) ?? Buffer.alloc(0),
-          stderr: (stderr as Buffer)?.toString("utf8") ?? "",
-          code: resolveCode(error),
-        });
-      },
-    );
-  });
+  const output = await execGit(path, args, extraEnv, true);
+  return { stdout: Buffer.isBuffer(output.stdout) ? output.stdout : Buffer.from(output.stdout), stderr: output.stderr, code: output.code };
 }
 
 export function toCommandResult(output: GitOutput): CommandResult {

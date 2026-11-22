@@ -757,3 +757,23 @@ export type SubmoduleManifest = {
   generatedAt: string;
   submodules: Array<{ path: string; url: string | null; recorded: string; checkedOut: string | null; branch: string | null; state: SubmoduleNode["state"] }>;
 };
+
+// Codebase landscape map (server/src/landscape.ts).
+export type LandscapeRecord = {
+  path: string;
+  lang: string;
+  loc: number;
+  specs: string[];
+  cs: { ns: string[]; uses: string[]; decl: string[]; toks: string[] } | null;
+  syms: string[];
+};
+export type LandscapeScan = {
+  name: string;
+  root: string;
+  head: string;
+  files: LandscapeRecord[];
+  repos: Array<{ title: string; path: string; url: string; sha: string }>;
+  cut: number;
+  scannedAt: string;
+  durationMs: number;
+};

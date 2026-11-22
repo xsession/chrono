@@ -17,6 +17,7 @@ import * as conflictCenter from "./src/conflictCenter.ts";
 import * as insights from "./src/insights.ts";
 import { invokeServerSaga } from "./src/sagas.ts";
 import { attachTerminalServer } from "./src/terminal.ts";
+import { attachRpcServer } from "./src/rpc.ts";
 import * as operationState from "./src/operationState.ts";
 import * as rebasePlanner from "./src/rebasePlanner.ts";
 import * as explorer from "./src/explorer.ts";
@@ -24,9 +25,10 @@ import * as gk from "./src/gkOps.ts";
 import * as features from "./src/features.ts";
 import * as lineStaging from "./src/lineStaging.ts";
 import * as submodules from "./src/submodules.ts";
+import { landscapeScan } from "./src/landscape.ts";
 import * as trust from "./src/trust.ts";
 import * as folders from "./src/folders.ts";
-import { withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
+import { withAbortSignal, withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
 import { readStream, validStreamId } from "./src/lib/streams.ts";
 import { rejectReason, type GuardOptions } from "./src/lib/requestGuard.ts";
 import { listPullRequests } from "./src/provider.ts";
@@ -71,6 +73,21 @@ async function resolveHost(body: Record<string, unknown>): Promise<features.Remo
 }
 
 // Viewer routes whose diffs honour the user's whitespace/algorithm options.
+// Read-only routes: when the client drops the request (it switched to another
+// repository tab), their git processes are killed. Routes that write never are,
+// so a half-done operation is never left behind.
+const READ_ROUTES = new Set([
+  "repository_summary", "repository_remotes", "repository_history", "repository_history_page", "history_query",
+  "repository_status", "repository_branches", "repository_conflicts", "search_commits", "commit_details",
+  "commit_file_diff", "list_tags", "reference_groups", "working_tree_diff", "unstaged_file_diff", "list_tree",
+  "file_at_revision", "commit_activity", "diff_revisions", "history_change_stats", "compare_refs", "range_diff",
+  "repository_health", "file_history", "line_history", "blame_file", "contributors", "worktree_summaries",
+  "repository_operation_state", "undo_state", "last_commit_message", "commit_offset", "diff_commit_files",
+  "submodule_tree", "repository_trust", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
+  "fork_point", "predict_conflicts", "cleanup_candidates", "file_blob", "sparse_status", "notes_get",
+  "explorer_list", "explorer_properties", "explorer_diff_files", "explorer_diff_previous",
+]);
+
 const DIFF_VIEW_ROUTES = new Set(["working_tree_diff", "commit_file_diff", "diff_revisions", "explorer_diff_files", "explorer_diff_previous"]);
 
 const guard: GuardOptions = { host: HOST, port: PORT, token: API_TOKEN, allowedOrigin: ALLOWED_ORIGIN };
@@ -401,6 +418,8 @@ const routes: Record<string, Handler> = {
   submodule_bulk: (body) => submodules.submoduleBulk(bodyPath(body), str(body.action, "action") as submodules.SubmoduleBulkAction, strArray(body.targets, "targets")),
   submodule_foreach: (body) => submodules.submoduleForeach(bodyPath(body), str(body.command, "command"), strArray(body.targets, "targets")),
   submodule_manifest: (body) => submodules.submoduleManifest(bodyPath(body)),
+  // Codebase landscape map: one record per source file (imports, symbols, size).
+  landscape_scan: (body) => landscapeScan(bodyPath(body), body.force === true),
   superproject_chain: (body) => submodules.superprojectChain(bodyPath(body)),
   repository_trust: (body) => trust.checkTrust(bodyPath(body)),
   trust_repository: (body) => trust.trustRepository(bodyPath(body)),
@@ -642,24 +661,39 @@ function sendJson(response: http.ServerResponse, status: number, payload: unknow
   response.end(bytes);
 }
 
+// Run one API command. `signal` is the client's "no longer needed" signal; it
+// only reaches git for read routes (see READ_ROUTES).
+async function dispatchCommand(command: string, body: Record<string, unknown>, signal: AbortSignal | null): Promise<unknown> {
+  const handler = routes[command];
+  if (!handler) throw new AppError("invalid", `unknown API command: ${command}`);
+  const run = () => DIFF_VIEW_ROUTES.has(command) && body.diffOptions && typeof body.diffOptions === "object"
+    ? withDiffOptions(body.diffOptions as DiffOptions, () => handler(body))
+    : handler(body);
+  return signal && READ_ROUTES.has(command) ? withAbortSignal(signal, run) : run();
+}
+
 async function handleApi(
   request: http.IncomingMessage,
   response: http.ServerResponse,
   command: string,
 ): Promise<void> {
-  const handler = routes[command];
-  if (!handler || request.method !== "POST") {
+  if (!routes[command] || request.method !== "POST") {
     sendJson(response, 404, { error: `unknown API command: ${command}` });
     return;
   }
+  const abandoned = new AbortController();
+  const onClose = () => { if (!response.writableFinished) abandoned.abort(); };
+  response.once("close", onClose);
   try {
     const body = await readJsonBody(request);
-    const result = DIFF_VIEW_ROUTES.has(command) && body.diffOptions && typeof body.diffOptions === "object"
-      ? await withDiffOptions(body.diffOptions as DiffOptions, () => handler(body))
-      : await handler(body);
+    const result = await dispatchCommand(command, body, abandoned.signal);
+    if (abandoned.signal.aborted) return;
     sendJson(response, 200, { ok: true, result });
   } catch (error) {
+    if (response.destroyed) return; // the client is gone (abandoned read)
     sendJson(response, statusCodeFor(error), { ok: false, error: (error as Error).message });
+  } finally {
+    response.off("close", onClose);
   }
 }
 
@@ -691,6 +725,8 @@ const server = http.createServer((request, response) => {
 
 // v6 integrated terminal (GitKraken RE §TerminalPanel): PTY sessions over WebSocket.
 attachTerminalServer(server, (request) => rejectReason(request, guard, "websocket"));
+// All API calls over one multiplexed socket (no per-host connection limit).
+attachRpcServer(server, (request) => rejectReason(request, guard, "websocket"), dispatchCommand);
 
 // Binding to a network interface without a token would hand git, custom
 // commands and a shell to anyone who can reach the port.

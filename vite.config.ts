@@ -8,7 +8,7 @@ const apiPort = process.env.CHRONO_PORT ?? "1421";
 const apiTarget = `http://127.0.0.1:${apiPort}`;
 
 const proxy: Record<string, ProxyOptions> = {
-  "/api": { target: apiTarget, changeOrigin: true },
+  "/api": { target: apiTarget, changeOrigin: true, ws: true },
   // Public static assets (icons etc.) live next to the API server.
   "/rsrc": { target: apiTarget, changeOrigin: true },
   "/icon.svg": { target: apiTarget, changeOrigin: true },

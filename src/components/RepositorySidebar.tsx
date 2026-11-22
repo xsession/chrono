@@ -14,6 +14,7 @@ export type RepositoryView =
   | "repo"
   | "worktrees"
   | "submodules"
+  | "landscape"
   | "stashes"
   | "recovery"
   | "cherry";
@@ -65,6 +66,7 @@ export function RepositorySidebar({
     { id: "changes", label: "Changes", icon: "changes", badge: changeCount },
     { id: "explorer", label: "Explorer", icon: "folder" },
     { id: "submodules", label: "Submodules", icon: "submodule" },
+    { id: "landscape", label: "Landscape map", icon: "map" },
     { id: "branches", label: "Branches", icon: "branch", group: true },
     { id: "refs", label: "References", icon: "list" },
     { id: "worktrees", label: "Worktrees", icon: "worktree" },

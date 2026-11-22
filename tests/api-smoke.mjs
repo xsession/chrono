@@ -12,6 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import WebSocket from "ws";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const serverEntry = path.join(__dirname, "..", "server", "index.ts");
@@ -503,6 +504,42 @@ async function run() {
     headers: { "Content-Type": "application/json" },
   });
   assert(unknown.status === 404, "unknown route returns 404");
+
+  // API over the multiplexed socket (/api/rpc): same routes, no per-host
+  // connection limit, cancellable requests, same origin guard as HTTP.
+  const RPC_URL = `${BASE.replace(/^http/, "ws")}/api/rpc`;
+  const rpc = await new Promise((resolve, reject) => {
+    const socket = new WebSocket(RPC_URL);
+    socket.once("open", () => resolve(socket));
+    socket.once("error", reject);
+  });
+  const rpcReplies = new Map();
+  rpc.on("message", (data) => { const frame = JSON.parse(String(data)); rpcReplies.get(frame.id)?.(frame); });
+  const rpcCall = (id, command, body) => new Promise((resolve) => { rpcReplies.set(id, resolve); rpc.send(JSON.stringify({ id, command, body })); });
+  const viaRpc = await rpcCall(1, "repository_summary", { path: ROOT });
+  const viaHttp = await api("repository_summary", { path: ROOT });
+  assert(viaRpc.ok && viaRpc.result.head === viaHttp.head, "RPC socket returns the same summary as HTTP");
+  const rpcUnknown = await rpcCall(2, "definitely_not_a_command", {});
+  assert(!rpcUnknown.ok && /unknown API command/.test(rpcUnknown.error), "RPC rejects unknown commands");
+  const rpcBad = await rpcCall(3, "repository_summary", { path: path.join(CONFIG_DIR, "missing") });
+  assert(!rpcBad.ok && rpcBad.status >= 400, "RPC reports command errors with a status");
+  const parallel = await Promise.all([10, 11, 12, 13, 14, 15, 16, 17, 18, 19].map((id) => rpcCall(id, "repository_status", { path: ROOT })));
+  assert(parallel.every((frame) => frame.ok), "10 parallel requests on one socket all answer");
+  let cancelledReply = false;
+  rpcReplies.set(30, () => { cancelledReply = true; });
+  rpc.send(JSON.stringify({ id: 30, command: "repository_history_page", body: { path: ROOT, limit: 300 } }));
+  rpc.send(JSON.stringify({ id: 30, cancel: true }));
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert(!cancelledReply, "a cancelled RPC request gets no reply");
+  rpc.close();
+  const foreignRpc = await new Promise((resolve) => {
+    const socket = new WebSocket(RPC_URL, { headers: { Origin: "http://evil.example" } });
+    socket.once("open", () => { socket.close(); resolve("opened"); });
+    socket.once("unexpected-response", (_request, response) => resolve(response.statusCode));
+    socket.once("error", () => resolve("error"));
+  });
+  assert(foreignRpc === 403, `RPC socket refuses a foreign origin (got ${foreignRpc})`);
+
 
   // pull requests (offline: expect a controlled error, not a crash)
   const prError = await apiError("list_pull_requests", {

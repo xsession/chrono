@@ -65,13 +65,14 @@ async function resolveCwd(requested: unknown): Promise<string> {
  *  token, rebinding host) — a terminal is a shell, so it must never be
  *  reachable from other web pages. */
 export function attachTerminalServer(server: http.Server, reject: (request: http.IncomingMessage) => string | null = () => null): void {
-  const wss = new WebSocketServer({
-    server,
-    path: "/api/terminal/ws",
-    verifyClient: (info, done) => {
-      const reason = reject(info.req);
-      if (reason) done(false, 403, reason); else done(true);
-    },
+  // noServer + our own path check: a `ws` server bound with `path` answers 400
+  // to every other upgrade, which would break the API socket on the same port.
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (request, socket, head) => {
+    if (new URL(request.url ?? "/", "http://localhost").pathname !== "/api/terminal/ws") return;
+    const reason = reject(request);
+    if (reason) { socket.end(`HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n${reason}`); return; }
+    wss.handleUpgrade(request, socket, head, (ws) => wss.emit("connection", ws, request));
   });
 
   wss.on("connection", (ws) => {

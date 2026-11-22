@@ -43,6 +43,10 @@ jobs:
         run: npm run test:submodules
       - name: Repository trust
         run: npm run test:trust
+      - name: Per-repository git lanes
+        run: npm run test:lanes
+      - name: Codebase landscape map
+        run: npm run test:landscape
       - name: Folder picker
         run: npm run test:folders
       - name: Roadmap features

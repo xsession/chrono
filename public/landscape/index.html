@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Codebase Landscape Map</title>
+<!-- Codebase Landscape Map, embedded in Chrono's Landscape view. Opened with
+     ?embed=chrono it takes its data from Chrono over postMessage (see the
+     "Chrono bridge" blocks below); opened directly it still works standalone. -->
+<style>
+/* VOICE: a field surveyor's sheet — calm, exact, legible
+   IDEA: a topographic survey map of a codebase
+   PICTURE: full-bleed hill-shaded terrain; folders are islands, files are hills, imports are roads
+   COLOUR and TYPE: sea blue, paper land, contour brown, magenta route; Overpass throughout
+   LAYOUT: map full bleed, legend-style margin panel on the right; stacked under the map on phones */
+:root{color-scheme:light dark;--bg:light-dark(#fbfbf2,#0d1c24);--ink:light-dark(#13242e,#e4ece6);--soft:light-dark(#53656d,#9fb3b6);--line:light-dark(#13242e26,#e4ece626);--sea:light-dark(#bfe3ee,#0a1820);--brown:light-dark(#a8551b,#d39058);--mag:light-dark(#d6127e,#ff5cae);--teal:light-dark(#0d7680,#4cc6cf);--card:light-dark(#ffffff,#132a35)}
+:root{--terr:light-dark(#6b3fa0,#b892ff);--run:light-dark(#d6600a,#ff963c)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Overpass,system-ui,sans-serif;overflow-x:clip}
+.app{display:grid;grid-template-columns:minmax(0,1fr) 370px;height:100dvh}
+.stage{position:relative;overflow:hidden;background:var(--sea);touch-action:none;user-select:none;-webkit-user-select:none}
+#map{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab;outline-offset:-3px}
+.compass{position:absolute;left:14px;top:14px;width:52px;height:52px;pointer-events:none}
+.zoom{position:absolute;right:12px;top:12px;display:flex;flex-direction:column;gap:6px}
+.zoom button{width:44px;height:44px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:600 20px/1 Overpass,sans-serif;cursor:pointer;box-shadow:0 1px 3px #0002}
+.lod{position:absolute;left:14px;bottom:14px;font-size:13px;background:color-mix(in srgb,var(--bg) 88%,transparent);padding:4px 10px;border-radius:999px;border:1px solid var(--line);max-width:calc(100% - 150px)}
+#mini{position:absolute;right:12px;bottom:12px;width:150px;height:105px;border:1px solid var(--line);border-radius:6px;background:var(--sea);box-shadow:0 1px 4px #0003;cursor:pointer}
+.toast{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:999px;font-size:14px;max-width:calc(100% - 150px);text-align:center;pointer-events:none}
+.drop{position:absolute;inset:10px;border:2.5px dashed var(--mag);border-radius:14px;display:grid;place-items:center;font:800 22px Overpass,sans-serif;background:color-mix(in srgb,var(--bg) 70%,transparent);pointer-events:none}
+[hidden]{display:none!important}
+.panel{overflow-y:auto;border-left:1px solid var(--line);padding:22px 20px 48px}
+h1{font:800 32px/1.05 Overpass,sans-serif;margin:0 0 6px;text-wrap:balance;overflow-wrap:anywhere}
+h2{font:800 17px/1.2 Overpass,sans-serif;margin:26px 0 10px}
+h3{font:600 14px/1.3 Overpass,sans-serif;margin:16px 0 6px;display:flex;align-items:center;gap:8px}
+h3 span{margin-left:auto;color:var(--soft)}
+.stats{margin:0;color:var(--soft);font-size:14px}
+.note{font-size:14px;color:var(--soft);margin:8px 0 12px}
+.row{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 14px;border-radius:10px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:600 15px Overpass,sans-serif;cursor:pointer}
+.btn.pri{background:var(--ink);color:var(--bg)}
+.btn.sm{min-height:40px;font-size:14px;padding:0 12px}
+.btn:disabled{opacity:.4;cursor:default}
+:focus-visible{outline:2.5px solid var(--mag);outline-offset:2px}
+input[type=search],select{font:16px Overpass,sans-serif;color:var(--ink);background:var(--card);border:1.5px solid var(--line);border-radius:10px;min-height:44px;padding:0 12px;width:100%}
+.qres{display:grid;gap:2px;margin-top:4px}
+.tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));margin:18px 0 6px;border:1.5px solid var(--ink);border-radius:10px;overflow:hidden}
+.tabs button{min-height:44px;border:0;background:transparent;color:var(--ink);font:600 15px Overpass,sans-serif;cursor:pointer}
+.tabs button[aria-selected=true]{background:var(--ink);color:var(--bg)}
+.muted{color:var(--soft);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-top:10px}
+.ttl{font:800 20px/1.15 Overpass,sans-serif;overflow-wrap:anywhere}
+.path{font-size:13px;color:var(--soft);overflow-wrap:anywhere}
+.meta{font-size:13px;margin-top:4px}
+.card p{font-size:15px;margin:10px 0}
+.lst{display:grid;gap:2px;max-height:240px;overflow-y:auto}
+.lnk{display:flex;gap:8px;align-items:baseline;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:8px;color:var(--ink);font:15px Overpass,sans-serif;cursor:pointer;min-height:40px}
+.lnk:hover{background:color-mix(in srgb,var(--ink) 7%,transparent)}
+.lnk b{font-weight:600;white-space:nowrap;flex:none;max-width:70%;overflow:hidden;text-overflow:ellipsis}.lnk small{flex:1}
+.lnk small{color:var(--soft);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sw{display:inline-block;width:18px;height:3px;border-radius:2px;flex:none}
+.sw.mag{background:var(--mag)}.sw.teal{background:var(--teal)}
+.ext{font-size:14px;overflow-wrap:anywhere;margin:0}
+.rp{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:10px}
+.field{text-align:left;min-height:56px;border:1.5px solid var(--line);border-radius:10px;background:var(--card);color:var(--ink);padding:6px 10px;font:600 15px Overpass,sans-serif;cursor:pointer;overflow-wrap:anywhere}
+.field small{display:block;font-weight:400;font-size:13px;color:var(--soft)}
+.field.on{border-color:var(--mag)}
+.steps{padding-left:22px;margin:12px 0}.steps li{margin:6px 0;font-size:15px}
+.steps .lnk{display:inline-flex;width:auto;padding:2px 4px;min-height:0}
+.stops{padding-left:22px;font-size:14px;color:var(--soft)}.stops .now{color:var(--ink);font-weight:800}
+.opts{display:grid;gap:10px;margin-top:22px;padding-top:16px;border-top:1px solid var(--line)}
+.chk{display:flex;align-items:center;gap:10px;min-height:44px;font-weight:600}
+.chk input{width:22px;height:22px;accent-color:var(--mag)}
+.lbl{display:grid;gap:4px;font-size:14px;color:var(--soft)}
+.repo{display:flex;gap:8px;align-items:center;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:7px 8px;color:var(--ink);font:15px Overpass,sans-serif;cursor:pointer;min-height:40px}
+.repo:hover,.repo.on{background:color-mix(in srgb,var(--terr) 12%,transparent)}
+.repo b{font-weight:600;white-space:nowrap}.repo small{color:var(--soft);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rd{flex:none;width:14px;height:14px;border-radius:4px;background:var(--terr);border:1.5px dashed var(--terr)}
+.xr{display:flex;justify-content:space-between;gap:10px;font-size:14px;padding:3px 0}.xr span{color:var(--soft);text-align:right;flex:none}
+.tl{position:absolute;left:14px;right:176px;bottom:52px;display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:4px 8px;align-items:center;background:color-mix(in srgb,var(--bg) 92%,transparent);border:1px solid var(--line);border-radius:12px;padding:8px;box-shadow:0 1px 4px #0002}
+#tlc{width:100%;height:44px;touch-action:none;cursor:ew-resize;display:block}
+#tplay{width:44px;height:44px;border-radius:50%;border:0;background:var(--run);color:#fff;font:800 15px Overpass,sans-serif;cursor:pointer}
+#twhole{min-height:36px;border-radius:8px;border:1.5px solid var(--ink);background:transparent;color:var(--ink);font:600 13px Overpass,sans-serif;padding:0 10px;cursor:pointer}
+#tlt{grid-column:2/4;font-size:12px;color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.how{padding-left:18px;font-size:14px}.how li{margin:6px 0}.how code{font-size:12.5px;background:color-mix(in srgb,var(--ink) 8%,transparent);padding:1px 4px;border-radius:4px}
+.stk{padding-left:22px;font-size:13px;margin:6px 0;overflow-wrap:anywhere}.stk li{margin:2px 0}.stk .off{color:var(--soft)}.stk small{color:var(--run);font-weight:600}
+@media(max-width:760px){.tl{left:10px;right:128px;bottom:10px;grid-template-columns:40px minmax(0,1fr) auto;padding:6px}#twhole{min-height:32px}#tlt{grid-column:2/3}#tplay{width:40px;height:40px}#tlc{height:36px}.stage:has(.tl:not([hidden])) .lod{display:none}}
+.legend{list-style:none;padding:0;margin:0;display:grid;gap:8px;font-size:14px}
+.legend li{display:flex;gap:10px;align-items:center}.legend svg{flex:none;width:30px;height:18px}
+details{margin-top:22px;border-top:1px solid var(--line);padding-top:6px}
+summary{font:800 17px Overpass,sans-serif;cursor:pointer;min-height:44px;display:flex;align-items:center}
+details p{font-size:15px;margin:10px 0}
+details b{font-weight:800}
+.refs{font-size:13px;color:var(--soft);padding-left:18px}.refs a{color:inherit}
+@media(max-width:760px){.app{grid-template-columns:minmax(0,1fr);height:auto}.stage{height:62dvh;min-height:360px}.panel{border-left:0;border-top:1px solid var(--line);overflow:visible}#mini{width:110px;height:77px}.compass{width:42px;height:42px}h1{font-size:28px}}
+</style></head><body>
+<div class="app">
+ <div class="stage" id="stage">
+  <canvas id="map" tabindex="0" aria-label="Topographic map of the codebase. Arrow keys pan, plus and minus zoom."></canvas>
+  <svg class="compass" viewBox="0 0 52 52" aria-hidden="true"><circle cx="26" cy="29" r="16" style="fill:var(--bg);stroke:var(--line)"/><path d="M26 14 31 29H21Z" style="fill:var(--mag)"/><path d="M26 44 21 29H31Z" style="fill:var(--ink);opacity:.5"/><text x="26" y="10" text-anchor="middle" style="font:800 10px Overpass,sans-serif;fill:var(--ink)">N</text></svg>
+  <div class="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button><button id="zhome" aria-label="Show whole map">⌂</button></div>
+  <div class="lod" id="lod">Survey view</div>
+  <div class="tl" id="tl" hidden><button id="tplay" aria-label="Play the run">▶</button><canvas id="tlc" aria-label="Activity over time: drag to scrub"></canvas><button id="twhole">Whole run</button><span id="tlt"></span></div>
+  <canvas id="mini" aria-label="Overview map: tap to jump"></canvas>
+  <div class="toast" id="toast" hidden></div>
+  <div class="drop" id="drop" hidden>Drop a project folder or .zip</div>
+ </div>
+ <aside class="panel">
+  <h1 id="pname">harbor</h1>
+  <p class="stats" id="stats"></p>
+  <p class="note" id="note"></p>
+  <div class="row">
+   <label class="btn pri" tabindex="0">Open folder<input type="file" id="fdir" webkitdirectory multiple hidden></label>
+   <label class="btn" tabindex="0">Open .zip<input type="file" id="fzip" accept=".zip,application/zip" hidden></label>
+   <button class="btn" id="snapb" hidden>Renode</button>
+   <button class="btn" id="demo">Sample</button>
+   <button class="btn pri" id="cxrescan" hidden>Rescan</button>
+  </div>
+  <div id="repos"></div>
+  <input id="q" type="search" placeholder="Find a file…" autocomplete="off" aria-label="Find a file">
+  <div id="qres" class="qres"></div>
+  <div class="tabs" role="tablist">
+   <button role="tab" data-m="explore" aria-selected="true">Explore</button>
+   <button role="tab" data-m="route" aria-selected="false">Route</button>
+   <button role="tab" data-m="walk" aria-selected="false">Walk</button>
+   <button role="tab" data-m="run" aria-selected="false">Runtime</button>
+  </div>
+  <section id="s-explore"><div id="sel"></div></section>
+  <section id="s-route" hidden><div id="routeBox"></div></section>
+  <section id="s-walk" hidden><div id="walkBox"></div></section>
+  <section id="s-run" hidden><div id="runBox"></div></section>
+  <input type="file" id="ftrace" accept=".json,.cpuprofile,.txt,.folded,.collapsed" hidden>
+  <div class="opts">
+   <label class="chk"><input type="checkbox" id="fog"> Fog of war: only show where I've been</label>
+   <label class="chk" id="terrRow" hidden><input type="checkbox" id="terr" checked> Show git submodules as territories</label>
+   <label class="lbl">Height shows<select id="elev"><option value="size">Amount of code</option><option value="imp">How many files depend on it</option></select></label>
+  </div>
+  <h2>Legend</h2>
+  <ul class="legend">
+   <li><svg viewBox="0 0 30 18"><path d="M2 14c6-9 10-9 13-4s7 5 13-4" style="fill:none;stroke:var(--brown);stroke-width:1.5"/><path d="M6 15c5-5 8-5 9-2s5 3 9-2" style="fill:none;stroke:var(--brown);stroke-width:.8"/></svg>Contours: each ring is higher ground, more code</li>
+   <li><svg viewBox="0 0 30 18"><rect x="1" y="3" width="28" height="12" rx="3" style="fill:var(--sea);stroke:var(--line)"/></svg>Sea: the boundary between top-level folders</li>
+   <li><svg viewBox="0 0 30 18"><rect x="2" y="3" width="26" height="12" rx="3" style="fill:var(--terr);fill-opacity:.25;stroke:var(--terr);stroke-width:1.8;stroke-dasharray:5 3"/></svg>Purple border: a git submodule; nested ones are tinted deeper</li>
+   <li><svg viewBox="0 0 30 18"><path d="M15 2 20 16H10Z" style="fill:var(--ink)"/></svg>Tower: one of the most-imported files</li>
+   <li><svg viewBox="0 0 30 18"><path d="M15 1l2.4 5.3 5.6.6-4.2 3.8 1.2 5.6L15 13.4l-5 2.9 1.2-5.6L7 6.9l5.6-.6Z" style="fill:var(--mag)"/></svg>Star: where the program starts</li>
+   <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--ink);stroke-width:3;opacity:.55"/></svg>Highway: imports between regions (dashed when it crosses into another repo)</li>
+   <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--mag);stroke-width:2.5"/></svg>Roads out: what the chosen file imports</li>
+   <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--teal);stroke-width:2.5"/></svg>Roads in: files that import it</li>
+   <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--soft);stroke-width:2.5;stroke-dasharray:1 4;stroke-linecap:round"/></svg>Your trail</li>
+   <li><svg viewBox="0 0 30 18"><circle cx="15" cy="9" r="8" style="fill:var(--run);opacity:.55"/><circle cx="15" cy="9" r="3" style="fill:var(--run)"/></svg>Runtime: glow is time spent, dots are calls in motion</li>
+   <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--run);stroke-width:2.5;stroke-dasharray:5 3"/></svg>Desire path: a runtime call with no import road</li>
+  </ul>
+  <details>
+   <summary>Why a landscape works</summary>
+   <p>Your brain carries a navigation system far older than reading. Place cells in the hippocampus fire for particular spots, grid cells track how far and which way you have moved, and nearby regions pin it all to fixed landmarks. People who memorise by walking items through an imagined building, the method of loci, recall far more than by repetition. This map borrows each of those tricks.</p>
+   <p><b>Places that stay put.</b> The layout comes only from the folder tree and file sizes, with no randomness, so the same project always draws the same coastline. "Auth is on the east island" stays true tomorrow.</p>
+   <p><b>Landmarks first.</b> The files most others import rise as towers and stay visible even through fog, the way a spire orients you in a strange town.</p>
+   <p><b>Landmark, route, then survey.</b> Wayfinding research describes learning a place as recognising landmarks, then knowing routes between them, then holding the whole layout. Towers give the first; the Route planner gives turn-by-turn directions along import roads; zooming out gives the survey view of regions and highways.</p>
+   <p><b>Knowing where you have been.</b> A dotted trail and a ring on your current file do the job of path integration, so you can always retrace your steps.</p>
+   <p><b>Exploring builds the map.</b> With fog of war on, land appears only where you have walked, so the map you hold in your head grows with the one on screen.</p>
+   <p><b>A walk you can replay.</b> Walk mode visits the landmarks in a fixed spatial order, from the starting point outward, with compass directions between stops: a memory palace built from your own architecture.</p>
+   <p><b>Shape you can feel.</b> Height is code, water is a module boundary, roads are dependencies. Heavy, tangled districts read as mountains crowded with roads before you open a single file.</p>
+   <ul class="refs">
+    <li><a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC6028313/">The cognitive map in humans (Epstein et al.)</a></li>
+    <li><a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC8354890/">Landmark, route and survey knowledge (Kim &amp; Bock)</a></li>
+    <li><a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC12514325/">Method of loci meta-analysis (Ondřej, 2025)</a></li>
+    <li><a href="https://scg.unibe.ch/research/softwarecartography">Software Cartography (Kuhn et al.)</a></li>
+    <li><a href="https://2011.icse-conferences.org/content/software-systems-cities-controlled-experiment.html">Software systems as cities (Wettel et al.)</a></li>
+   </ul>
+  </details>
+ </aside>
+</div>
+<script>
+{
+const $=s=>document.querySelector(s);
+const EMBED=new URLSearchParams(location.search).get('embed')==='chrono';
+/* Chrono bridge: everything sent to the host app goes through here. */
+const toChrono=m=>{try{parent.postMessage(Object.assign({source:'chrono-landscape'},m),'*')}catch(e){}};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const W=1000,H=700,KMIN=.7,KMAX=8,MAXF=12000,FF='Overpass, system-ui, sans-serif';
+const stage=$('#stage'),cv=$('#map'),cx=cv.getContext('2d'),mm=$('#mini'),mx=mm.getContext('2d');
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const PALS={
+ light:{sea:[191,227,238],shallow:[222,242,246],ramp:[[248,248,236],[236,235,212],[222,212,180],[204,183,144],[180,151,114],[152,123,95]],contour:'rgba(168,85,27,',soft:'rgba(19,36,46,',road:'rgba(19,36,46,',ink:'#13242e',mag:'#d6127e',teal:'#0d7680',brown:'#a8551b',label:'#7a3d12',terr:[120,80,170],terrLine:'#6b3fa0',terrInk:'#55287f',halo:'rgba(251,251,242,.92)',fog:'rgba(234,237,230,.95)'},
+ dark:{sea:[10,24,32],shallow:[20,44,56],ramp:[[32,46,46],[44,58,53],[60,70,59],[82,84,67],[108,100,79],[134,118,91]],contour:'rgba(211,144,88,',soft:'rgba(228,236,230,',road:'rgba(228,236,230,',ink:'#e4ece6',mag:'#ff5cae',teal:'#4cc6cf',brown:'#d39058',label:'#e8b585',terr:[150,110,210],terrLine:'#b892ff',terrInk:'#d6bcff',halo:'rgba(10,24,32,.88)',fog:'rgba(14,28,36,.96)'}};
+let C=PALS.light;
+let P=null,cam={x:W/2,y:H/2,k:1},vw=300,vh=300,dpr=1,fit=1;
+let sel=null,mode='explore',fogOn=false,terrOn=true,elev='size',route=null,rFrom=null,rTo=null,rPick='from',rNote='',tour=[],tourI=-1;
+let visited=new Set(),trail=[];
+let terr=null,mask=null,hgt=null,GW=400,GH=280,iso1=[],coast=null,fogCv=null,streets=null;
+const memStore=new Map();
+/* Chrono bridge: the sandboxed page has no storage of its own, so the trail and fog live in Chrono. */
+const store=EMBED?{get(k){return memStore.has(k)?memStore.get(k):null},set(k,v){memStore.set(k,v);toChrono({type:'store',key:k,value:v})}}:{get(k){try{return JSON.parse(localStorage.getItem(k))}catch(e){return null}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+const hash=s=>{let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return(h>>>0)/4294967295};
+const ih=(x,y)=>{let h=Math.imul(x|0,374761393)+Math.imul(y|0,668265263);h=Math.imul(h^(h>>>13),1274126177);return((h^(h>>>16))>>>0)/4294967295};
+const vnoise=(x,y)=>{const xi=Math.floor(x),yi=Math.floor(y),xf=x-xi,yf=y-yi,u=xf*xf*(3-2*xf),v=yf*yf*(3-2*yf),a=ih(xi,yi),b=ih(xi+1,yi),c=ih(xi,yi+1),d=ih(xi+1,yi+1);return a+(b-a)*u+(c-a)*v+(a-b-c+d)*u*v};
+const rgb=a=>`rgb(${a[0]|0},${a[1]|0},${a[2]|0})`;
+const mix=(a,b,t)=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t];
+const isDark=()=>{const t=document.documentElement.dataset.theme;return t?t==='dark':matchMedia('(prefers-color-scheme: dark)').matches};
+
+/* ---------- reading source files ---------- */
+const LANG={js:'JavaScript',jsx:'JavaScript',mjs:'JavaScript',cjs:'JavaScript',ts:'TypeScript',tsx:'TypeScript',mts:'TypeScript',cts:'TypeScript',vue:'Vue',svelte:'Svelte',py:'Python',go:'Go',rs:'Rust',java:'Java',kt:'Kotlin',kts:'Kotlin',scala:'Scala',c:'C',h:'C',cpp:'C++',cc:'C++',cxx:'C++',hpp:'C++',hh:'C++',cs:'C#',rb:'Ruby',php:'PHP',swift:'Swift',m:'Objective-C',dart:'Dart',lua:'Lua',ex:'Elixir',exs:'Elixir',erl:'Erlang',hs:'Haskell',clj:'Clojure',jl:'Julia',r:'R',sh:'Shell',bash:'Shell',zsh:'Shell',ps1:'PowerShell',sql:'SQL',css:'CSS',scss:'SCSS',sass:'SCSS',less:'Less',html:'HTML',htm:'HTML',md:'Markdown',mdx:'Markdown',rst:'Docs',json:'JSON',yml:'YAML',yaml:'YAML',toml:'TOML',xml:'XML',gradle:'Gradle',proto:'Proto',graphql:'GraphQL',gql:'GraphQL',tf:'Terraform',repl:'Platform',resc:'Renode script',robot:'Robot test',resource:'Robot test'};
+const FAM={JavaScript:'js',TypeScript:'js',Vue:'js',Svelte:'js',Python:'py',Go:'go',Rust:'rs',Java:'jvm',Kotlin:'jvm',Scala:'jvm','C#':'cs',C:'c','C++':'c','Objective-C':'c',CSS:'css',SCSS:'css',Less:'css',Ruby:'rb',PHP:'php',Dart:'dart',Lua:'lua',HTML:'html',Platform:'renode','Renode script':'renode','Robot test':'renode'};
+const SKIP=/(^|\/)(node_modules|bower_components|\.git|\.hg|\.svn|dist|build|out|target|vendor|\.next|\.nuxt|\.svelte-kit|__pycache__|\.venv|venv|\.tox|coverage|\.idea|\.vscode|\.cache|\.gradle|Pods|DerivedData|\.terraform)(\/|$)/;
+const SKIPF=/(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|poetry\.lock|composer\.lock|Gemfile\.lock|go\.sum)$|\.min\.(js|css)$|\.map$/i;
+const extOf=p=>{const m=/\.([a-z0-9]+)$/i.exec(p);return m?m[1].toLowerCase():''};
+const countLoc=t=>{if(!t)return 1;let n=0,blank=true;for(let i=0;i<t.length;i++){const c=t.charCodeAt(i);if(c===10){if(!blank)n++;blank=true}else if(c!==32&&c!==9&&c!==13)blank=false}if(!blank)n++;return Math.max(1,n)};
+function specsOf(t,fam){
+ const o=[];const R=(re,fn)=>{let m;while((m=re.exec(t))){const v=fn?fn(m):m[1];if(Array.isArray(v))o.push(...v);else if(v)o.push(v)}};
+ const names=s=>s.split(',').map(n=>n.trim().split(/\s+/)[0]).filter(n=>n&&n!=='*'&&n!=='(');
+ switch(fam){
+  case'js':R(/(?:import|export)\s[^'"`;]*?\sfrom\s*['"]([^'"\n]+)['"]/g);R(/import\s*['"]([^'"\n]+)['"]/g);R(/require\(\s*['"]([^'"\n]+)['"]\s*\)/g);R(/import\(\s*['"]([^'"\n]+)['"]\s*\)/g);break;
+  case'py':R(/^[ \t]*from[ \t]+([.\w]+)[ \t]+import[ \t]+\(?([\w, \t*]+)/gm,m=>/^\.+$/.test(m[1])?names(m[2]).map(n=>m[1]+n):m[1]);R(/^[ \t]*import[ \t]+([\w.][\w., \t]*)/gm,m=>names(m[1]));break;
+  case'go':R(/import\s*\(([^)]*)\)/g,m=>(m[1].match(/"[^"]+"/g)||[]).map(x=>x.slice(1,-1)));R(/import\s+(?:[\w.]+\s+)?"([^"]+)"/g);break;
+  case'rs':R(/^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?mod[ \t]+(\w+)[ \t]*;/gm,m=>'mod:'+m[1]);R(/\b(?:crate|super)::((?:\w+::)*\w+)/g,m=>'crate:'+m[1].replace(/::/g,'/'));break;
+  case'jvm':R(/^[ \t]*import[ \t]+(?:static[ \t]+)?([\w.]+)/gm);break;
+  case'cs':break;
+  case'renode':R(/@([\w./-]+\.(?:repl|resc|py|robot|resource))/g,m=>'root:'+m[1]);R(/using\s+"([^"]+)"/g,m=>'root:'+m[1]);R(/^Resource\s+(\S+)/gm,m=>m[1].includes('${')&&!m[1].startsWith('${CURDIR}')?null:'rel:'+m[1].replace(/^\$\{CURDIR\}\//,''));R(/^[ \t]*[\w.]+[ \t]*:[ \t]*([A-Z][\w.]*)[ \t]*@/gm,m=>'type:'+m[1]);break;
+  case'c':R(/#[ \t]*(?:include|import)[ \t]*"([^"]+)"/g);break;
+  case'css':R(/@(?:import|use|forward)\s+(?:url\()?\s*['"]([^'"]+)['"]/g);break;
+  case'rb':R(/require_relative\s*\(?\s*['"]([^'"]+)['"]/g,m=>m[1].startsWith('.')?m[1]:'./'+m[1]);R(/\brequire\s*\(?\s*['"]([^'"]+)['"]/g);break;
+  case'php':R(/(?:require|include)(?:_once)?\s*\(?\s*(?:__DIR__\s*\.\s*)?['"]([^'"]+)['"]/g);R(/^[ \t]*use[ \t]+([\w\\]+)/gm);break;
+  case'dart':R(/(?:import|export|part)\s+['"]([^'"]+)['"]/g);break;
+  case'lua':R(/require\s*\(?\s*['"]([^'"]+)['"]/g,m=>m[1].replace(/\./g,'/'));break;
+  case'html':R(/<(?:script|link)\b[^>]*?\s(?:src|href)\s*=\s*["']([^"']+)["']/gi);break;
+ }
+ return[...new Set(o)];
+}
+function csInfo(t){
+ const c=t.replace(/\/\*[\s\S]*?\*\//g,'').replace(/\/\/[^\n]*/g,'').replace(/@?"(?:[^"\\\n]|\\.)*"/g,'""');
+ const ns=[...c.matchAll(/\bnamespace\s+([\w.]+)/g)].map(m=>m[1]),uses=[...c.matchAll(/^[ \t]*(?:global[ \t]+)?using[ \t]+(?:static[ \t]+)?([\w.]+)[ \t]*;/gm)].map(m=>m[1]);
+ const decl=[...new Set([...c.matchAll(/\b(?:class|interface|struct|enum|record|delegate[ \t]+[\w<>,.\[\] ]+?)[ \t]+([A-Z_]\w*)/g)].map(m=>m[1]))];
+ const ds=new Set(decl),toks=[...new Set(c.match(/\b[A-Z_][A-Za-z0-9_]*\b/g)||[])].filter(x=>!ds.has(x)&&x.length>1);
+ return{ns,uses,decl,toks};
+}
+function norm(p){const o=[];for(const s of p.split('/')){if(!s||s==='.')continue;if(s==='..')o.pop();else o.push(s)}return o.join('/')}
+function mkIndex(files){
+ const np=new Map(),suf=new Map(),dsuf=new Map(),dirs=new Map();
+ const push=(m,k,v)=>{const a=m.get(k);if(a){if(!a.includes(v))a.push(v)}else m.set(k,[v])};
+ for(const f of files){const p=f.path.toLowerCase(),n=p.replace(/\.[^./]+$/,'');if(!np.has(p))np.set(p,f);if(!np.has(n))np.set(n,f);const sg=n.split('/');for(let k=1;k<=sg.length;k++)push(suf,sg.slice(-k).join('/'),f);push(dirs,f.dir.toLowerCase(),f)}
+ for(const d of dirs.keys()){if(!d)continue;const sg=d.split('/');for(let k=1;k<=sg.length;k++)push(dsuf,sg.slice(-k).join('/'),d)}
+ const types=new Map();for(const f of files)if(f.cs)for(const d of f.cs.decl)push(types,d,f);
+ return{np,suf,dsuf,dirs,types};
+}
+function resolve(f,s,X,fam){
+ const dir=f.dir.toLowerCase(),fd=dir;s=s.trim();if(!s)return null;
+ const cp=a=>{let i=0;while(i<a.length&&i<fd.length&&a[i]===fd[i])i++;return i};
+ const big=d=>{const fs=X.dirs.get(d);if(!fs)return null;let b=null;for(const g of fs)if(g!==f&&ok(g)&&(!b||g.loc>b.loc))b=g;return b};
+ const OK=ALLOW[fam],ok=g=>!OK||OK.includes(FAM[g.lang]||g.lang);
+ const pick=a=>{if(!a)return null;const c=a.filter(g=>g!==f&&ok(g));if(!c.length)return null;let b=c[0],bs=-1;for(const g of c){const v=cp(g.dir.toLowerCase());if(v>bs){bs=v;b=g}}return b};
+ const pickD=a=>{let b=a[0],bs=-1;for(const d of a){const v=cp(d);if(v>bs){bs=v;b=d}}return b};
+ const exact=p=>{p=norm(p.toLowerCase());const st=p.replace(/\.(js|jsx|mjs|cjs)$/,'');for(const c of[p,st,st+'/index',st+'/__init__',st+'/mod',st+'/lib']){const g=X.np.get(c);if(g&&g!==f&&(fam==='js'||ok(g)))return g}return X.dirs.has(p)?big(p):null};
+ const suffix=(p,lead,trail)=>{const sg=norm(p.toLowerCase()).split('/').filter(Boolean);for(let t=0;t<=trail&&sg.length-t>0;t++){const segs=sg.slice(0,sg.length-t);for(let i=0;i<(lead?segs.length:1);i++){const k=segs.slice(i).join('/');const g=pick(X.suf.get(k)||X.suf.get(k+'/index')||X.suf.get(k+'/__init__')||X.suf.get(k+'/mod'));if(g)return g;const d=X.dsuf.get(k);if(d){const b=big(pickD(d));if(b)return b}}}return null};
+ if(s.startsWith('crate:'))return suffix(s.slice(6),false,2);
+ if(s.startsWith('root:')){const q=s.slice(5);return q.startsWith('.')?exact(dir+'/'+q):exact(q)||suffix(q,false,0)}
+ if(s.startsWith('rel:'))return exact(dir+'/'+s.slice(4))||suffix(s.slice(4),false,0);
+ if(s.startsWith('type:')){const parts=s.slice(5).split('.'),nm=parts.pop(),pre=parts.join('.'),c=(X.types.get(nm)||[]).filter(g=>g!==f);if(!c.length)return null;const m=pre?c.filter(g=>g.cs.ns.some(n=>n===pre||n.endsWith('.'+pre))):c;return pick(m.length?m:c)}
+ if(s.startsWith('mod:')){const x=s.slice(4),stem=f.name.replace(/\.[^.]+$/,'').toLowerCase();return exact(dir+'/'+x)||exact(dir+'/'+stem+'/'+x)}
+ switch(fam){
+  case'js':case'css':case'html':case'dart':case'rb':case'php':case'c':case'lua':{
+   if(fam==='dart'){if(s.startsWith('dart:'))return null;if(s.startsWith('package:'))return suffix(s.replace(/^package:[^/]+\//,'').replace(/\.dart$/,''),true,0)}
+   if(/^\.{1,2}\//.test(s))return exact(dir+'/'+s)||(fam==='css'?exact(dir+'/'+s.replace(/([^/]+)$/,'_$1')):null);
+   if(s.startsWith('/'))return exact(dir+s)||exact(s);
+   if(/^[a-z]+:/i.test(s)||s.startsWith('//'))return null;
+   if(fam==='c'||fam==='css'||fam==='html'||fam==='dart'||fam==='rb'||fam==='lua')return exact(dir+'/'+s)||suffix(s,false,0);
+   if(fam==='php')return s.includes('\\')?suffix(s.replace(/\\/g,'/'),true,0):exact(dir+'/'+s)||suffix(s,false,0);
+   if(/^[@~#]\//.test(s))return suffix(s.slice(2),true,0);
+   if(s.startsWith('@'))return null;
+   return s.includes('/')?suffix(s,false,0):null}
+  case'py':{const m=/^(\.+)(.*)$/.exec(s);if(m){let b=dir.split('/').filter(Boolean);b=b.slice(0,b.length-(m[1].length-1));const rest=m[2].replace(/\./g,'/'),base=b.join('/');return exact(base+'/'+rest)||exact(base+'/'+rest.replace(/\/?[^/]*$/,''))}return suffix(s.replace(/\./g,'/'),false,1)}
+  case'jvm':case'cs':{if(/^(java|javax|kotlin|kotlinx|android|androidx|scala|System|Microsoft)\b/.test(s))return null;return suffix(s.replace(/\./g,'/'),false,2)}
+  case'go':return s.split('/')[0].includes('.')?suffix(s,true,0):suffix(s,false,0);
+ }
+ return null;
+}
+const ALLOW={py:['py'],go:['go'],rs:['rs'],jvm:['jvm'],cs:['cs'],c:['c'],rb:['rb'],php:['php'],dart:['dart'],lua:['lua'],css:['css'],js:['js','css','JSON']};
+function extName(s,fam){
+ if(/^[./]/.test(s)||s.startsWith('mod:')||s.startsWith('crate:'))return null;
+ if(fam==='js')return s.startsWith('@')?s.split('/').slice(0,2).join('/'):s.split('/')[0];
+ if(fam==='py')return s.split('.')[0];
+ if(fam==='go')return s;
+ if(fam==='jvm'||fam==='cs')return s.split('.').slice(0,2).join('.');
+ if(fam==='rb'||fam==='dart')return s.replace(/^package:/,'').split('/')[0];
+ return null;
+}
+
+/* ---------- layout ---------- */
+function squarify(items,r){
+ const out=[];const tot=items.reduce((a,b)=>a+b.w,0);if(!tot)return out;let{x,y,w,h}=r;const sc=w*h/tot;let i=0;
+ const worst=(row,sum,short)=>{let mxa=0,mna=Infinity;for(const it of row){const a=it.w*sc;if(a>mxa)mxa=a;if(a<mna)mna=a}const s2=short*short,q=sum*sum;return Math.max(s2*mxa/q,q/(s2*mna))};
+ while(i<items.length){
+  const short=Math.min(w,h);let row=[items[i]],sum=items[i].w*sc,best=worst(row,sum,short),j=i+1;
+  while(j<items.length){const s2=sum+items[j].w*sc,nr=row.concat(items[j]),wv=worst(nr,s2,short);if(wv>best)break;row=nr;sum=s2;best=wv;j++}
+  if(w>=h){const cw=sum/h;let yy=y;for(const it of row){const ch=it.w*sc/cw;out.push({it,rect:{x,y:yy,w:cw,h:ch}});yy+=ch}x+=cw;w-=cw}
+  else{const rh=sum/w;let xx=x;for(const it of row){const c2=it.w*sc/rh;out.push({it,rect:{x:xx,y,w:c2,h:rh}});xx+=c2}y+=rh;h-=rh}
+  i=j;
+ }
+ return out;
+}
+function collapse(n){
+ for(const c of n.kids.values())collapse(c);
+ for(const[k,c]of[...n.kids]){if(c.kids.size===1&&c.files.length<=3&&c.files.every(f=>!FAM[f.lang])){const g=[...c.kids.values()][0];g.name=c.name+'/'+g.name;g.files.push(...c.files);if(c.repoRoot)g.repoRoot=true;n.kids.delete(k);n.kids.set(g.name,g)}}
+}
+function weigh(n){let w=0;for(const f of n.files){f.w=Math.sqrt(f.loc)+4;w+=f.w}for(const k of n.kids.values())w+=weigh(k);return n.w=w}
+function layoutNode(n,r,d,dirs,reg){
+ const m=Math.min(r.w,r.h),p=d===0?0:d===1?Math.min(13,m*.09):Math.min(5,m*.06);
+ const R={x:r.x+p,y:r.y+p,w:Math.max(1,r.w-2*p),h:Math.max(1,r.h-2*p)};
+ n.rect=R;n.depth=d;if(d>0){dirs.push(n);n.uid=dirs.length}if(d===1)reg=n;
+ const items=[...n.kids.values()].map(k=>({w:k.w,k})).concat(n.files.map(f=>({w:f.w,f})));items.sort((a,b)=>b.w-a.w);
+ for(const c of squarify(items,R)){
+  if(c.it.k)layoutNode(c.it.k,c.rect,d+1,dirs,reg);
+  else{const f=c.it.f,q=c.rect;f.reg=reg;f.cell=q;f.x=q.x+q.w*(.5+(hash(f.path)-.5)*.3);f.y=q.y+q.h*(.5+(hash(f.path+'#')-.5)*.3);f.r=Math.max(1.5,Math.min(q.w,q.h)/2)}
+ }
+}
+const ctrl=(a,b,k=.15)=>{const dx=b.x-a.x,dy=b.y-a.y;return[(a.x+b.x)/2-dy*k,(a.y+b.y)/2+dx*k]};
+
+function build(name,recs,cut=0,demo=false,pre=null,note='',repos=null,syms=null){
+ const files=recs.map((r,i)=>{const sl=r.path.lastIndexOf('/');return{id:i,path:r.path,name:r.path.slice(sl+1),dir:sl<0?'':r.path.slice(0,sl),lang:r.lang,loc:Math.max(1,r.loc),specs:r.specs||[],cs:r.cs||null,out:new Set(),inn:new Set(),ext:new Set()}});
+ const X=mkIndex(files);
+ if(pre){for(let i=0;i<pre.length;i+=2){const a=files[pre[i]],b=files[pre[i+1]];if(a&&b&&a!==b){a.out.add(b.id);b.inn.add(a.id)}}}
+ else for(const f of files){if(!f.cs)continue;const vis=new Set();for(const n of f.cs.ns.concat(f.cs.uses)){const sg=n.split('.');for(let k=1;k<=sg.length;k++)vis.add(sg.slice(0,k).join('.'))}
+  for(const t of f.cs.toks){const c=X.types.get(t);if(!c)continue;const ok=c.filter(g=>g!==f&&g.cs.ns.some(n=>vis.has(n)));if(!ok.length)continue;let b=ok[0];if(ok.length>1){let bs=-1;for(const g of ok){let i=0;while(i<g.dir.length&&i<f.dir.length&&g.dir[i]===f.dir[i])i++;if(i>bs){bs=i;b=g}}}f.out.add(b.id);b.inn.add(f.id)}}
+ if(!pre)for(const f of files){const fam=FAM[f.lang];for(const s of f.specs){const g=resolve(f,s,X,fam);if(g&&g!==f){f.out.add(g.id);g.inn.add(f.id)}else if(!g){const e=extName(s,fam);if(e)f.ext.add(e)}}}
+ const RP=[{id:0,title:name,path:'',depth:0,sha:((repos||[]).find(r=>!r.path)||{}).sha||'',url:'',parent:null}];
+ for(const r of(repos||[]).filter(r=>r.path).sort((a,b)=>a.path.length-b.path.length)){if(RP.some(x=>x.path===r.path))continue;let par=RP[0];for(const x of RP)if(x.path&&r.path.startsWith(x.path+'/')&&x.path.length>par.path.length)par=x;RP.push({id:RP.length,title:r.title||r.path.split('/').pop(),path:r.path,url:r.url||'',sha:r.sha||'',depth:par.depth+1,parent:par})}
+ for(const r of RP){r.files=0;r.lines=0;r.anc=new Set();for(let x=r;x;x=x.parent)r.anc.add(x.id)}
+ for(const f of files){let b=RP[0];for(const x of RP)if(x.path&&f.path.startsWith(x.path+'/')&&x.path.length>b.path.length)b=x;f.repo=b;b.files++;b.lines+=f.loc}
+ let root={name,path:'',kids:new Map(),files:[]};
+ for(const f of files){let n=root;if(f.dir){let acc='';for(const s of f.dir.split('/')){acc=acc?acc+'/'+s:s;if(!n.kids.has(s))n.kids.set(s,{name:s,path:acc,kids:new Map(),files:[]});n=n.kids.get(s)}}n.files.push(f)}
+ for(const r of RP){if(!r.path)continue;let n=root;for(const s of r.path.split('/')){n=n&&n.kids.get(s)}if(n)n.repoRoot=true}
+ collapse(root);while(!root.files.length&&root.kids.size===1)root=[...root.kids.values()][0];
+ weigh(root);
+ for(let k=0;k<4;k++){const big=[...root.kids.values()].find(c=>c.w>root.w*.45&&c.kids.size>=2&&!c.repoRoot);if(!big)break;root.kids.delete(big.name);for(const g of big.kids.values()){g.name=big.name+'/'+g.name;root.kids.set(g.name,g)}if(big.files.length){big.kids=new Map();weigh(big);root.kids.set(big.name,big)}}
+ const dirs=[];layoutNode(root,{x:28,y:28,w:W-56,h:H-56},0,dirs,null);
+ const edges=[];for(const f of files)for(const o of f.out)edges.push([f.id,o]);
+ const ENT=/^(main|index|app|server|cli|__main__|manage|program|start|bootstrap|wsgi|asgi)\.[a-z0-9]+$/i;
+ const reach=f=>{const seen=new Set([f.id]),q=[f.id];for(let h=0;h<q.length&&seen.size<5000;h++)for(const v of files[q[h]].out)if(!seen.has(v)){seen.add(v);q.push(v)}return seen.size};
+ let entries=files.filter(f=>ENT.test(f.name)&&f.inn.size<=8&&f.out.size>0).map(f=>[reach(f),f]).sort((a,b)=>b[0]-a[0]||a[1].path.length-b[1].path.length).slice(0,3).map(a=>a[1]);
+ if(!entries.length)entries=files.filter(f=>!f.inn.size&&f.out.size).sort((a,b)=>b.out.size-a.out.size).slice(0,1);
+ const nh=Math.max(4,Math.min(12,Math.round(files.length/10)));
+ const hubs=files.filter(f=>f.inn.size>=2&&!entries.includes(f)).sort((a,b)=>b.inn.size-a.inn.size||b.loc-a.loc).slice(0,nh);
+ const highways=[];
+ const islands=dirs.filter(d=>d.depth===1).map(d=>d.rect).concat(files.filter(f=>!f.reg).map(f=>({x:f.cell.x-6,y:f.cell.y-6,w:f.cell.w+12,h:f.cell.h+12})));
+ P={name,note,files,edges,root,dirs:dirs.sort((a,b)=>a.depth-b.depth||b.rect.w*b.rect.h-a.rect.w*a.rect.h),hubs,entries,highways,islands,cut,demo,X,syms:null,repos:RP,tree:null,hiRepo:-1,borders:[],tdepth:null,
+  byPath:new Map(files.map(f=>[f.path,f])),byLoc:[...files].sort((a,b)=>b.loc-a.loc),lines:files.reduce((a,f)=>a+f.loc,0),rev:new Set()};
+ streets=new Path2D();for(const[a,b]of edges){const A=files[a],B=files[b],c=ctrl(A,B);streets.moveTo(A.x,A.y);streets.quadraticCurveTo(c[0],c[1],B.x,B.y)}
+ for(const r of RP){let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;for(const f of files)if(r.anc&&f.repo.anc.has(r.id)){x0=Math.min(x0,f.cell.x);y0=Math.min(y0,f.cell.y);x1=Math.max(x1,f.cell.x+f.cell.w);y1=Math.max(y1,f.cell.y+f.cell.h)}r.bb=x1>x0?{x:x0,y:y0,w:x1-x0,h:y1-y0}:null;let a0=1e9,b0=1e9,a1=-1e9;for(const f of files)if(f.repo===r){a0=Math.min(a0,f.cell.x);b0=Math.min(b0,f.cell.y);a1=Math.max(a1,f.cell.x+f.cell.w)}r.lb=a1>a0?{x:a0,y:b0,w:a1-a0}:r.bb}
+ const tree=[],walk=r=>{tree.push(r);RP.filter(x=>x.parent===r).sort((a,b)=>a.title.localeCompare(b.title)).forEach(walk)};walk(RP[0]);
+ P.tree=tree;
+ {const SY=new Map();if(syms){for(const k in syms)if(files[syms[k]])SY.set(k,syms[k])}else{const cnt=new Map();recs.forEach((r,i)=>{for(const n of(r.syms||[]).concat(r.cs?r.cs.decl:[])){const a=cnt.get(n);if(a){if(a[a.length-1]!==i)a.push(i)}else cnt.set(n,[i])}});for(const[n,a]of cnt){if(a.length<=2)SY.set(n,a.sort((x,y)=>files[y].loc-files[x].loc)[0]);else{const k=a.filter(i=>files[i].name.replace(/\.[^.]+$/,'')===n).sort((x,y)=>files[y].loc-files[x].loc)[0];if(k!==undefined)SY.set(n,k)}}}P.syms=SY}
+ RT=null;rtT=-1;rtPlay=false;$('#tl').hidden=true;$('#terrRow').hidden=RP.length<2;buildHighways();
+ sel=null;route=null;rFrom=rTo=null;rPick='from';rNote='';tour=[];tourI=-1;
+ const saved=store.get('codemap:'+name);visited=new Set((saved&&saved.v||[]).filter(p=>P.byPath.has(p)));trail=(saved&&saved.t||[]).filter(p=>P.byPath.has(p));
+ terrainBuild();paintTerrain();
+ if(entries[0])select(entries[0]);else buildFog();
+ renderAll();cam={x:W/2,y:H/2,k:1};req();
+}
+
+function buildHighways(){
+ const files=P.files,useR=terrOn&&P.repos.length>1,G=new Map(),key=f=>(f.reg?f.reg.uid:0)+'|'+(useR?f.repo.id:0);
+ for(const f of files){const k=key(f);let g=G.get(k);if(!g)G.set(k,g={id:G.size,x:0,y:0,n:0,repo:f.repo});g.x+=f.x;g.y+=f.y;g.n++}
+ for(const g of G.values()){g.x/=g.n;g.y/=g.n}
+ const hw=new Map();for(const[a,b]of P.edges){const A=G.get(key(files[a])),B=G.get(key(files[b]));if(A===B)continue;const[p,q]=A.id<B.id?[A,B]:[B,A];const k=p.id+'-'+q.id;const h=hw.get(k);if(h)h.n++;else hw.set(k,{a:p,b:q,n:1})}
+ P.highways=[...hw.values()].map(h=>{const p=new Path2D(),c=ctrl(h.a,h.b,.1);p.moveTo(h.a.x,h.a.y);p.quadraticCurveTo(c[0],c[1],h.b.x,h.b.y);return{p,n:h.n,cross:useR&&h.a.repo!==h.b.repo}}).sort((a,b)=>a.n-b.n);
+}
+function boxBlur(src,r){
+ const tmp=new Float32Array(src.length),dst=new Float32Array(src.length),w=2*r+1,cl=(v,m)=>v<0?0:v>m?m:v;
+ for(let j=0;j<GH;j++){const o=j*GW;let s=0;for(let i=-r;i<=r;i++)s+=src[o+cl(i,GW-1)];for(let i=0;i<GW;i++){tmp[o+i]=s/w;s+=src[o+cl(i+r+1,GW-1)]-src[o+cl(i-r,GW-1)]}}
+ for(let i=0;i<GW;i++){let s=0;for(let j=-r;j<=r;j++)s+=tmp[cl(j,GH-1)*GW+i];for(let j=0;j<GH;j++){dst[j*GW+i]=s/w;s+=tmp[cl(j+r+1,GH-1)*GW+i]-tmp[cl(j-r,GH-1)*GW+i]}}
+ return dst;
+}
+/* ---------- terrain ---------- */
+function terrainBuild(){
+ GW=560;GH=Math.round(GW*H/W);const cs=W/GW,ch=H/GH,N=GW*GH;
+ mask=new Float32Array(N);const bump=new Float32Array(N);
+ const isl=P.islands.map(r=>({r,hw:r.w/2,hh:r.h/2,cx:r.x+r.w/2,cy:r.y+r.h/2,rad:Math.min(34,r.w/2,r.h/2)}));
+ for(let j=0;j<GH;j++){const y=(j+.5)*ch;for(let i=0;i<GW;i++){const x=(i+.5)*cs;let m=0;
+  const nz=(vnoise(x/45,y/45)-.5)*24+(vnoise(x/13+50,y/13)-.5)*8;
+  for(const o of isl){const ax=Math.abs(x-o.cx),ay=Math.abs(y-o.cy);if(ax>o.hw+24||ay>o.hh+24)continue;const qx=ax-o.hw+o.rad,qy=ay-o.hh+o.rad;const d=Math.hypot(Math.max(qx,0),Math.max(qy,0))+Math.min(Math.max(qx,qy),0)-o.rad+nz;const v=d<-6?1:d>6?0:(6-d)/12;if(v>m){m=v;if(m>=1)break}}
+  mask[j*GW+i]=m}}
+ const met=f=>elev==='size'?Math.log2(2+f.loc):Math.log2(1+f.inn.size*3);let mxm=0;for(const f of P.files)mxm=Math.max(mxm,met(f));
+ for(const f of P.files){const a=.2+.8*(mxm?met(f)/mxm:0),s=Math.max(cs*2.2,f.r*1.05),R=s*3,k2=1/(2*s*s);
+  const i0=Math.max(0,Math.floor((f.x-R)/cs)),i1=Math.min(GW-1,Math.ceil((f.x+R)/cs)),j0=Math.max(0,Math.floor((f.y-R)/ch)),j1=Math.min(GH-1,Math.ceil((f.y+R)/ch));
+  for(let j=j0;j<=j1;j++){const dy=(j+.5)*ch-f.y;for(let i=i0;i<=i1;i++){const dx=(i+.5)*cs-f.x;bump[j*GW+i]+=a*Math.exp(-(dx*dx+dy*dy)*k2)}}}
+ let bm=0;for(let k=0;k<N;k++)if(bump[k]>bm)bm=bump[k];bm=bm*.85||1;
+ hgt=new Float32Array(N);
+ for(let j=0;j<GH;j++)for(let i=0;i<GW;i++){const k=j*GW+i;hgt[k]=mask[k]*(.1+.86*Math.min(1,bump[k]/bm)+(vnoise(i/12,j/12)-.5)*.05)}
+ iso1=[];let n=0;for(let lv=.16;lv<1;lv+=.08){iso1.push({p:iso(hgt,lv),idx:n%4===3});n++}
+ coast=iso(mask,.5);
+ P.borders=[];P.tdepth=null;
+ if(terrOn&&P.repos.length>1){
+  const own=new Int16Array(N).fill(-1);
+  for(const f of P.files){const q=f.cell,i0=Math.max(0,Math.floor(q.x/cs)),i1=Math.min(GW-1,Math.floor((q.x+q.w)/cs)),j0=Math.max(0,Math.floor(q.y/ch)),j1=Math.min(GH-1,Math.floor((q.y+q.h)/ch));for(let j=j0;j<=j1;j++)for(let i=i0;i<=i1;i++)own[j*GW+i]=f.repo.id}
+  const td=new Uint8Array(N);
+  for(const r of P.repos){if(!r.depth||!r.bb)continue;let ind=new Float32Array(N);for(let k=0;k<N;k++){const o=own[k];if(o>=0&&P.repos[o].anc.has(r.id))ind[k]=1}ind=boxBlur(boxBlur(ind,3),3);for(let k=0;k<N;k++)if(ind[k]>=.5&&r.depth>td[k])td[k]=r.depth;P.borders.push({r,p:iso(ind,.5)})}
+  P.tdepth=td;
+ }
+}
+function iso(arr,lv){
+ const p=new Path2D(),cs=W/GW,ch=H/GH;
+ for(let y=0;y<GH-1;y++)for(let x=0;x<GW-1;x++){
+  const i=y*GW+x,a=arr[i],b=arr[i+1],c=arr[i+GW+1],d=arr[i+GW];
+  const k=(a>lv?8:0)|(b>lv?4:0)|(c>lv?2:0)|(d>lv?1:0);if(k===0||k===15)continue;
+  const X=v=>(v+.5)*cs,Y=v=>(v+.5)*ch;
+  const T=()=>[X(x+(lv-a)/(b-a)),Y(y)],Rr=()=>[X(x+1),Y(y+(lv-b)/(c-b))],B=()=>[X(x+(lv-d)/(c-d)),Y(y+1)],L=()=>[X(x),Y(y+(lv-a)/(d-a))];
+  const seg=(u,v)=>{p.moveTo(u[0],u[1]);p.lineTo(v[0],v[1])};
+  switch(k){case 1:case 14:seg(L(),B());break;case 2:case 13:seg(B(),Rr());break;case 3:case 12:seg(L(),Rr());break;case 4:case 11:seg(T(),Rr());break;case 6:case 9:seg(T(),B());break;case 7:case 8:seg(L(),T());break;case 5:seg(L(),T());seg(B(),Rr());break;case 10:seg(T(),Rr());seg(L(),B());break}
+ }
+ return p;
+}
+function paintTerrain(){
+ terr=terr||document.createElement('canvas');terr.width=GW;terr.height=GH;const g=terr.getContext('2d'),im=g.createImageData(GW,GH),d=im.data,R=C.ramp;
+ const Lx=-.55,Ly=-.6,Lz=.58,ln=Math.hypot(Lx,Ly,Lz),Z=16;
+ for(let j=0;j<GH;j++)for(let i=0;i<GW;i++){
+  const k=j*GW+i,m=mask[k];let col;
+  const wt=Math.min(1,m*2),wc=mix(C.sea,C.shallow,wt*wt);
+  if(m<.42)col=wc;
+  else{const h=hgt[k],t=Math.min(.999,Math.max(0,(h-.1)/.86))*(R.length-1),a=Math.floor(t);col=mix(R[a],R[a+1],t-a);if(P&&P.tdepth&&P.tdepth[k])col=mix(col,C.terr,Math.min(.5,.17*P.tdepth[k]+.05));
+   const hx=(hgt[k+(i<GW-1?1:0)]-hgt[k-(i>0?1:0)])*Z,hy=(hgt[k+(j<GH-1?GW:0)]-hgt[k-(j>0?GW:0)])*Z,nl=Math.hypot(hx,hy,1);
+   const lam=(-hx*Lx-hy*Ly+Lz)/(nl*ln),s=Math.min(1.22,Math.max(.62,1+1.1*(lam-Lz/ln)));col=[col[0]*s,col[1]*s,col[2]*s];if(m<.58)col=mix(wc,col,(m-.42)/.16)}
+  d[k*4]=col[0];d[k*4+1]=col[1];d[k*4+2]=col[2];d[k*4+3]=255}
+ g.putImageData(im,0,0);
+}
+function buildFog(){
+ if(!P)return;P.rev=new Set();
+ const vs=[...visited].map(p=>P.byPath.get(p)).filter(Boolean),rad=f=>Math.max(45,f.r*1.8);
+ for(const f of P.files)for(const v of vs){const R=rad(v)*.8;if((f.x-v.x)**2+(f.y-v.y)**2<R*R){P.rev.add(f.id);break}}
+ fogCv=fogCv||document.createElement('canvas');fogCv.width=500;fogCv.height=350;const g=fogCv.getContext('2d'),s=500/W;
+ g.globalCompositeOperation='source-over';g.clearRect(0,0,500,350);g.fillStyle=C.fog;g.fillRect(0,0,500,350);g.globalCompositeOperation='destination-out';
+ for(const v of vs){const R=rad(v)*s,gr=g.createRadialGradient(v.x*s,v.y*s,R*.35,v.x*s,v.y*s,R);gr.addColorStop(0,'rgba(0,0,0,1)');gr.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=gr;g.beginPath();g.arc(v.x*s,v.y*s,R,0,7);g.fill()}
+ g.globalCompositeOperation='source-over';
+}
+
+/* ---------- drawing ---------- */
+let need=false;const req=()=>{if(!need){need=true;requestAnimationFrame(draw)}};
+const sc=()=>fit*cam.k;
+const toWorld=(x,y)=>({x:cam.x+(x-vw/2)/sc(),y:cam.y+(y-vh/2)/sc()});
+const clampK=k=>Math.max(KMIN,Math.min(KMAX,k));
+const clampCam=()=>{cam.x=Math.max(0,Math.min(W,cam.x));cam.y=Math.max(0,Math.min(H,cam.y))};
+const boxes=[];
+const fits=(x,y,w,h)=>{for(const b of boxes)if(x<b[0]+b[2]&&x+w>b[0]&&y<b[1]+b[3]&&y+h>b[1])return false;boxes.push([x,y,w,h]);return true};
+function label(t,x,y,font,col,center){
+ cx.font=font;const w=cx.measureText(t).width,fs=parseFloat(/(\d+)px/.exec(font)[1]),lx=center?x-w/2:x;
+ if(lx+w<0||lx>vw||y<0||y-fs>vh)return false;if(!fits(lx-2,y-fs*.85,w+4,fs*1.1))return false;
+ cx.lineJoin='round';cx.lineWidth=3.5;cx.strokeStyle=C.halo;cx.strokeText(t,lx,y);cx.fillStyle=col;cx.fillText(t,lx,y);return true;
+}
+function road(a,b,col,s){
+ const c=ctrl(a,b);cx.strokeStyle=col;cx.lineWidth=2.4/s;cx.beginPath();cx.moveTo(a.x,a.y);cx.quadraticCurveTo(c[0],c[1],b.x,b.y);cx.stroke();
+ const t=.8,u=1-t,px=u*u*a.x+2*u*t*c[0]+t*t*b.x,py=u*u*a.y+2*u*t*c[1]+t*t*b.y,tx=2*u*(c[0]-a.x)+2*t*(b.x-c[0]),ty=2*u*(c[1]-a.y)+2*t*(b.y-c[1]),l=Math.hypot(tx,ty)||1,ux=tx/l,uy=ty/l,z=7/s;
+ cx.fillStyle=col;cx.beginPath();cx.moveTo(px+ux*z,py+uy*z);cx.lineTo(px-ux*z-uy*z*.6,py-uy*z+ux*z*.6);cx.lineTo(px-ux*z+uy*z*.6,py-uy*z-ux*z*.6);cx.closePath();cx.fill();
+}
+function tower(x,y){cx.beginPath();cx.moveTo(x,y-14);cx.lineTo(x+5.5,y+3);cx.lineTo(x-5.5,y+3);cx.closePath();cx.lineJoin='round';cx.lineWidth=3;cx.strokeStyle=C.halo;cx.stroke();cx.fillStyle=C.ink;cx.fill();boxes.push([x-7,y-16,14,20])}
+function star(x,y){cx.beginPath();for(let i=0;i<10;i++){const r=i%2?3.6:8.5,a=-Math.PI/2+i*Math.PI/5;cx.lineTo(x+r*Math.cos(a),y+r*Math.sin(a))}cx.closePath();cx.lineJoin='round';cx.lineWidth=3;cx.strokeStyle=C.halo;cx.stroke();cx.fillStyle=C.mag;cx.fill();boxes.push([x-9,y-9,18,18])}
+function dot(x,y,r,col){cx.beginPath();cx.arc(x,y,r,0,7);cx.lineWidth=3;cx.strokeStyle=C.halo;cx.stroke();cx.fillStyle=col;cx.fill()}
+function draw(){
+ need=false;if(!P)return;const s=sc(),ox=vw/2-cam.x*s,oy=vh/2-cam.y*s,kz=cam.k;
+ cx.setTransform(dpr,0,0,dpr,0,0);cx.fillStyle=rgb(C.sea);cx.fillRect(0,0,vw,vh);
+ cx.setTransform(dpr*s,0,0,dpr*s,dpr*ox,dpr*oy);cx.imageSmoothingEnabled=true;cx.drawImage(terr,0,0,W,H);
+ cx.lineJoin='round';cx.lineCap='round';
+ for(const c of iso1){cx.strokeStyle=C.contour+(c.idx?.75:.42)+')';cx.lineWidth=(c.idx?1.1:.6)/s;cx.stroke(c.p)}
+ cx.strokeStyle=C.soft+'.5)';cx.lineWidth=1.2/s;cx.stroke(coast);
+ for(const b of P.borders){const d=b.r.depth,hi=P.hiRepo===b.r.id;cx.setLineDash(d===1?[10/s,5/s]:d===2?[5/s,4/s]:[1.5/s,4/s]);cx.strokeStyle=C.halo;cx.lineWidth=(hi?7:4.5)/s;cx.stroke(b.p);cx.strokeStyle=C.terrLine;cx.lineWidth=(hi?3.5:1.8)/s;cx.stroke(b.p)}cx.setLineDash([]);
+ const runOn=mode==='run'&&RT;if(runOn)cx.globalAlpha=.3;
+ if(kz<1.8){for(const h of P.highways){const w=(.6+Math.log2(1+h.n)*.85)*Math.max(.45,Math.min(1,vw/900));cx.strokeStyle=C.halo;cx.lineWidth=(w+2)/s;cx.stroke(h.p);cx.strokeStyle=C.road+'.42)';cx.lineWidth=w/s;if(h.cross)cx.setLineDash([Math.max(6,w*1.6)/s,Math.max(4,w)/s]);cx.stroke(h.p);cx.setLineDash([])}}
+ else{const dn=Math.min(1,Math.sqrt(3000/Math.max(1,P.edges.length)));cx.strokeStyle=C.road+((kz<3?.16:.24)*Math.max(.25,dn)).toFixed(3)+')';cx.lineWidth=.9/s;cx.stroke(streets)}
+ cx.globalAlpha=1;if(runOn)drawRunWorld(s);
+ if(fogOn&&fogCv)cx.drawImage(fogCv,0,0,W,H);
+ if(mode==='walk'&&tour.length>1){cx.setLineDash([6/s,5/s]);cx.strokeStyle=C.brown;cx.lineWidth=2.2/s;cx.beginPath();tour.forEach((f,i)=>i?cx.lineTo(f.x,f.y):cx.moveTo(f.x,f.y));cx.stroke();cx.setLineDash([])}
+ if(trail.length>1){cx.setLineDash([.5/s,4.5/s]);cx.strokeStyle=C.soft+'.8)';cx.lineWidth=2.4/s;cx.beginPath();let st=false;for(const p of trail){const f=P.byPath.get(p);if(!f)continue;if(st)cx.lineTo(f.x,f.y);else cx.moveTo(f.x,f.y);st=true}cx.stroke();cx.setLineDash([])}
+ if(sel&&mode!=='route'&&mode!=='run'){for(const i of sel.inn)road(P.files[i],sel,C.teal,s);for(const o of sel.out)road(sel,P.files[o],C.mag,s)}
+ if(route){const p=route.path;cx.beginPath();cx.moveTo(p[0].x,p[0].y);for(let i=1;i<p.length;i++){const c=ctrl(p[i-1],p[i]);cx.quadraticCurveTo(c[0],c[1],p[i].x,p[i].y)}cx.strokeStyle=C.halo;cx.lineWidth=8/s;cx.stroke();cx.strokeStyle=C.mag;cx.lineWidth=4/s;cx.stroke()}
+ cx.setTransform(dpr,0,0,dpr,0,0);boxes.length=0;
+ const T=f=>[f.x*s+ox,f.y*s+oy],vis=f=>!fogOn||P.rev.has(f.id),on=(x,y)=>x>-20&&y>-20&&x<vw+20&&y<vh+20;
+ cx.fillStyle=C.soft+'.7)';
+ for(const f of P.files){const pr=f.r*s;if(pr<3.5||!vis(f))continue;const[x,y]=T(f);if(!on(x,y))continue;cx.beginPath();cx.arc(x,y,Math.min(4.5,1.4+pr*.05),0,7);cx.fill()}
+ for(const f of P.hubs){const[x,y]=T(f);if(on(x,y))tower(x,y)}
+ for(const f of P.entries){const[x,y]=T(f);if(on(x,y))star(x,y)}
+ if(route){for(const f of[route.path[0],route.path[route.path.length-1]]){const[x,y]=T(f);dot(x,y,6,C.mag)}}
+ if(mode==='walk'&&tourI>=0){const[x,y]=T(tour[tourI]);cx.beginPath();cx.arc(x,y,13,0,7);cx.lineWidth=5;cx.strokeStyle=C.halo;cx.stroke();cx.lineWidth=2.5;cx.strokeStyle=C.brown;cx.stroke()}
+ if(runOn)drawRunScreen(T,s);
+ if(sel){const[x,y]=T(sel);cx.beginPath();cx.arc(x,y,10,0,7);cx.lineWidth=5;cx.strokeStyle=C.halo;cx.stroke();cx.lineWidth=2.5;cx.strokeStyle=C.mag;cx.stroke();boxes.push([x-11,y-11,22,22]);label(sel.name,x+14,y+5,`800 14px ${FF}`,C.ink)}
+ if(route)for(const f of route.path){const[x,y]=T(f);label(f.name,x+9,y+4,`600 13px ${FF}`,C.ink)}
+ if(mode==='walk')tour.forEach((f,i)=>{const[x,y]=T(f);label(`${i+1}. ${f.name}`,x+10,y+4,`600 13px ${FF}`,C.ink)});
+ for(const b of P.borders){const r=b.r,bb=r.lb,sw=bb.w*s;if(sw<56)continue;const x=(bb.x+bb.w/2)*s+ox,y=bb.y*s+oy+(r.depth*4)+16;if(label(r.title,x,y,`800 ${sw>220?16:13}px ${FF}`,C.terrInk,true)&&r.sha)label('@'+r.sha,x,y+15,`400 12px ${FF}`,C.terrInk,true)}
+ for(const d of P.dirs){if(d.depth!==1)continue;const sw=d.rect.w*s;if(sw<70||sw>vw*3)continue;label(short(d.name),(d.rect.x+d.rect.w/2)*s+ox,(d.rect.y+d.rect.h/2)*s+oy,`italic 600 19px ${FF}`,C.label,true)}
+ for(const f of[...P.entries,...P.hubs]){const[x,y]=T(f);label(f.name,x+10,y+4,`600 13px ${FF}`,C.ink)}
+ for(const d of P.dirs){if(d.depth===1)continue;const sw=d.rect.w*s;if(sw<70||(d.depth===1?sw>vw*3:sw>vw*1.1))continue;const fs=d.depth===1?19:d.depth===2?15:13;label(short(d.name),(d.rect.x+d.rect.w/2)*s+ox,(d.rect.y+d.rect.h/2)*s+oy,`italic 600 ${fs}px ${FF}`,C.label,true)}
+ let n=0;for(const f of P.byLoc){if(n>300)break;if(f.r*s<16||!vis(f))continue;const[x,y]=T(f);if(!on(x,y))continue;n++;label(f.name,x+7,y+4,`400 12px ${FF}`,C.ink)}
+ $('#lod').textContent=kz<1.8?'Survey view: regions and highways':kz<4?'District view: every import road':'Street view: every file named';
+ minimap();
+}
+function minimap(){
+ const w=150,h=105;mx.setTransform(dpr,0,0,dpr,0,0);mx.clearRect(0,0,w,h);mx.imageSmoothingEnabled=true;mx.drawImage(terr,0,0,w,h);if(fogOn&&fogCv)mx.drawImage(fogCv,0,0,w,h);
+ const s=sc(),k=w/W;mx.strokeStyle=C.mag;mx.lineWidth=1.5;mx.strokeRect((cam.x-vw/2/s)*k,(cam.y-vh/2/s)*k,vw/s*k,vh/s*k);
+}
+
+/* ---------- camera ---------- */
+let anim=0;
+function flyTo(x,y,k){
+ cancelAnimationFrame(anim);k=clampK(k);if(reduce){cam={x,y,k};clampCam();req();return}
+ const a={...cam},t0=performance.now(),D=700,lk=Math.log(a.k),lk2=Math.log(k);
+ const step=t=>{let u=Math.min(1,(t-t0)/D);u=u<.5?2*u*u:1-((-2*u+2)**2)/2;cam.x=a.x+(x-a.x)*u;cam.y=a.y+(y-a.y)*u;cam.k=Math.exp(lk+(lk2-lk)*u);draw();if(u<1)anim=requestAnimationFrame(step)};
+ anim=requestAnimationFrame(step);
+}
+function flyBounds(list){let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;for(const f of list){x0=Math.min(x0,f.x);y0=Math.min(y0,f.y);x1=Math.max(x1,f.x);y1=Math.max(y1,f.y)}const bw=x1-x0+120,bh=y1-y0+120;flyTo((x0+x1)/2,(y0+y1)/2,Math.min(W/bw,H/bh,6))}
+function zoomAt(x,y,f){cancelAnimationFrame(anim);const w=toWorld(x,y);cam.k=clampK(cam.k*f);const s=sc();cam.x=w.x-(x-vw/2)/s;cam.y=w.y-(y-vh/2)/s;clampCam();req()}
+function resize(){const r=stage.getBoundingClientRect();vw=Math.max(1,r.width);vh=Math.max(1,r.height);dpr=Math.min(2,devicePixelRatio||1);cv.width=Math.round(vw*dpr);cv.height=Math.round(vh*dpr);fit=Math.min(vw/W,vh/H);mm.width=150*dpr;mm.height=105*dpr;req()}
+
+/* ---------- interaction ---------- */
+const pts=new Map();let moved=0,pinch=null,wasPinch=false;
+const pos=e=>{const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}};
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);pts.set(e.pointerId,pos(e));if(pts.size===1){moved=0;wasPinch=false}if(pts.size===2){const[a,b]=[...pts.values()];pinch={d:Math.hypot(a.x-b.x,a.y-b.y)||1,k:cam.k,w:toWorld((a.x+b.x)/2,(a.y+b.y)/2)};wasPinch=true}cancelAnimationFrame(anim)});
+cv.addEventListener('pointermove',e=>{const p=pts.get(e.pointerId);if(!p)return;const n=pos(e);
+ if(pts.size===1){const s=sc();cam.x-=(n.x-p.x)/s;cam.y-=(n.y-p.y)/s;moved+=Math.abs(n.x-p.x)+Math.abs(n.y-p.y)}
+ pts.set(e.pointerId,n);
+ if(pts.size===2&&pinch){const[a,b]=[...pts.values()];cam.k=clampK(pinch.k*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d);const s=sc();cam.x=pinch.w.x-((a.x+b.x)/2-vw/2)/s;cam.y=pinch.w.y-((a.y+b.y)/2-vh/2)/s}
+ clampCam();req()});
+const up=e=>{const p=pts.get(e.pointerId);if(!p)return;pts.delete(e.pointerId);if(pts.size<2)pinch=null;if(!pts.size&&!wasPinch&&moved<8&&e.type==='pointerup')tap(p.x,p.y)};
+cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+cv.addEventListener('wheel',e=>{e.preventDefault();const p=pos(e);zoomAt(p.x,p.y,Math.exp(-e.deltaY*(e.ctrlKey?.01:.0018)))},{passive:false});
+cv.addEventListener('dblclick',e=>{const p=pos(e);zoomAt(p.x,p.y,2)});
+cv.addEventListener('keydown',e=>{const s=sc(),d=80/s;const m={ArrowLeft:[-d,0],ArrowRight:[d,0],ArrowUp:[0,-d],ArrowDown:[0,d]}[e.key];if(m){cam.x+=m[0];cam.y+=m[1];clampCam();req();e.preventDefault()}else if(e.key==='+'||e.key==='=')zoomAt(vw/2,vh/2,1.4);else if(e.key==='-')zoomAt(vw/2,vh/2,1/1.4)});
+mm.addEventListener('click',e=>{const r=mm.getBoundingClientRect();flyTo((e.clientX-r.left)/r.width*W,(e.clientY-r.top)/r.height*H,cam.k)});
+$('#zin').onclick=()=>flyTo(cam.x,cam.y,cam.k*1.8);$('#zout').onclick=()=>flyTo(cam.x,cam.y,cam.k/1.8);$('#zhome').onclick=()=>flyTo(W/2,H/2,1);
+function tap(sx,sy){
+ if(!P)return;const s=sc(),ox=vw/2-cam.x*s,oy=vh/2-cam.y*s,w=toWorld(sx,sy),inR=(p,r)=>p.x>=r.x&&p.y>=r.y&&p.x<=r.x+r.w&&p.y<=r.y+r.h;
+ const near=(list,R)=>{let b=null,bd=R*R;for(const f of list){const dx=f.x*s+ox-sx,dy=f.y*s+oy-sy,d=dx*dx+dy*dy;if(d<bd){bd=d;b=f}}return b};
+ if(cam.k<1.8){const lm=near([...P.entries,...P.hubs],20);if(lm){onPick(lm);return}const d=P.dirs.find(d=>d.depth===1&&inR(w,d.rect));if(d){flyTo(d.rect.x+d.rect.w/2,d.rect.y+d.rect.h/2,Math.min(W/d.rect.w,H/d.rect.h)*.9);return}}
+ const f=near(P.files,26)||P.files.find(f=>inR(w,f.cell));if(f)onPick(f);
+}
+function onPick(f){if(mode==='route'){if(rPick==='from'){rFrom=f;rPick='to'}else{rTo=f;rPick='from'}select(f);calcRoute()}else select(f)}
+function goTo(f){onPick(f);flyTo(f.x,f.y,Math.max(cam.k,Math.min(10,40/(f.r*fit))))}
+function select(f){sel=f;if(trail[trail.length-1]!==f.path)trail.push(f.path);if(trail.length>80)trail.shift();visited.add(f.path);store.set('codemap:'+P.name,{v:[...visited],t:trail});buildFog();renderSel();req();if(RT)drawTL()}
+
+/* ---------- route & walk ---------- */
+const WIND=['east','south-east','south','south-west','west','north-west','north','north-east'];
+const bearing=(a,b)=>WIND[((Math.round(Math.atan2(b.y-a.y,b.x-a.x)/(Math.PI/4))%8)+8)%8];
+const short=n=>n.split('/').slice(-2).join('/');
+const regName=f=>f.reg?short(f.reg.name):'the root';
+function findRoute(a,b){
+ const bfs=directed=>{const prev=new Map([[a.id,-1]]),q=[a.id];for(let h=0;h<q.length;h++){const u=q[h];if(u===b.id)break;const f=P.files[u];for(const v of directed?f.out:[...f.out,...f.inn])if(!prev.has(v)){prev.set(v,u);q.push(v)}}if(!prev.has(b.id))return null;const path=[];for(let u=b.id;u!==-1;u=prev.get(u))path.push(P.files[u]);return path.reverse()};
+ let p=bfs(true),how='Follows the imports, the way a call travels.';if(!p){p=bfs(false);how='No one-way import chain exists, so this mixes roads in and out.'}
+ return p?{path:p,how}:null;
+}
+function calcRoute(){
+ route=null;rNote='';
+ if(rFrom&&rTo){if(rFrom===rTo)rNote='Start and end are the same file.';else{route=findRoute(rFrom,rTo);if(!route)rNote='No road connects these two files: they sit in separate parts of the system.';else flyBounds(route.path)}}
+ renderRoute();req();
+}
+function buildTour(){
+ const L=[...P.entries,...P.hubs.filter(h=>!P.entries.includes(h))];if(!L.length)return[];
+ const rest=L.slice(1),out=[L[0]];let cur=L[0];
+ while(rest.length){let bi=0,bd=1e18;rest.forEach((r,i)=>{const d=(r.x-cur.x)**2+(r.y-cur.y)**2;if(d<bd){bd=d;bi=i}});cur=rest.splice(bi,1)[0];out.push(cur)}
+ return out;
+}
+function stopText(i){
+ const f=tour[i],p=tour[i-1],b=[];
+ b.push(p?`From ${esc(p.name)}, walk ${bearing(p,f)}${p.reg!==f.reg?` across the water to ${esc(regName(f))}`:''}${p.repo!==f.repo?`, crossing the border into the ${esc(f.repo.title)} ${f.repo.depth?'submodule':'repository'}`:''}.`:'Start here, where the program begins.');
+ if(p&&P.entries.includes(f))b.push('Another starting point.');
+ if(f.inn.size){const rs=new Set([...f.inn].map(j=>P.files[j].reg));b.push(f.inn.size>1?`${f.inn.size} files from ${rs.size} region${rs.size>1?'s':''} depend on it.`:'One file depends on it.')}
+ if(f.out.size)b.push(`It reaches out to ${f.out.size} other file${f.out.size>1?'s':''}.`);
+ b.push(`${f.loc.toLocaleString()} lines, in ${esc(regName(f))}.`);
+ return b.join(' ');
+}
+function goStop(i){tourI=i;const f=tour[i];select(f);flyTo(f.x,f.y,Math.max(2.6,Math.min(8,30/(f.r*fit))));renderWalk()}
+
+/* ---------- panel ---------- */
+const lnk=f=>`<button class="lnk" data-id="${f.id}"><b>${esc(f.name)}</b><small>${esc(f.dir||'/')}</small></button>`;
+function list(t,ids,c){if(!ids.length)return`<h3>${t}<span>0</span></h3>`;ids.sort((a,b)=>P.files[a].path.localeCompare(P.files[b].path));return`<h3><i class="sw ${c}"></i>${t}<span>${ids.length}</span></h3><div class="lst">${ids.slice(0,80).map(i=>lnk(P.files[i])).join('')}${ids.length>80?`<p class="muted">and ${ids.length-80} more</p>`:''}</div>`}
+function renderHead(){
+ $('#pname').textContent=P.name;
+ const regions=P.dirs.filter(d=>d.depth===1).length;
+ $('#stats').textContent=`${P.files.length.toLocaleString()} files · ${P.lines.toLocaleString()} lines · ${P.edges.length.toLocaleString()} import roads · ${regions} region${regions===1?'':'s'}${P.repos.length>1?` · ${P.repos.length-1} submodules`:''}`;
+ $('#note').textContent=(P.note?P.note+' ':'')+(P.demo?'A sample project. Open a folder or a .zip of your own; files are read in this browser and never uploaded. ':'')+'Islands are top-level folders, hills are files, roads are imports.'+(P.cut?` Only the first ${MAXF.toLocaleString()} files are mapped; ${P.cut.toLocaleString()} were left out.`:'');
+}
+function renderRepos(){
+ const el=$('#repos');if(!P||P.repos.length<2){el.innerHTML='';return}
+ const subs=P.repos.length-1,deep=Math.max(...P.repos.map(r=>r.depth)),X=new Map();let tot=0;
+ for(const[a,b]of P.edges){const A=P.files[a].repo,B=P.files[b].repo;if(A===B)continue;tot++;const k=A.id+'>'+B.id;X.set(k,(X.get(k)||0)+1)}
+ const xs=[...X].sort((a,b)=>b[1]-a[1]).slice(0,8).map(([k,n])=>{const[a,b]=k.split('>').map(Number);return`<div class="xr"><b>${esc(P.repos[a].title)} → ${esc(P.repos[b].title)}</b><span>${n.toLocaleString()}</span></div>`}).join('');
+ el.innerHTML=`<h2>Repositories</h2><p class="muted">${esc(P.repos[0].title)} pulls in ${subs} git submodule${subs>1?'s':''}${deep>1?`, nested up to ${deep} levels deep`:''}. Each one is a territory with a purple border; the deeper the nesting, the deeper the tint. Tap one to fly there.</p><div class="lst" style="max-height:320px">${P.tree.map(r=>`<button class="repo${P.hiRepo===r.id?' on':''}" data-repo="${r.id}" style="padding-left:${8+r.depth*18}px"><i class="rd" style="opacity:${r.depth?Math.min(1,.3+.25*r.depth):.15}"></i><b>${esc(r.title)}</b><small>${r.sha?'@'+esc(r.sha)+' · ':''}${r.files?r.files.toLocaleString()+' files':'not checked out'}</small></button>`).join('')}</div>${tot?`<h3>Imports crossing a repo border<span>${tot.toLocaleString()}</span></h3>${xs}`:''}`;
+}
+function renderSel(){
+ const el=$('#sel');if(!P)return;
+ if(!sel){el.innerHTML='<p class="muted">Tap a hill to stand on it. Towers mark the files most others depend on; stars mark where the program starts. Zoom in to see every street.</p>';return}
+ const f=sel,tags=[];if(P.entries.includes(f))tags.push('starting point');if(P.hubs.includes(f))tags.push('landmark');
+ el.innerHTML=`<div class="card"><div class="ttl">${esc(f.name)}</div><div class="path">${esc(f.path)}</div><div class="meta">${esc(f.lang)} · ${f.loc.toLocaleString()} lines · in ${esc(regName(f))}${tags.length?' · '+tags.join(', '):''}</div>${P.repos.length>1?`<div class="meta">Repository: <b>${esc(f.repo.title)}</b>${f.repo.sha?' @'+esc(f.repo.sha):''}${f.repo.depth?` · submodule of ${esc(f.repo.parent.title)}${f.repo.depth>1?`, nested ${f.repo.depth} levels deep`:''}`:' · the main repository'}</div>`:''}
+ <div class="row"><button class="btn sm" data-act="from">Route from here</button><button class="btn sm" data-act="to">Route to here</button></div>${EMBED?'<div class="row"><button class="btn sm" data-act="cx-explorer">Show in Explorer</button><button class="btn sm" data-act="cx-log">History</button><button class="btn sm" data-act="cx-blame">Blame</button></div>':''}
+ ${RT?(()=>{const ins=RT.roadList.filter(r=>r.b===f).length,outs=RT.roadList.filter(r=>r.a===f).length;return RT.incl[f.id]?`<div class="meta" style="color:var(--run);font-weight:600">At runtime: ${pctOf(RT.incl[f.id])} of time, ${pctOf(RT.self[f.id])} in the file itself · called from ${ins} file${ins===1?'':'s'}, calls ${outs}</div>`:'<div class="meta" style="color:var(--soft)">Never ran in the loaded trace.</div>'})():''}
+ ${list('Roads out: it imports',[...f.out],'mag')}${list('Roads in: imported by',[...f.inn],'teal')}${f.ext.size?`<h3>Leaves the map for<span>${f.ext.size}</span></h3><p class="ext">${[...f.ext].slice(0,30).map(esc).join(', ')}</p>`:''}</div>`;
+}
+function renderRoute(){
+ const el=$('#routeBox');if(!P)return;
+ let h=`<p class="muted">Pick two files and get turn-by-turn directions along the import roads. Tap a box, then tap the map or a search result.</p>
+ <div class="rp"><button class="field${rPick==='from'?' on':''}" data-act="pickfrom"><small>From</small>${rFrom?esc(rFrom.name):'Choose a start'}</button><button class="field${rPick==='to'?' on':''}" data-act="pickto"><small>To</small>${rTo?esc(rTo.name):'Choose a destination'}</button></div>
+ <div class="row"><button class="btn sm" data-act="swap">Swap</button><button class="btn sm" data-act="clear">Clear</button></div>`;
+ if(route){const p=route.path;h+=`<ol class="steps">${p.map((f,i)=>{if(!i)return`<li>Start at ${lnk(f)}</li>`;const a=p[i-1],back=!a.out.has(f.id);return`<li>Head ${bearing(a,f)}${a.reg!==f.reg?` across the water to <i>${esc(regName(f))}</i>`:''}${a.repo!==f.repo?`, crossing the border into <b>${esc(f.repo.title)}</b>,`:''} to ${lnk(f)}${back?' <span class="muted">(it imports the previous stop)</span>':''}</li>`}).join('')}</ol><p class="muted">${p.length-1} road${p.length>2?'s':''}. ${route.how}</p>`}
+ else if(rNote)h+=`<p class="muted">${rNote}</p>`;
+ el.innerHTML=h;
+}
+function renderWalk(){
+ const el=$('#walkBox');if(!P)return;
+ if(!tour.length){el.innerHTML='<p class="muted">This project has no clear landmarks yet: no file is imported by two or more others.</p>';return}
+ if(tourI<0){el.innerHTML=`<p class="muted">A memory-palace walk. It visits the landmarks in a fixed order, starting where the program begins and stepping to the nearest next one, so the architecture becomes a route you can replay in your head.</p><button class="btn pri" data-act="tourstart">Begin the walk: ${tour.length} stops</button><ol class="stops">${tour.map(f=>`<li>${esc(f.name)}</li>`).join('')}</ol>`;return}
+ const f=tour[tourI],last=tourI===tour.length-1;
+ el.innerHTML=`<div class="card"><div class="meta">Stop ${tourI+1} of ${tour.length}</div><div class="ttl">${esc(f.name)}</div><div class="path">${esc(f.path)}</div><p>${stopText(tourI)}</p><p class="muted">Before moving on, picture what this file does sitting right here on the map.</p><div class="row"><button class="btn sm" data-act="prev"${tourI===0?' disabled':''}>Back</button><button class="btn sm pri" data-act="next">${last?'Finish the walk':'Next stop'}</button></div></div><ol class="stops">${tour.map((g,i)=>`<li${i===tourI?' class="now"':''}>${esc(g.name)}</li>`).join('')}</ol>`;
+}
+function renderAll(){renderHead();renderRepos();renderRun();renderSel();renderRoute();if(mode==='walk'&&!tour.length)tour=buildTour();renderWalk()}
+function setMode(m){
+ mode=m;document.querySelectorAll('.tabs button').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.m===m)));
+ for(const k of['explore','route','walk','run'])$('#s-'+k).hidden=k!==m;
+ $('#tl').hidden=!(m==='run'&&RT);if(m==='run'){renderRun();rtStart();requestAnimationFrame(drawTL)}else{rtPlay=false}
+ if(m==='walk'&&!tour.length)tour=buildTour();if(m!=='walk')tourI=-1;
+ renderSel();renderRoute();renderWalk();req();
+}
+document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>setMode(b.dataset.m));
+document.querySelector('.panel').addEventListener('click',e=>{
+ const rb=e.target.closest('[data-repo]');if(rb&&P){const r=P.repos[+rb.dataset.repo];P.hiRepo=P.hiRepo===r.id?-1:r.id;renderRepos();if(!r.depth||!r.bb)flyTo(W/2,H/2,1);else flyTo(r.bb.x+r.bb.w/2,r.bb.y+r.bb.h/2,Math.min(W/(r.bb.w+40),H/(r.bb.h+40),7));return}
+ const b=e.target.closest('[data-id],[data-act]');if(!b||!P)return;
+ if(b.dataset.id!=null){if(b.closest('#qres')){$('#q').value='';$('#qres').innerHTML=''}goTo(P.files[+b.dataset.id]);return}
+ const a=b.dataset.act;
+ if(a&&a.startsWith('cx-')){if(sel)toChrono({type:'file',action:a.slice(3),path:sel.path});return}
+ if(a==='from'){rFrom=sel;rPick='to';setMode('route');calcRoute()}
+ else if(a==='to'){rTo=sel;rPick='from';setMode('route');calcRoute()}
+ else if(a==='pickfrom'){rPick='from';renderRoute();toast('Now tap the start file on the map')}
+ else if(a==='pickto'){rPick='to';renderRoute();toast('Now tap the destination on the map')}
+ else if(a==='swap'){[rFrom,rTo]=[rTo,rFrom];calcRoute()}
+ else if(a==='clear'){rFrom=rTo=null;rPick='from';calcRoute()}
+ else if(a==='tourstart')goStop(0);
+ else if(a==='rtopen')$('#ftrace').click();
+ else if(a==='rtclear'){RT=null;rtT=-1;rtPlay=false;$('#tl').hidden=true;renderRun();req()}
+ else if(a==='rtdemo'){analyse(demoTrace());setMode('run');toast('Sample run loaded. Press play on the timeline.')}
+ else if(a==='prev'&&tourI>0)goStop(tourI-1);
+ else if(a==='next'){if(tourI<tour.length-1)goStop(tourI+1);else{tourI=-1;renderWalk();flyTo(W/2,H/2,1);toast('Walk complete. Try retelling the route from memory.')}}
+});
+$('#q').addEventListener('input',()=>{
+ const q=$('#q').value.trim().toLowerCase(),el=$('#qres');if(!q||!P){el.innerHTML='';return}
+ const r=P.files.map(f=>{const n=f.name.toLowerCase(),p=f.path.toLowerCase();return[n.startsWith(q)?0:n.includes(q)?1:p.includes(q)?2:9,f]}).filter(a=>a[0]<9).sort((a,b)=>a[0]-b[0]||a[1].path.length-b[1].path.length).slice(0,8);
+ el.innerHTML=r.length?r.map(a=>lnk(a[1])).join(''):'<p class="muted">No file by that name.</p>';
+});
+$('#q').addEventListener('keydown',e=>{if(e.key==='Enter'){const b=$('#qres .lnk');if(b)b.click()}});
+$('#fog').addEventListener('change',e=>{fogOn=e.target.checked;if(fogOn&&P&&!visited.size)P.entries.forEach(f=>visited.add(f.path));buildFog();req()});
+$('#terr').addEventListener('change',e=>{terrOn=e.target.checked;if(P){terrainBuild();paintTerrain();buildHighways();req()}});
+$('#elev').addEventListener('change',e=>{elev=e.target.value;if(P){terrainBuild();paintTerrain();req()}});
+
+/* ---------- runtime ---------- */
+let RT=null,rtT=-1,rtPlay=false,rtLast=0,rtDrawn=0,rtPanel=0,rtCv=null,rtRaf=0,rtHeat=null,rtKey='';
+const RUNC={light:{run:'214,96,10',wash:'rgba(240,241,236,.6)'},dark:{run:'255,150,60',wash:'rgba(8,18,24,.62)'}};
+const rc=()=>isDark()?RUNC.dark:RUNC.light;
+function symsOf(t,fam){
+ const o=new Set(),R=re=>{let m;while((m=re.exec(t))&&o.size<500)o.add(m[1])};
+ switch(fam){
+  case'c':R(/^[A-Za-z_][\w \t*]*?\b([A-Za-z_]\w*)[ \t]*\([^;{}()]*(?:\([^()]*\)[^;{}()]*)*\)[ \t\r\n]*\{/gm);break;
+  case'py':R(/^[ \t]*(?:async[ \t]+)?(?:def|class)[ \t]+(\w+)/gm);break;
+  case'js':R(/\b(?:function\*?[ \t]+|class[ \t]+)([A-Za-z_$][\w$]*)/g);R(/\b(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)[ \t]*=[ \t]*(?:async[ \t]*)?(?:\([^)]*\)|[\w$]+)[ \t]*=>/g);break;
+  case'go':R(/^func[ \t]+(?:\([^)]*\)[ \t]*)?(\w+)/gm);break;
+  case'rs':R(/\bfn[ \t]+(\w+)/g);break;
+  case'jvm':R(/\b(?:class|interface|enum|object)[ \t]+([A-Z]\w*)/g);break;
+ }
+ const KW=new Set(['if','for','while','switch','return','sizeof','main','init','get','set']);return[...o].filter(n=>!KW.has(n)&&n.length>2);
+}
+function bySuffix(p){
+ const sg=String(p).replace(/^file:\/\/\/?/,'').replace(/[?#].*$/,'').replace(/\\/g,'/').toLowerCase().replace(/\.[^./]+$/,'').split('/').filter(Boolean);
+ const lim=sg.length===1?1:sg.length-1;for(let i=0;i<lim;i++){const c=P.X.suf.get(sg.slice(i).join('/'));if(c&&(c.length===1||i===0))return c[0]}return null;
+}
+function bySymbol(name){
+ name=String(name);if(/^(System|Microsoft|mscorlib|netstandard|Mono|Newtonsoft)\b/.test(name.replace(/^[^!]*!/,'')))return null;
+ const py=/\(([^()]*\.(?:py|js|mjs|ts|tsx|rb|go|rs|c|cc|cpp|h|cs|java|kt))(?::\d+)?\)\s*$/.exec(name);if(py){const f=bySuffix(py[1]);if(f)return f}
+ const n=name.replace(/^[^!]*!/,'').replace(/\(.*$/,'').replace(/<[^<>]*>/g,'').replace(/\[[^\]]*\]/g,'').replace(/`\d+/g,'').trim();
+ const sg=n.split(/::|[.+\/\s]+/).filter(Boolean);if(!sg.length)return null;
+ const order=sg.length===1?[0]:[...Array(sg.length-1).keys()].reverse().concat(sg.length-1);
+ for(const i of order){const id=P.syms.get(sg[i]);if(id!==undefined)return P.files[id]}return null;
+}
+const fileOfFrame=fr=>{let f=fr.file?bySuffix(fr.file):null;if(!f&&fr.name)f=bySymbol(fr.name);return f?f.id:-1};
+function fromSpeedscope(j){
+ const fr=j.shared.frames.map(f=>({name:f.name||'',file:f.file||''})),S=[],threads=[];
+ j.profiles.forEach((p,th)=>{threads.push(p.name||'thread '+(th+1));
+  if(p.type==='sampled'){let t=p.startValue||0;p.samples.forEach((st,i)=>{const w=p.weights?p.weights[i]:1;S.push({t,w,st,th});t+=w})}
+  else if(p.type==='evented'){const stack=[];let prev=null;for(const e of p.events){if(prev!==null&&e.at>prev&&stack.length)S.push({t:prev,w:e.at-prev,st:stack.slice(),th});prev=e.at;if(e.type==='O')stack.push(e.frame);else{const i=stack.lastIndexOf(e.frame);if(i>=0)stack.length=i}}}});
+ return{fr,S,threads,unit:(j.profiles[0]&&j.profiles[0].unit)||'',name:j.name||(j.profiles[0]&&j.profiles[0].name)||'Trace',format:'speedscope'};
+}
+function fromCpuProfile(j){
+ const id2=new Map(),par=new Map(),fr=[],fi=new Map(),memo=new Map();j.nodes.forEach(n=>id2.set(n.id,n));for(const n of j.nodes)for(const c of(n.children||[]))par.set(c,n.id);
+ const st=id=>{if(memo.has(id))return memo.get(id);const chain=[];for(let x=id;x!==undefined;x=par.get(x))chain.push(x);chain.reverse();const s=[];for(const x of chain){const n=id2.get(x),cf=n.callFrame||n;if(/^\((root|program|idle|garbage collector)\)$/.test(cf.functionName||''))continue;let i=fi.get(x);if(i===undefined){i=fr.length;fr.push({name:cf.functionName||'(anonymous)',file:cf.url||''});fi.set(x,i)}s.push(i)}memo.set(id,s);return s};
+ const S=[],td=j.timeDeltas||[];let t=0;j.samples.forEach((id,i)=>{t+=(td[i]||0)/1000;S.push({t,w:(td[i+1]!==undefined?td[i+1]:td[i]||1000)/1000,st:st(id),th:0})});
+ return{fr,S,threads:['main'],unit:'milliseconds',name:'CPU profile',format:'cpuprofile'};
+}
+function fromFolded(txt){
+ const fr=[],fi=new Map(),S=[];let t=0;
+ for(const line of txt.split('\n')){const m=/^(.*\S)\s+(\d+(?:\.\d+)?)\s*$/.exec(line);if(!m)continue;const st=m[1].split(';').map(n=>{let i=fi.get(n);if(i===undefined){i=fr.length;const q=/^(.*?)\s*\(([^()]*?\.[A-Za-z0-9]+)(?::\d+)?\)\s*$/.exec(n);fr.push(q?{name:q[1],file:q[2]}:{name:n,file:''});fi.set(n,i)}return i});const w=+m[2];S.push({t,w,st,th:0});t+=w}
+ return{fr,S,threads:['all'],unit:'samples',name:'Folded stacks',format:'folded stacks, no timestamps (timeline follows file order)'};
+}
+function parseTrace(text){
+ const t=text.trim();
+ if(t[0]==='{'){const j=JSON.parse(t);if(j.shared&&j.profiles)return fromSpeedscope(j);if(j.nodes&&j.samples)return fromCpuProfile(j);throw new Error('format')}
+ const T=fromFolded(t);if(!T.S.length)throw new Error('format');return T;
+}
+function analyse(T){
+ const N=P.files.length,ff=T.fr.map(fileOfFrame),self=new Float64Array(N),incl=new Float64Array(N),roads=new Map(),outside=new Map(),thW=new Map();
+ let tot=0,inMap=0,tmin=Infinity,tmax=-Infinity;for(const s of T.S){if(s.t<tmin)tmin=s.t;if(s.t+s.w>tmax)tmax=s.t+s.w}
+ const B=240,bw=(tmax-tmin)/B||1,bk=Array.from({length:B},()=>new Map()),bt=new Float64Array(B);
+ for(const s of T.S){const w=s.w,fs=[];tot+=w;thW.set(s.th,(thW.get(s.th)||0)+w);for(const k of s.st){const f=ff[k];if(f>=0&&fs[fs.length-1]!==f)fs.push(f)}s.fs=fs;
+  if(!fs.length){const k=s.st[s.st.length-1],nm=k!==undefined?T.fr[k].name:'(idle)';outside.set(nm,(outside.get(nm)||0)+w);continue}
+  inMap+=w;self[fs[fs.length-1]]+=w;const seen=new Set(fs);for(const f of seen)incl[f]+=w;
+  for(let i=1;i<fs.length;i++){const k=fs[i-1]*N+fs[i];roads.set(k,(roads.get(k)||0)+w)}
+  const b=Math.min(B-1,Math.floor((s.t-tmin)/bw));bt[b]+=w;const m=bk[b];for(const f of seen)m.set(f,(m.get(f)||0)+w)}
+ const roadList=[...roads].map(([k,w])=>{const a=P.files[Math.floor(k/N)],b=P.files[k%N];return{a,b,w,h:hash(a.path+'>'+b.path),desire:!a.out.has(b.id)&&!b.out.has(a.id)}}).sort((x,y)=>y.w-x.w);
+ let mainTh=0,bestW=-1;for(const[th,w]of thW)if(w>bestW){bestW=w;mainTh=th}
+ const main=T.S.filter(s=>s.th===mainTh).sort((a,b)=>a.t-b.t);
+ const exec=P.files.filter(f=>incl[f.id]>0);
+ const quiet=P.dirs.filter(d=>d.depth===1&&!exec.some(f=>f.reg===d)).map(d=>short(d.name));
+ RT={...T,ff,self,incl,tot,inMap,roadList,tmin,tmax,B,bw,bk,bt,main,exec,quiet,matchedFrames:ff.filter(x=>x>=0).length,outside:[...outside].sort((a,b)=>b[1]-a[1]).slice(0,6)};
+ rtT=-1;rtPlay=false;rtHeat=null;rtKey='';buildRunWash();
+}
+function buildRunWash(){
+ if(!RT)return;rtCv=rtCv||document.createElement('canvas');rtCv.width=500;rtCv.height=350;const g=rtCv.getContext('2d'),k=500/W;
+ g.globalCompositeOperation='source-over';g.clearRect(0,0,500,350);g.fillStyle=rc().wash;g.fillRect(0,0,500,350);g.globalCompositeOperation='destination-out';
+ for(const f of RT.exec){const R=(f.r*1.25+8)*k,gr=g.createRadialGradient(f.x*k,f.y*k,R*.4,f.x*k,f.y*k,R);gr.addColorStop(0,'rgba(0,0,0,1)');gr.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=gr;g.beginPath();g.arc(f.x*k,f.y*k,R,0,7);g.fill()}
+ g.globalCompositeOperation='source-over';
+}
+function heatNow(){
+ if(rtT<0){if(rtKey!=='all'){rtKey='all';let m=0;for(const v of RT.incl)if(v>m)m=v;rtHeat={a:RT.incl,m}}return rtHeat}
+ const half=3,c=Math.floor((rtT-RT.tmin)/RT.bw),b0=Math.max(0,c-half),b1=Math.min(RT.B-1,c+half),key=b0+'-'+b1;
+ if(key!==rtKey){rtKey=key;const a=new Float64Array(P.files.length);let m=0,tot=0;for(let b=b0;b<=b1;b++){tot+=RT.bt[b];for(const[f,w]of RT.bk[b]){a[f]+=w;if(a[f]>m)m=a[f]}}rtHeat={a,m,tot}}
+ return rtHeat;
+}
+function stackAt(t){const M=RT.main;let lo=0,hi=M.length-1;if(hi<0)return null;while(lo<hi){const mid=(lo+hi+1)>>1;if(M[mid].t<=t)lo=mid;else hi=mid-1}return M[lo]}
+const fmtT=v=>RT.unit==='samples'?Math.round(v).toLocaleString()+' samples':RT.unit==='nanoseconds'?fmtMs(v/1e6):RT.unit==='microseconds'?fmtMs(v/1e3):RT.unit==='seconds'?fmtMs(v*1e3):fmtMs(v);
+const fmtMs=ms=>ms>=1000?(ms/1000).toFixed(ms>=1e4?1:2)+' s':Math.round(ms)+' ms';
+const pctOf=v=>{const p=100*v/(RT.tot||1);return(p>=10?p.toFixed(0):p>=1?p.toFixed(1):p.toFixed(2))+'%'};
+function drawRunWorld(s){
+ const col=rc().run;if(rtCv)cx.drawImage(rtCv,0,0,W,H);
+ const hn=heatNow(),hm=hn.m||1,x0=cam.x-vw/2/s-60,x1=cam.x+vw/2/s+60,y0=cam.y-vh/2/s-60,y1=cam.y+vh/2/s+60;
+ for(const f of RT.exec){const h=hn.a[f.id];if(!h||f.x<x0||f.x>x1||f.y<y0||f.y>y1)continue;const v=Math.sqrt(h/hm),R=Math.max(9,f.r*(.7+1.3*v)),g=cx.createRadialGradient(f.x,f.y,0,f.x,f.y,R);g.addColorStop(0,`rgba(${col},${(.2+.55*v).toFixed(3)})`);g.addColorStop(1,`rgba(${col},0)`);cx.fillStyle=g;cx.beginPath();cx.arc(f.x,f.y,R,0,7);cx.fill()}
+ const top=RT.roadList.slice(0,350),mw=top.length?top[0].w:1;
+ for(const r of top){const v=Math.sqrt(r.w/mw),c=ctrl(r.a,r.b);cx.strokeStyle=`rgba(${col},${(.3+.6*v).toFixed(3)})`;cx.lineWidth=(.8+5*v)/s;if(r.desire)cx.setLineDash([6/s,4/s]);cx.beginPath();cx.moveTo(r.a.x,r.a.y);cx.quadraticCurveTo(c[0],c[1],r.b.x,r.b.y);cx.stroke();cx.setLineDash([])}
+ if(!reduce&&rtT<0){const now=performance.now()/1000;cx.fillStyle=`rgb(${col})`;cx.strokeStyle=C.halo;cx.lineWidth=1.5/s;
+  for(let i=0;i<Math.min(180,top.length);i++){const r=top[i],n=Math.max(1,Math.min(5,Math.round(r.w/mw*5+.5))),c=ctrl(r.a,r.b),len=Math.hypot(r.b.x-r.a.x,r.b.y-r.a.y)+20;
+   for(let k=0;k<n;k++){const u=(now*70/len+k/n+r.h)%1,q=1-u,px=q*q*r.a.x+2*q*u*c[0]+u*u*r.b.x,py=q*q*r.a.y+2*q*u*c[1]+u*u*r.b.y;cx.beginPath();cx.arc(px,py,2.8/s,0,7);cx.fill();cx.stroke()}}}
+ if(rtT>=0){const sm=stackAt(rtT);RT.cur=sm;if(sm&&sm.fs.length>1){const p=sm.fs.map(i=>P.files[i]);cx.beginPath();cx.moveTo(p[0].x,p[0].y);for(let i=1;i<p.length;i++){const c=ctrl(p[i-1],p[i]);cx.quadraticCurveTo(c[0],c[1],p[i].x,p[i].y)}cx.strokeStyle=C.halo;cx.lineWidth=7/s;cx.stroke();cx.strokeStyle=C.ink;cx.lineWidth=3/s;cx.stroke()}}
+}
+function drawRunScreen(T,s){
+ const col=rc().run,hn=heatNow(),hm=hn.m||1,hot=RT.exec.slice().sort((a,b)=>hn.a[b.id]-hn.a[a.id]).slice(0,8);
+ if(rtT>=0&&RT.cur&&RT.cur.fs.length){const fs=RT.cur.fs.map(i=>P.files[i]),leaf=fs[fs.length-1];fs.forEach((f,i)=>{const[x,y]=T(f);dot(x,y,i===fs.length-1?7:4,i===fs.length-1?`rgb(${col})`:C.ink)});const[x,y]=T(leaf);const pulse=reduce?0:(performance.now()/600)%1;cx.beginPath();cx.arc(x,y,9+pulse*10,0,7);cx.strokeStyle=`rgba(${col},${(1-pulse).toFixed(2)})`;cx.lineWidth=2.5;cx.stroke();label(leaf.name+' · running now',x+12,y+5,`800 14px ${FF}`,C.ink)}
+ for(const f of hot){if(!hn.a[f.id])continue;const[x,y]=T(f);label(`${f.name} ${Math.round(100*hn.a[f.id]/(rtT<0?RT.tot:(hn.tot||1)))}%`,x+9,y+4,`800 13px ${FF}`,C.ink)}
+}
+function drawTL(){
+ const c=$('#tlc');if(!RT||$('#tl').hidden)return;const r=c.getBoundingClientRect(),w=Math.max(1,r.width),h=Math.max(1,r.height);c.width=Math.round(w*dpr);c.height=Math.round(h*dpr);const g=c.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+ let m=0;for(const v of RT.bt)if(v>m)m=v;m=m||1;const bw=w/RT.B,col=rc().run;
+ g.fillStyle=C.soft+'.28)';for(let b=0;b<RT.B;b++){const v=RT.bt[b]/m*(h-4);g.fillRect(b*bw,h-v,Math.max(1,bw-.3),v)}
+ if(sel){g.fillStyle=`rgba(${col},.9)`;for(let b=0;b<RT.B;b++){const v=(RT.bk[b].get(sel.id)||0)/m*(h-4);if(v)g.fillRect(b*bw,h-v,Math.max(1,bw-.3),v)}}
+ if(rtT>=0){const x=(rtT-RT.tmin)/(RT.tmax-RT.tmin)*w;g.fillStyle=`rgba(${col},.18)`;g.fillRect(x-3.5*bw,0,7*bw,h);g.fillStyle=C.ink;g.fillRect(x-1,0,2,h)}
+ const dur=RT.tmax-RT.tmin;$('#tlt').textContent=rtT<0?`Whole run · ${fmtT(dur)}${sel?' · '+sel.name+' shown in orange':''}`:`${fmtT(rtT-RT.tmin)} of ${fmtT(dur)}`;
+ $('#tplay').textContent=rtPlay?'❚❚':'▶';$('#tplay').setAttribute('aria-label',rtPlay?'Pause':'Play the run');
+}
+function rtTick(ts){
+ rtRaf=0;if(mode!=='run'||!RT)return;
+ if(rtPlay){const dt=Math.min(100,ts-(rtLast||ts));rtLast=ts;rtT+=(RT.tmax-RT.tmin)*dt/24000;if(rtT>=RT.tmax){rtT=RT.tmax;rtPlay=false}}else rtLast=0;
+ if(ts-rtDrawn>32){rtDrawn=ts;draw();drawTL();if(ts-rtPanel>250){rtPanel=ts;renderStack()}}
+ if(!reduce||rtPlay)rtRaf=requestAnimationFrame(rtTick);
+}
+function rtStart(){if(!rtRaf)rtRaf=requestAnimationFrame(rtTick)}
+function renderStack(){
+ const el=$('#rtStack');if(!el)return;if(rtT<0||!RT||!RT.cur){el.innerHTML='';return}
+ const s=RT.cur,fr=s.st.map(k=>RT.fr[k]).slice(-14);
+ el.innerHTML=`<h3>Call stack at ${esc(fmtT(rtT-RT.tmin))}<span>${s.st.length} frames</span></h3><ol class="stk">${fr.map((f,i)=>{const id=RT.ff[s.st[s.st.length-fr.length+i]];return`<li${id>=0?'':' class="off"'}>${esc(String(f.name).slice(0,90))}${id>=0?` <small>${esc(P.files[id].name)}</small>`:''}</li>`}).join('')}</ol>`;
+}
+function renderRun(){
+ const el=$('#runBox');if(!P)return;
+ if(!RT){el.innerHTML=`<p class="muted">Load a profile recorded while this program runs, and the same map shows its behaviour: hills glow with the time spent in them, traffic moves along the calls between files, dashed desire paths mark calls with no import road, and a timeline lets you replay the run.</p><div class="row"><button class="btn pri" data-act="rtopen">Open a trace</button>${P.demo?'<button class="btn" data-act="rtdemo">Play a sample run</button>':''}</div>
+ <h3>Record one</h3><ul class="how"><li><b>.NET, e.g. Renode:</b> start it, then <code>dotnet-trace collect -p &lt;pid&gt; --format Speedscope</code></li><li><b>Python:</b> <code>py-spy record -f speedscope -o run.json -- python app.py</code></li><li><b>Node.js:</b> <code>node --cpu-prof app.js</code>, or a browser DevTools profile (.cpuprofile)</li><li><b>C, C++, Rust, Go on Linux:</b> <code>perf record -g</code>, then <code>perf script | stackcollapse-perf.pl</code> for folded stacks</li></ul><p class="muted">Frames are matched to files by path, or by type and function names found in the source. Nothing is uploaded.</p>`;return}
+ const dur=RT.tmax-RT.tmin,hot=RT.exec.slice().sort((a,b)=>RT.self[b.id]-RT.self[a.id]).slice(0,10),desire=RT.roadList.filter(r=>r.desire);
+ el.innerHTML=`<div class="card"><div class="ttl">${esc(RT.name)}</div><div class="meta">${esc(RT.format)} · ${esc(fmtT(dur))} · ${RT.S.length.toLocaleString()} samples${RT.threads.length>1?` · ${RT.threads.length} threads`:''}</div>${RT.note?`<p class="muted">${esc(RT.note)}</p>`:''}<p>${pctOf(RT.inMap)} of the running time was inside files on this map. ${RT.exec.length.toLocaleString()} of ${P.files.length.toLocaleString()} files ran (${(100*RT.exec.length/P.files.length).toFixed(1)}%).</p><div class="row"><button class="btn sm" data-act="rtopen">Open another trace</button><button class="btn sm" data-act="rtclear">Clear</button></div></div>
+ <h3>Hot spots<span>own time · with calls</span></h3><div class="lst">${hot.map(f=>`<button class="lnk" data-id="${f.id}"><b>${esc(f.name)}</b><small>${pctOf(RT.self[f.id])} · ${pctOf(RT.incl[f.id])}</small></button>`).join('')}</div>
+ <h3>Busiest runtime roads<span>${RT.roadList.length.toLocaleString()}</span></h3>${RT.roadList.slice(0,8).map(r=>`<div class="xr"><b>${esc(r.a.name)} → ${esc(r.b.name)}</b><span>${pctOf(r.w)}${r.desire?' · desire path':''}</span></div>`).join('')}
+ <h3>Desire paths<span>${desire.length}</span></h3><p class="muted">Calls between files that have no import road between them, usually callbacks, events, interfaces or reflection. Drawn dashed.${desire.length?' Busiest: '+desire.slice(0,3).map(r=>esc(r.a.name+' → '+r.b.name)).join(', ')+'.':''}</p>
+ <h3>Quiet regions<span>${RT.quiet.length}</span></h3><p class="muted">${RT.quiet.length?'No time was spent in '+RT.quiet.slice(0,14).map(esc).join(', ')+(RT.quiet.length>14?' and more':'')+'. They stay greyed out.':'Every region ran at least once.'}</p>
+ ${RT.outside.length?`<h3>Time outside this map</h3>${RT.outside.map(([n,w])=>`<div class="xr"><b>${esc(String(n).slice(0,60))}</b><span>${pctOf(w)}</span></div>`).join('')}`:''}
+ <div id="rtStack"></div>`;
+ renderStack();
+}
+async function loadTrace(file){
+ if(!P)return;toast('Reading trace…',true);
+ try{const T=parseTrace(await file.text());T.name=T.name&&T.name!=='Trace'?T.name:file.name;analyse(T);setMode('run');toast(`Matched ${pctOf(RT.inMap)} of running time to files on this map.`)}
+ catch(err){toast('Could not read that trace. Use speedscope JSON, a .cpuprofile, or folded stacks.')}
+}
+function demoTrace(){
+ const fr=[],fi=new Map(),F=s=>{let i=fi.get(s);if(i===undefined){const k=s.lastIndexOf(':');i=fr.length;fr.push({name:s.slice(k+1),file:s.slice(0,k)});fi.set(s,i)}return i};
+ const M='src/main.ts:main>src/app/App.tsx:App',RD='node_modules/react-dom/index.js:commitRoot';
+ const PH=[[0,700,[[5,M+'>src/app/store.ts:createStore>src/state/tasks.ts:loadTasks>src/api/client.ts:get>src/lib/retry.ts:withRetry'],[3,'src/main.ts:main>src/config/env.ts:readEnv'],[3,M+'>src/services/auth.ts:restoreSession>src/api/endpoints.ts:me'],[2,M+'>src/ui/shell/Layout.tsx:Layout>src/ui/shell/Sidebar.tsx:Sidebar>src/ui/components/Icon.tsx:Icon']]],
+  [700,2300,[[6,M+'>src/app/router.ts:navigate>src/ui/pages/Board.tsx:Board>src/ui/board/Column.tsx:Column>src/ui/board/TaskCard.tsx:TaskCard>src/lib/dates.ts:formatDue'],[4,M+'>src/app/router.ts:navigate>src/ui/pages/Board.tsx:Board>src/ui/board/Column.tsx:Column>src/ui/board/TaskCard.tsx:TaskCard>src/ui/components/Avatar.tsx:Avatar'],[3,M+'>src/app/router.ts:navigate>src/ui/pages/Board.tsx:Board>src/ui/board/Column.tsx:Column>src/ui/components/Button.tsx:Button>src/ui/components/Icon.tsx:Icon'],[3,M+'>src/app/router.ts:navigate>src/ui/pages/Board.tsx:Board>'+RD],[2,M+'>src/app/router.ts:navigate>src/ui/pages/Board.tsx:Board>src/models/Board.ts:groupByColumn']]],
+  [2300,3400,[[5,M+'>src/ui/board/DragLayer.tsx:onPointerMove>src/ui/board/TaskCard.tsx:TaskCard>src/lib/dates.ts:formatDue'],[4,M+'>src/ui/board/DragLayer.tsx:onDrop>src/app/store.ts:dispatch>src/state/tasks.ts:moveTask>src/lib/ids.ts:nextId'],[2,M+'>src/ui/board/DragLayer.tsx:onPointerMove>'+RD]]],
+  [3400,5000,[[5,M+'>src/app/store.ts:subscribe>src/state/sync.ts:flush>src/lib/queue.ts:drain>src/api/client.ts:post>src/lib/retry.ts:withRetry'],[3,M+'>src/app/store.ts:subscribe>src/state/sync.ts:flush>src/lib/queue.ts:drain>src/api/client.ts:post>src/services/auth.ts:token>src/lib/crypto.ts:sign'],[3,M+'>src/app/store.ts:subscribe>src/state/sync.ts:flush>src/services/notify.ts:toast>src/ui/components/Toast.tsx:Toast>src/ui/components/Icon.tsx:Icon'],[1,'(garbage collector):gc']]],
+  [5000,6200,[[6,M+'>src/ui/shell/Layout.tsx:Layout>src/ui/shell/Topbar.tsx:onSearch>src/services/search.ts:query>src/lib/text.ts:tokenize'],[3,M+'>src/ui/shell/Layout.tsx:Layout>src/ui/shell/Topbar.tsx:onSearch>src/services/search.ts:query>src/models/Task.ts:matches'],[2,M+'>src/ui/shell/Layout.tsx:Layout>src/ui/shell/Topbar.tsx:onSearch>src/ui/components/Input.tsx:Input']]]];
+ let seed=7;const rnd=()=>{seed=(seed*1664525+1013904223)>>>0;return seed/4294967296};const S=[];
+ for(const[a,b,opts]of PH){const tw=opts.reduce((x,o)=>x+o[0],0),stk=opts.map(o=>o[1].split('>').map(F));for(let t=a;t<b;t++){let r=rnd()*tw,i=0;while(r>opts[i][0]){r-=opts[i][0];i++}const st=stk[i].slice(0,Math.max(2,stk[i].length-(rnd()<.25?1:0)));S.push({t,w:1,st,th:0})}}
+ return{fr,S,threads:['main'],unit:'milliseconds',name:'Sample run of harbor',note:'Illustrative: made up for the sample project, not recorded. It starts the app, opens the board, drags a card, syncs, then searches.',format:'sample'};
+}
+
+/* ---------- loading ---------- */
+let tt=0;function toast(m,sticky){const t=$('#toast');t.textContent=m;t.hidden=false;clearTimeout(tt);if(!sticky)tt=setTimeout(()=>{t.hidden=true},3400)}
+async function ingest(name,list){
+ if(!list.length){toast('No files found there.');return}
+ const first=list[0].path.split('/')[0];if(list.length>1&&list.every(e=>e.path.startsWith(first+'/'))){list.forEach(e=>{e.path=e.path.slice(first.length+1)});name=name||first}
+ const repos=await detectRepos(list);
+ let keep=list.filter(e=>!SKIP.test(e.path)&&!SKIPF.test(e.path)&&LANG[extOf(e.path)]&&e.size<1.5e6);
+ if(!keep.length){toast('No source files found there.');return}
+ keep.sort((a,b)=>a.path.localeCompare(b.path));let cut=0;if(keep.length>MAXF){cut=keep.length-MAXF;keep=keep.slice(0,MAXF)}
+ const recs=new Array(keep.length);let done=0,i=0;
+ const work=async()=>{while(i<keep.length){const k=i++,e=keep[k];let t='';try{t=await e.text()}catch(err){}const lang=LANG[extOf(e.path)],fam=FAM[lang];recs[k]={path:e.path,lang,loc:countLoc(t),specs:fam&&t.length<8e5?specsOf(t,fam):[],cs:fam==='cs'&&t.length<8e5?csInfo(t):null,syms:fam&&fam!=='cs'&&t.length<8e5?symsOf(t,fam):[]};if(++done%50===0)toast(`Reading ${done} of ${keep.length} files…`,true)}};
+ await Promise.all(Array.from({length:12},work));
+ toast('Drawing the map…',true);await new Promise(r=>setTimeout(r,30));
+ setMode('explore');build(name||'project',recs,cut,false,null,'',repos);
+ toast(`Mapped ${keep.length.toLocaleString()} files. Tap a hill to stand on it.`);
+}
+let zp=null;
+function loadZip(){if(EMBED)return Promise.reject(new Error('embed'));if(window.JSZip)return Promise.resolve(window.JSZip);return zp=zp||new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';s.onload=()=>res(window.JSZip);s.onerror=()=>{zp=null;rej(new Error('load'))};document.head.appendChild(s)})}
+async function fromZip(file){
+ toast('Unpacking '+file.name+'…',true);
+ try{const JSZip=await loadZip(),z=await JSZip.loadAsync(file),list=[];z.forEach((p,en)=>{if(!en.dir)list.push({path:p,size:(en._data&&en._data.uncompressedSize)||0,text:()=>en.async('string')})});await ingest(file.name.replace(/\.zip$/i,''),list)}
+ catch(err){toast('Could not read that zip file.')}
+}
+async function detectRepos(list){
+ const byP=new Map(list.map(e=>[e.path,e])),out=[],txt=async e=>{try{return await e.text()}catch(err){return''}};
+ const head=async gd=>{const h=byP.get(gd+'/HEAD');if(!h)return'';const t=(await txt(h)).trim();if(/^[0-9a-f]{40}$/.test(t))return t.slice(0,7);const m=/^ref:\s*refs\/heads\/(.+)$/.exec(t);return m?m[1]:''};
+ out.push({path:'',sha:await head('.git')});
+ for(const e of list.filter(e=>/(^|\/)\.gitmodules$/.test(e.path))){
+  const base=e.path.replace(/\/?\.gitmodules$/,'');let cur=null;
+  for(const line of(await txt(e)).split('\n')){let m;if((m=/^\s*\[submodule\s+"([^"]+)"\]/.exec(line))){cur={name:m[1]};out.push(cur);cur.base=base}else if(cur&&(m=/^\s*(path|url)\s*=\s*(.+?)\s*$/.exec(line)))cur[m[1]]=m[2]}
+ }
+ for(const r of out){if(r.base===undefined)continue;r.path=norm((r.base?r.base+'/':'')+(r.path||r.name));r.title=(r.url||r.path).replace(/\.git$/,'').replace(/\/$/,'').split(/[\/:]/).pop();
+  const gl=byP.get(r.path+'/.git');if(gl){const m=/gitdir:\s*(\S+)/.exec(await txt(gl));if(m)r.sha=await head(norm(r.path+'/'+m[1]))}}
+ return out.map(r=>({title:r.title,path:r.path,url:r.url||'',sha:r.sha||''}));
+}
+async function walkGit(en,pre,out,depth){
+ const SK=new Set(['objects','refs','logs','hooks','info','lfs','branches','rr-cache','worktrees']);const rd=en.createReader();let b;
+ do{b=await new Promise(r=>rd.readEntries(r,()=>r([])));for(const c of b){if(c.isFile&&c.name==='HEAD')await new Promise(r=>c.file(f=>{out.push({path:pre+'HEAD',size:f.size,text:()=>f.text()});r()},()=>r()));else if(c.isDirectory&&depth<14&&!SK.has(c.name))await walkGit(c,pre+c.name+'/',out,depth+1)}}while(b.length);
+}
+async function walkEntry(en,pre,out){
+ if(en.isFile){await new Promise(r=>en.file(f=>{out.push({path:pre+en.name,size:f.size,text:()=>f.text()});r()},()=>r()))}
+ else if(en.isDirectory){if(en.name==='.git'){await walkGit(en,pre+'.git/',out,0);return}if(SKIP.test(pre+en.name+'/'))return;const rd=en.createReader();let batch;do{batch=await new Promise(r=>rd.readEntries(r,()=>r([])));for(const c of batch)await walkEntry(c,pre+en.name+'/',out)}while(batch.length)}
+}
+$('#fdir').addEventListener('change',e=>{const fs=[...e.target.files];if(fs.length){toast('Reading folder…',true);ingest('',fs.map(f=>({path:f.webkitRelativePath||f.name,size:f.size,text:()=>f.text()})))}e.target.value=''});
+$('#fzip').addEventListener('change',e=>{const f=e.target.files[0];if(f)fromZip(f);e.target.value=''});
+document.querySelectorAll('label.btn').forEach(l=>l.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();l.querySelector('input').click()}}));
+$('#demo').onclick=()=>{setMode('explore');loadDemo();toast('Sample project loaded.')};
+let dc=0;
+stage.addEventListener('dragenter',e=>{e.preventDefault();dc++;$('#drop').hidden=false});
+stage.addEventListener('dragleave',()=>{if(--dc<=0){dc=0;$('#drop').hidden=true}});
+stage.addEventListener('dragover',e=>e.preventDefault());
+stage.addEventListener('drop',async e=>{
+ e.preventDefault();dc=0;$('#drop').hidden=true;
+ const ens=[...(e.dataTransfer.items||[])].map(it=>it.webkitGetAsEntry&&it.webkitGetAsEntry()).filter(Boolean),files=[...(e.dataTransfer.files||[])];
+ if(files.length===1&&/\.zip$/i.test(files[0].name)){fromZip(files[0]);return}
+ if(files.length===1&&/\.(cpuprofile|folded|collapsed|json|txt)$/i.test(files[0].name)){loadTrace(files[0]);return}
+ if(!ens.length){if(files.length)ingest('',files.map(f=>({path:f.name,size:f.size,text:()=>f.text()})));return}
+ toast('Reading folder…',true);const out=[];for(const en of ens)await walkEntry(en,'',out);ingest('',out);
+});
+
+/* ---------- sample project ---------- */
+const DEMO=`src/main.ts|60|app/App,config/env,ui/styles/theme
+src/app/App.tsx|180|app/router,app/store,ui/shell/Layout,services/auth
+src/app/router.ts|140|ui/pages/Home,ui/pages/Board,ui/pages/Settings,ui/pages/Login
+src/app/store.ts|220|state/tasks,state/users,state/sync
+src/state/tasks.ts|310|api/client,lib/dates,lib/ids,models/Task
+src/state/users.ts|160|api/client,models/User
+src/state/sync.ts|280|api/client,lib/queue,lib/retry,state/tasks
+src/models/Task.ts|90|models/User,lib/dates
+src/models/User.ts|60|
+src/models/Board.ts|80|models/Task
+src/api/client.ts|240|api/endpoints,lib/retry,services/auth,config/env
+src/api/endpoints.ts|120|models/Task,models/User,models/Board
+src/services/auth.ts|200|api/endpoints,lib/crypto,config/env
+src/services/notify.ts|130|lib/queue,ui/components/Toast
+src/services/search.ts|260|lib/text,models/Task
+src/lib/dates.ts|150|
+src/lib/ids.ts|40|
+src/lib/queue.ts|110|
+src/lib/retry.ts|70|
+src/lib/crypto.ts|90|
+src/lib/text.ts|180|
+src/config/env.ts|50|
+src/ui/shell/Layout.tsx|160|ui/shell/Sidebar,ui/shell/Topbar,ui/components/Toast
+src/ui/shell/Sidebar.tsx|140|app/store,ui/components/Icon,ui/components/Avatar
+src/ui/shell/Topbar.tsx|120|services/search,ui/components/Avatar,ui/components/Input,services/notify
+src/ui/pages/Home.tsx|210|app/store,ui/components/Card,ui/components/Chart
+src/ui/pages/Board.tsx|420|app/store,ui/board/Column,ui/board/DragLayer,models/Board
+src/ui/pages/Settings.tsx|190|app/store,ui/components/Input,ui/components/Button,services/auth
+src/ui/pages/Login.tsx|130|services/auth,ui/components/Input,ui/components/Button
+src/ui/board/Column.tsx|230|ui/board/TaskCard,ui/components/Button
+src/ui/board/TaskCard.tsx|180|ui/components/Avatar,ui/components/Icon,lib/dates
+src/ui/board/DragLayer.tsx|260|ui/board/TaskCard
+src/ui/components/Button.tsx|70|ui/components/Icon
+src/ui/components/Input.tsx|90|
+src/ui/components/Card.tsx|60|
+src/ui/components/Avatar.tsx|50|
+src/ui/components/Icon.tsx|120|
+src/ui/components/Toast.tsx|80|ui/components/Icon
+src/ui/components/Chart.tsx|340|lib/dates
+src/ui/styles/theme.css|220|ui/styles/reset
+src/ui/styles/reset.css|60|
+server/index.ts|40|server/http,server/db/pool
+server/http.ts|150|server/routes/tasks,server/routes/users,server/routes/auth,server/middleware/session
+server/routes/tasks.ts|260|server/db/tasks,server/middleware/validate,models/Task
+server/routes/users.ts|170|server/db/users,server/middleware/validate
+server/routes/auth.ts|210|server/db/users,lib/crypto,server/middleware/session
+server/middleware/session.ts|120|server/db/sessions,lib/crypto
+server/middleware/validate.ts|90|
+server/db/pool.ts|110|config/env
+server/db/tasks.ts|240|server/db/pool,models/Task
+server/db/users.ts|160|server/db/pool,models/User
+server/db/sessions.ts|90|server/db/pool
+server/db/migrations/001_init.sql|80|
+server/db/migrations/002_boards.sql|45|
+tests/tasks.test.ts|190|state/tasks,lib/dates
+tests/sync.test.ts|150|state/sync
+tests/auth.test.ts|170|services/auth,server/routes/auth
+scripts/seed.ts|90|server/db/pool,models/Task
+README.md|120|
+package.json|40|
+tsconfig.json|30|`;
+function loadDemo(){build('harbor',DEMO.trim().split('\n').map(l=>{const[p,n,d]=l.split('|');return{path:p,loc:+n,lang:LANG[extOf(p)]||'Text',specs:d?d.split(',').map(s=>'crate:'+s):[]}}),0,true)}
+
+/* ---------- runtime controls ---------- */
+$('#ftrace').addEventListener('change',e=>{const f=e.target.files[0];if(f)loadTrace(f);e.target.value=''});
+$('#tplay').onclick=()=>{if(!RT)return;if(rtT<0||rtT>=RT.tmax)rtT=RT.tmin;rtPlay=!rtPlay;rtLast=0;rtStart();drawTL()};
+$('#twhole').onclick=()=>{rtT=-1;rtPlay=false;rtKey='';renderStack();req();drawTL();rtStart()};
+{const tl=$('#tlc');let dragT=false;const at=e=>{const r=tl.getBoundingClientRect();rtT=RT.tmin+Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*(RT.tmax-RT.tmin);rtPlay=false;renderStack();req();drawTL()};tl.addEventListener('pointerdown',e=>{if(!RT)return;dragT=true;tl.setPointerCapture(e.pointerId);at(e)});tl.addEventListener('pointermove',e=>{if(dragT)at(e)});tl.addEventListener('pointerup',()=>{dragT=false});tl.addEventListener('pointercancel',()=>{dragT=false})}
+/* ---------- start ---------- */
+function theme(){C=isDark()?PALS.dark:PALS.light;if(P){paintTerrain();buildFog();buildRunWash();req();drawTL()}}
+const mo=new MutationObserver(theme);mo.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',theme);
+theme();
+const ro=new ResizeObserver(resize);ro.observe(stage);resize();
+let SNAP=null;
+function loadSnap(){const d=SNAP;build(d.name,d.files.map(r=>({path:r[0],loc:r[1],lang:d.langs[r[2]]})),0,false,d.edges,d.note||'',d.repos||null,d.syms||null)}
+window.__codemapExport=note=>{const langs=[...new Set(P.files.map(f=>f.lang))];return JSON.stringify({name:P.name,note,langs,files:P.files.map(f=>[f.path,f.loc,langs.indexOf(f.lang)]),edges:P.edges.flat(),repos:P.repos.map(r=>({title:r.title,path:r.path,url:r.url,sha:r.sha})),syms:Object.fromEntries(P.syms)})};
+$('#snapb').onclick=()=>{if(SNAP){setMode('explore');loadSnap();toast(SNAP.name+' loaded.')}};
+if(EMBED){
+ /* Chrono bridge: the host sends the repository scan, its theme and saved trail. */
+ document.querySelectorAll('#fdir,#fzip').forEach(i=>{i.closest('label').hidden=true});$('#demo').hidden=true;$('#snapb').hidden=true;
+ const rs=$('#cxrescan');rs.hidden=false;rs.onclick=()=>{toChrono({type:'rescan'});toast('Rescanning the repository…',true)};
+ window.addEventListener('message',e=>{
+  if(e.source!==parent)return;const d=e.data||{};
+  if(d.type==='theme'){document.documentElement.dataset.theme=d.dark?'dark':'light'}
+  else if(d.type==='loading'){toast(d.text||'Reading the repository…',true)}
+  else if(d.type==='error'){toast(String(d.text||'Could not read the repository.'),true)}
+  else if(d.type==='scan'&&d.scan&&Array.isArray(d.scan.files)){const sc0=d.scan;if(!sc0.files.length){toast('No source files found in this repository.',true);return}memStore.clear();if(d.saved)memStore.set('codemap:'+sc0.name,d.saved);setMode('explore');build(sc0.name,sc0.files,sc0.cut||0,false,null,d.note||'',sc0.repos);toast(`Mapped ${sc0.files.length.toLocaleString()} files. Tap a hill to stand on it.`)}
+  else if(d.type==='goto'&&P){const f=P.byPath.get(d.path);if(f)goTo(f)}
+ });
+ toChrono({type:'ready'});
+}else fetch('renode.json').then(r=>r.ok?r.json():null).then(d=>{if(d&&d.files){SNAP=d;$('#snapb').hidden=false;loadSnap()}else loadDemo()}).catch(()=>loadDemo());
+if(document.fonts)document.fonts.ready.then(req);
+toast('Drag to pan, pinch or scroll to zoom, tap a hill.');
+}
+</script>
+</body></html>
+

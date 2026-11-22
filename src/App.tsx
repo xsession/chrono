@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, getApiConnection, saveApiConnection } from "./api";
+import { abandonRepositoryReads, api, getApiConnection, isAbandoned, saveApiConnection } from "./api";
 import { Capacitor } from "@capacitor/core";
 import type { BranchRecord, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
 import { HISTORY_PAGE_SIZE, addHistoryPage, summarizeHistoryWindow, type HistorySegment } from "./historyWindow";
@@ -45,6 +45,17 @@ import { LiveOutputHost, withLiveOutput } from "./liveOutput";
 import type { ExplorerFocus } from "./components/explorer/FileExplorer";
 import { askFields } from "./components/DialogHost";
 import { chooseFolder, FolderPickerHost } from "./components/FolderPicker";
+import { LandscapeView } from "./components/gk/LandscapeView";
+
+type RepositorySnapshot = {
+  summary: RepositorySummary;
+  historySegments: HistorySegment[];
+  selectedCommit: CommitRecord | null;
+  changes: FileChange[];
+  branches: BranchRecord[];
+  operation: RepositoryOperationState;
+  undoState: UndoState | null;
+};
 
 const emptyWorkspace: Workspace = { id: "local", name: "Local repositories", repositories: [] };
 
@@ -138,11 +149,45 @@ export default function App() {
       });
   }, []);
 
+  // Per-tab snapshots: switching to a tab shows its last known state at once
+  // and refreshes it in the background, instead of waiting for git.
+  const snapshotsRef = useRef(new Map<string, RepositorySnapshot>());
+  const [revalidating, setRevalidating] = useState(false);
+  useEffect(() => {
+    if (!path || !summary) return;
+    snapshotsRef.current.set(path, { summary, historySegments, selectedCommit, changes, branches, operation, undoState });
+  }, [path, summary, historySegments, selectedCommit, changes, branches, operation, undoState]);
+
+  // Once another repository is on screen, stop the reads still running for the
+  // one that was left, so they don't hold the browser's connections.
+  const shownPathRef = useRef("");
+  useEffect(() => {
+    const previous = shownPathRef.current;
+    shownPathRef.current = path;
+    if (previous && previous !== path) abandonRepositoryReads(previous);
+  }, [path]);
+
   const refresh = useCallback(async (repositoryPath = path) => {
     if (!repositoryPath) return;
     const requestId = ++historyRequestRef.current;
     setHistoryLoadingDirection(null);
-    setBusy(true);
+    const switching = repositoryPath !== path;
+    const snapshot = switching ? snapshotsRef.current.get(repositoryPath) : undefined;
+    if (snapshot) {
+      setPath(repositoryPath);
+      setSummary(snapshot.summary);
+      setHistorySegments(snapshot.historySegments);
+      setSelectedCommit(snapshot.selectedCommit);
+      setChanges(snapshot.changes);
+      setBranches(snapshot.branches);
+      setOperation(snapshot.operation);
+      setUndoState(snapshot.undoState);
+      setWipSelected(false); setWipDiff(null);
+      setRefreshKey((value) => value + 1);
+      setMessage(`${snapshot.summary.name} · updating…`);
+    }
+    const background = Boolean(snapshot) || (!switching && Boolean(summary));
+    if (background) setRevalidating(true); else setBusy(true);
     try {
       const [nextSummary, nextHistory, nextChanges, nextBranches, nextOperation, nextUndo] = await Promise.all([
         api.summary(repositoryPath),
@@ -166,6 +211,7 @@ export default function App() {
       setUntrusted((current) => (current?.path === repositoryPath ? null : current));
       setMessage(`Refreshed ${nextSummary.name}`);
     } catch (error) {
+      if (isAbandoned(error) || requestId !== historyRequestRef.current) return;
       const text = String(error);
       if (/dubious ownership/i.test(text)) {
         const directory = text.match(/repository at '([^']+)'/)?.[1] ?? null;
@@ -175,9 +221,9 @@ export default function App() {
         setMessage(text);
       }
     } finally {
-      setBusy(false);
+      if (requestId === historyRequestRef.current) { setBusy(false); setRevalidating(false); }
     }
-  }, [path]);
+  }, [path, summary]);
 
   const trustUntrusted = useCallback(async () => {
     if (!untrusted) return;
@@ -543,6 +589,8 @@ export default function App() {
   const closeTab = useCallback((target: string) => {
     if (!target) return;
     lastClosedTabRef.current = target;
+    snapshotsRef.current.delete(target);
+    abandonRepositoryReads(target);
     const next = repoTabs.filter((tab) => tab !== target);
     setRepoTabs(next);
     setUntrusted((current) => (current?.path === target ? null : current));
@@ -698,6 +746,7 @@ export default function App() {
     { id: "intelligence", title: "Open Git Intelligence", category: "Explore", keywords: ["search", "compare", "blame", "file history", "contributors"], disabled: !path, run: () => setView("insights") },
     { id: "worktrees", title: "Manage worktrees", category: "Repository", keywords: ["parallel", "checkout"], disabled: !path, run: () => setView("worktrees") },
     { id: "submodules", title: "Manage submodules", category: "Repository", disabled: !path, run: () => setView("submodules") },
+    { id: "landscape", title: "Open codebase landscape map", category: "Explore", keywords: ["map", "islands", "imports", "dependencies", "architecture", "terrain"], disabled: !path, run: () => setView("landscape") },
     { id: "refs", title: "Open references browser", category: "Repository", keywords: ["branches", "remotes", "tags", "worktrees", "stashes", "submodules"], disabled: !path, run: () => setView("refs") },
     { id: "stashes", title: "Manage stashes", category: "Repository", disabled: !path, run: () => setView("stashes") },
     { id: "recovery", title: "Open recovery & maintenance", category: "Repository", keywords: ["reflog", "fsck", "lfs"], disabled: !path, run: () => setView("recovery") },
@@ -974,6 +1023,20 @@ export default function App() {
               onOpenTerminal={(dir) => { setTerminalOpen(true); requestAnimationFrame(() => terminalRef.current?.createTab(dir)); }}
             />
           )}
+          {path && view === "landscape" && (
+            <LandscapeView
+              repositoryPath={path}
+              onFileAction={async (action, file, repository) => {
+                // Files inside a submodule open in that submodule's own tab.
+                if (repository !== path) {
+                  const opened = await openRepoTab(repository);
+                  if (!opened.ok) { pushToast(`Could not open ${repository}: ${opened.error}`, "error", 9000); return; }
+                }
+                setView("explorer");
+                setExplorerFocus({ path: file, paths: [file], isDir: [false], action: action === "explorer" ? undefined : action, nonce: Date.now() });
+              }}
+            />
+          )}
           {path && (view === "worktrees" || view === "stashes" || view === "recovery") && (
             <WorkflowPanel section={view} repositoryPath={path} operationLocked={operationActive} onOpenWorktree={refresh} onRun={(request) => api.workflow(path, request)} />
           )}
@@ -984,7 +1047,7 @@ export default function App() {
 
       <footer className="ux-statusbar">
         <span className={message.toLowerCase().includes("error") ? "is-error" : ""} role="status" aria-live="polite">{message}</span>
-        <span>{busy ? <><i className="ux-spinner" />Working…</> : path ? `${summary?.head?.slice(0, 8) || "no HEAD"} · ${changes.length ? `${changes.length} changed` : "clean"}` : "Ready"}</span>
+        <span>{busy ? <><i className="ux-spinner" />Working…</> : revalidating ? <><i className="ux-spinner" />Updating…</> : path ? `${summary?.head?.slice(0, 8) || "no HEAD"} · ${changes.length ? `${changes.length} changed` : "clean"}` : "Ready"}</span>
       </footer>
 
       <CommandPalette open={palette} commands={commands} onClose={() => setPalette(false)} />

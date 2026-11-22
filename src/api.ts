@@ -90,6 +90,7 @@ import type {
   SubmoduleForeachResult,
   SubmoduleManifest,
   SubmoduleTree,
+  LandscapeScan,
 } from "./types";
 
 // Diff display options (Settings → Display) are attached to diff viewer calls.
@@ -120,12 +121,133 @@ export function saveApiConnection(connection: { url: string; token: string }): v
 // both where the shapes differ). The `{ ok, result | error }` envelope is
 // unwrapped here so call sites look identical to the old `invoke` calls.
 
+// Read-only routes, grouped per repository. When the user switches tabs the
+// reads still running for the repository they left are cancelled: browsers
+// allow only ~6 connections per host, and a slow repository (a large submodule
+// tree on a network or fuse mount) would otherwise hold them all and stall the
+// tab the user just switched to. The server kills the matching git processes.
+// Writes are never cancelled.
+const READ_ROUTES = new Set([
+  "repository_summary", "repository_remotes", "repository_history", "repository_history_page", "history_query",
+  "repository_status", "repository_branches", "repository_conflicts", "search_commits", "commit_details",
+  "commit_file_diff", "list_tags", "reference_groups", "working_tree_diff", "unstaged_file_diff", "list_tree",
+  "file_at_revision", "commit_activity", "diff_revisions", "history_change_stats", "compare_refs", "range_diff",
+  "repository_health", "file_history", "line_history", "blame_file", "contributors", "worktree_summaries",
+  "repository_operation_state", "undo_state", "last_commit_message", "commit_offset", "diff_commit_files",
+  "submodule_tree", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
+  "fork_point", "predict_conflicts", "cleanup_candidates", "file_blob", "sparse_status", "notes_get",
+]);
+const repoReads = new Map<string, AbortController>();
+
+/** Cancel the read requests still running for `path` (its tab was left or closed). */
+export function abandonRepositoryReads(path: string): void {
+  repoReads.get(path)?.abort();
+  repoReads.delete(path);
+}
+
+/** True for the rejection of a read cancelled by abandonRepositoryReads. */
+export function isAbandoned(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name === "AbortError";
+}
+
+function readSignal(command: string, payload: Record<string, unknown>): AbortSignal | undefined {
+  const path = payload.path;
+  if (typeof path !== "string" || !path || !READ_ROUTES.has(command)) return undefined;
+  let controller = repoReads.get(path);
+  if (!controller) { controller = new AbortController(); repoReads.set(path, controller); }
+  return controller.signal;
+}
+
+const abortError = () => Object.assign(new Error("request cancelled"), { name: "AbortError" });
+
+// ---------------------------------------------------------------------------
+// Transport: one multiplexed WebSocket (/api/rpc) when available, so requests
+// for different repositories never queue behind each other in the browser's
+// per-host connection pool; plain HTTP POST otherwise (old servers, proxies
+// that drop WebSockets).
+// ---------------------------------------------------------------------------
+type RpcWaiter = { resolve: (value: unknown) => void; reject: (error: Error) => void };
+let rpcSocket: WebSocket | null = null;
+let rpcConnecting: Promise<WebSocket | null> | null = null;
+let rpcFailures = 0;
+let rpcNextId = 1;
+const rpcWaiters = new Map<number, RpcWaiter>();
+
+function rpcUrl(): string {
+  const connection = getApiConnection();
+  const base = connection.url ? new URL(connection.url) : new URL(window.location.href);
+  const proto = base.protocol === "https:" ? "wss" : "ws";
+  const token = connection.token ? `?token=${encodeURIComponent(connection.token)}` : "";
+  return `${proto}://${base.host}/api/rpc${token}`;
+}
+
+function rpcConnect(): Promise<WebSocket | null> {
+  if (rpcSocket?.readyState === WebSocket.OPEN) return Promise.resolve(rpcSocket);
+  if (rpcConnecting) return rpcConnecting;
+  if (rpcFailures >= 3 || typeof WebSocket === "undefined" || typeof window === "undefined") return Promise.resolve(null);
+  rpcConnecting = new Promise((resolve) => {
+    let opened = false;
+    let socket: WebSocket;
+    try { socket = new WebSocket(rpcUrl()); } catch { rpcFailures = 3; rpcConnecting = null; resolve(null); return; }
+    const timer = window.setTimeout(() => socket.close(), 4000);
+    socket.onopen = () => {
+      window.clearTimeout(timer);
+      opened = true;
+      rpcFailures = 0;
+      rpcSocket = socket;
+      rpcConnecting = null;
+      resolve(socket);
+    };
+    socket.onmessage = (event) => {
+      let frame: { id?: number; ok?: boolean; result?: unknown; error?: string; status?: number };
+      try { frame = JSON.parse(String(event.data)); } catch { return; }
+      const waiter = typeof frame.id === "number" ? rpcWaiters.get(frame.id) : undefined;
+      if (!waiter || frame.id === undefined) return;
+      rpcWaiters.delete(frame.id);
+      if (frame.ok) waiter.resolve(frame.result);
+      else waiter.reject(new Error(frame.error ?? `request failed (${frame.status ?? "?"})`));
+    };
+    socket.onclose = () => {
+      window.clearTimeout(timer);
+      if (rpcSocket === socket) rpcSocket = null;
+      if (!opened) { rpcFailures += 1; rpcConnecting = null; resolve(null); return; }
+      // Requests in flight on a dropped socket: their outcome is unknown.
+      for (const waiter of rpcWaiters.values()) waiter.reject(new Error("connection to the Chrono backend was lost"));
+      rpcWaiters.clear();
+    };
+  });
+  return rpcConnecting;
+}
+
+function rpcCall<T>(socket: WebSocket, command: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (signal?.aborted) { reject(abortError()); return; }
+    const id = rpcNextId++;
+    const onAbort = () => {
+      if (!rpcWaiters.delete(id)) return;
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ id, cancel: true }));
+      reject(abortError());
+    };
+    rpcWaiters.set(id, {
+      resolve: (value) => { signal?.removeEventListener("abort", onAbort); resolve(value as T); },
+      reject: (error) => { signal?.removeEventListener("abort", onAbort); reject(error); },
+    });
+    signal?.addEventListener("abort", onAbort, { once: true });
+    socket.send(JSON.stringify({ id, command, body }));
+  });
+}
+
 async function invoke<T>(command: string, payload: Record<string, unknown> = {}): Promise<T> {
+  const request = DIFF_ROUTES.has(command) ? { ...payload, diffOptions: getDiffOptions() } : payload;
+  const signal = readSignal(command, payload);
+  const socket = await rpcConnect();
+  if (socket) return rpcCall<T>(socket, command, request, signal);
   const connection = getApiConnection();
   const response = await fetch(`${connection.url}/api/${command}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(connection.token ? { Authorization: `Bearer ${connection.token}` } : {}) },
-    body: JSON.stringify(DIFF_ROUTES.has(command) ? { ...payload, diffOptions: getDiffOptions() } : payload),
+    body: JSON.stringify(request),
+    signal,
   });
   let body: { ok: boolean; result?: T; error?: string } | null = null;
   try {
@@ -252,6 +374,7 @@ export const api = {
   diffCommitFiles: (path: string, from: string, to: string) =>
     invoke<CommitFileChange[]>("diff_commit_files", { path, from, to }),
   submoduleTree: (path: string) => invoke<SubmoduleTree>("submodule_tree", { path }),
+  landscapeScan: (path: string, force = false) => invoke<LandscapeScan>("landscape_scan", { path, force }),
   submoduleAction: (path: string, action: SubmoduleAction, target = "") => invoke<string>("submodule_action", { path, action, target }),
   submoduleBulk: (path: string, action: SubmoduleBulkAction, targets: string[]) => invoke<SubmoduleBulkResult[]>("submodule_bulk", { path, action, targets }),
   submoduleForeach: (path: string, command: string, targets: string[]) => invoke<SubmoduleForeachResult[]>("submodule_foreach", { path, command, targets }),
