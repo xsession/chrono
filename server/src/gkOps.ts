@@ -12,6 +12,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { AppError, invalidError } from "./lib/errors.ts";
 import { workspacesFile } from "./workspaces.ts";
+import { commitSubmodules } from "./nestedCommit.ts";
 import { finishStream, runGitStreaming } from "./lib/streams.ts";
 
 /** Run with live output when a stream id is supplied; throws like `checked`. */
@@ -310,6 +311,9 @@ export async function commit(inputPath: string, options: CommitOptions): Promise
   if (options.allowEmpty) args.push("--allow-empty");
   if (options.noVerify) args.push("--no-verify");
   if (message) args.push("-m", message); else args.push("--no-edit");
+  // Submodules with staged changes are committed first (nestedCommit.ts).
+  const root = await repositoryRoot(inputPath);
+  await commitSubmodules(root, { message: message || (await checkedStdout(root, ["log", "-1", "--format=%B"])).trim(), signoff: options.signoff, noVerify: options.noVerify });
   await checked(inputPath, args);
   return (await checkedStdout(inputPath, ["rev-parse", "HEAD"])).trim();
 }

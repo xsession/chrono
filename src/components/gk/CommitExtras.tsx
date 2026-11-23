@@ -27,7 +27,7 @@ export function SignatureBadge({ info, compact = false }: { info: SignatureInfo 
 /** Extra sections for the commit inspector: signature, AI/offline
  *  explanation, git notes and CI checks. */
 export function CommitExtras({ repositoryPath, sha, signature }: { repositoryPath: string; sha: string; signature: SignatureInfo | undefined }) {
-  const [explanation, setExplanation] = useState<{ text: string; source: string } | null>(null);
+  const [explanation, setExplanation] = useState<{ text: string; source: string; model?: string } | null>(null);
   const [explaining, setExplaining] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -54,7 +54,7 @@ export function CommitExtras({ repositoryPath, sha, signature }: { repositoryPat
           try { setExplanation(await api.explain(repositoryPath, "commit", sha)); } catch (error) { pushToast(String(error), "error"); }
           finally { setExplaining(false); }
         }}>{explaining ? "Thinking…" : "✨ Explain this commit"}</button></div>
-        {explanation && <pre className="ux-commit-body gk-explain">{explanation.text}<small>{explanation.source === "ollama" ? "local AI (Ollama)" : "offline summary"}</small></pre>}
+        {explanation && <pre className="ux-commit-body gk-explain">{explanation.text}<small>{explanation.source === "claude" ? `Claude${explanation.model ? ` (${explanation.model})` : ""}` : explanation.source === "ollama" ? "local AI (Ollama)" : "offline summary"}</small></pre>}
       </section>
       <section className="ux-inspector-section">
         <div className="ux-section-title"><strong>Notes</strong>{!editing && <button type="button" className="gk-link-button" onClick={() => { setDraft(note ?? ""); setEditing(true); }}>{note ? "Edit" : "Add note"}</button>}</div>

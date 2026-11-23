@@ -31,6 +31,8 @@ import {
   type CommitRecord, HISTORY_ALL_REFS } from "./lib/git.ts";
 import { workspacesFile } from "./workspaces.ts";
 import { finishStream, runGitStreaming } from "./lib/streams.ts";
+import { commitSubmodules, NestedCommitError, type NestedCommit } from "./nestedCommit.ts";
+import { aiComplete, AiUnavailableError } from "./ai.ts";
 
 const configDir = () => path.dirname(workspacesFile());
 
@@ -411,6 +413,8 @@ export async function setHookEnabled(inputPath: string, name: string, enabled: b
 export interface HookCommitResult {
   ok: boolean;
   commit: string | null;
+  /** Commits made first in submodules with staged changes, deepest first. */
+  nested?: NestedCommit[];
   output: string;
   exitCode: number;
   hookFailed: string | null;
@@ -419,29 +423,53 @@ export interface HookCommitResult {
 
 /** Commit capturing the full hook output (pre-commit / commit-msg). On failure
  *  the UI shows the output and can retry with --no-verify explicitly. */
-export async function commitWithHooks(inputPath: string, options: { message: string; amend?: boolean; signoff?: boolean; noVerify?: boolean; streamId?: string | null }): Promise<HookCommitResult> {
+/** Author and committer for one commit, overriding user.name / user.email. */
+export interface CommitIdentity { name: string; email: string }
+
+export function identityEnv(identity: CommitIdentity | null | undefined): Record<string, string> {
+  if (!identity) return {};
+  const name = identity.name.trim();
+  const email = identity.email.trim();
+  if (!name || !/^[^\s@<>]+@[^\s@<>]+$/.test(email)) throw invalidError("commit identity needs a name and a valid email");
+  return { GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: email };
+}
+
+export async function commitWithHooks(inputPath: string, options: { message: string; amend?: boolean; signoff?: boolean; noVerify?: boolean; streamId?: string | null; identity?: CommitIdentity | null }): Promise<HookCommitResult> {
   const root = await repositoryRoot(inputPath);
   const message = options.message.trim();
   if (!message && !options.amend) throw invalidError("commit message is empty");
+  const env = identityEnv(options.identity);
   const { hooks } = await listHooks(root);
   const activeHooks = hooks.filter((hook) => hook.exists && hook.executable && ["pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "pre-merge-commit"].includes(hook.name)).map((hook) => hook.name);
+  // Submodules with staged changes get their own commits first, so this commit
+  // records their new commit ids instead of a "-dirty" submodule.
+  let nested: NestedCommit[] = [];
+  try {
+    nested = await commitSubmodules(root, { message: message || (await runGit(root, ["log", "-1", "--format=%B"])).stdout.trim(), signoff: options.signoff, noVerify: options.noVerify, env });
+  } catch (error) {
+    if (!(error instanceof NestedCommitError)) throw error;
+    // Offer the --no-verify retry only when that submodule has commit hooks.
+    const subHooks = options.noVerify ? [] : (await listHooks(path.join(root, error.repository)).catch(() => ({ hooks: [] as Array<{ name: string; exists: boolean; executable: boolean }> }))).hooks;
+    const hookFailed = subHooks.find((hook) => hook.exists && hook.executable && (hook.name === "pre-commit" || hook.name === "commit-msg"))?.name ?? null;
+    return { ok: false, commit: null, nested: error.done, output: `Submodule ${error.repository}:\n${error.output}`, exitCode: error.exitCode, hookFailed, activeHooks };
+  }
   const args = ["commit"];
   if (options.amend) args.push("--amend");
   if (options.signoff) args.push("--signoff");
   if (options.noVerify) args.push("--no-verify");
   if (message) args.push("-m", message); else args.push("--no-edit");
   const out = options.streamId
-    ? await runGitStreaming(root, args, options.streamId, { FORCE_COLOR: "1", CLICOLOR_FORCE: "1" })
-    : await runGit(root, args, { FORCE_COLOR: "1", CLICOLOR_FORCE: "1" });
+    ? await runGitStreaming(root, args, options.streamId, { FORCE_COLOR: "1", CLICOLOR_FORCE: "1", ...env })
+    : await runGit(root, args, { FORCE_COLOR: "1", CLICOLOR_FORCE: "1", ...env });
   if (options.streamId) finishStream(options.streamId, out.code);
   const output = [out.stdout, out.stderr].filter(Boolean).join("\n");
   if (out.code === 0) {
     const sha = (await checkedStdout(root, ["rev-parse", "HEAD"])).trim();
-    return { ok: true, commit: sha, output, exitCode: 0, hookFailed: null, activeHooks };
+    return { ok: true, commit: sha, nested, output, exitCode: 0, hookFailed: null, activeHooks };
   }
   const nothing = /nothing to commit|no changes added/i.test(output);
   const hookFailed = nothing || options.noVerify ? null : activeHooks.find((hook) => hook === "pre-commit" || hook === "commit-msg" || hook === "pre-merge-commit") ?? null;
-  return { ok: false, commit: null, output, exitCode: out.code, hookFailed, activeHooks };
+  return { ok: false, commit: null, nested, output, exitCode: out.code, hookFailed, activeHooks };
 }
 
 // --- Issue autolinks (stored in repo-local git config) ----------------------
@@ -972,22 +1000,6 @@ export async function gitflowFinish(inputPath: string, type: FlowType, name: str
 
 // --- Local-first AI explanations --------------------------------------------
 
-async function ollama(prompt: string, model: string, tokens = 400): Promise<string | null> {
-  try {
-    const response = await fetch("http://127.0.0.1:11434/api/generate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model, stream: false, prompt, options: { temperature: 0.2, num_predict: tokens } }),
-      signal: AbortSignal.timeout(25000),
-    });
-    if (!response.ok) return null;
-    const data = await response.json() as { response?: unknown };
-    return typeof data.response === "string" && data.response.trim() ? data.response.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
 function summarizeStat(stat: string): string {
   const lines = stat.split(/\r?\n/).filter((line) => line.includes("|"));
   const dirs = new Map<string, number>();
@@ -1003,9 +1015,8 @@ function summarizeStat(stat: string): string {
 
 export type ExplainKind = "commit" | "branch" | "working" | "pr";
 
-export async function explain(inputPath: string, kind: ExplainKind, ref: string | null, base: string | null): Promise<{ text: string; source: "ollama" | "local-rules"; title?: string }> {
+export async function explain(inputPath: string, kind: ExplainKind, ref: string | null, base: string | null): Promise<{ text: string; source: "ollama" | "claude" | "local-rules"; title?: string; model?: string }> {
   const root = await repositoryRoot(inputPath);
-  const model = process.env.CHRONO_LOCAL_AI_MODEL || "qwen2.5:3b";
   let stat = "";
   let patch = "";
   let subjects: string[] = [];
@@ -1030,16 +1041,22 @@ export async function explain(inputPath: string, kind: ExplainKind, ref: string 
   const task = kind === "pr"
     ? "Write a pull request description in Markdown with sections: Summary (2-3 sentences), Changes (bullets), Testing (bullets of what to check). Be factual; do not invent details."
     : "Explain these changes for a code reviewer in at most 6 short bullet points: what changed, why it likely changed, and any risk. Be factual; do not invent details.";
-  const prompt = `${task}\n\nContext: ${heading}\n${subjects.length ? `Commits:\n${subjects.map((s) => `- ${s}`).join("\n")}\n` : ""}Diffstat:\n${stat}\n\nPatch (truncated):\n${patch}`;
-  const modelText = await ollama(prompt, model, kind === "pr" ? 600 : 350);
-  if (modelText) return { text: modelText, source: "ollama", title: subjects[0] };
+  const context = `Context: ${heading}\n${subjects.length ? `Commits:\n${subjects.map((s) => `- ${s}`).join("\n")}\n` : ""}Diffstat:\n${stat}\n\nPatch (truncated):\n${patch}`;
+  let notice = "";
+  try {
+    const answer = await aiComplete({ system: `You review Git changes. ${task} Answer in plain text without a preamble.`, prompt: context, maxTokens: kind === "pr" ? 600 : 350 });
+    if (answer) return { text: answer.text, source: answer.source, model: answer.model, title: subjects[0] };
+  } catch (error) {
+    if (!(error instanceof AiUnavailableError)) throw error;
+    notice = error.message;
+  }
   // Deterministic offline fallback.
   const summary = summarizeStat(stat);
   if (kind === "pr") {
     const text = `## Summary\n${subjects.length ? `This branch contains ${subjects.length} commit(s).` : "No commits ahead of the base branch."}\n\n## Changes\n${subjects.map((s) => `- ${s}`).join("\n") || "- (none)"}\n\n## Diffstat\n\`\`\`\n${summary}\n\`\`\`\n\n## Testing\n- [ ] Describe how this was tested`;
     return { text, source: "local-rules", title: subjects[subjects.length - 1] ?? subjects[0] };
   }
-  const text = `${kind === "commit" ? `Commit: ${heading.split("\n")[0]}\n` : kind === "branch" ? `Branch ${heading}: ${subjects.length} commit(s)\n${subjects.slice(0, 10).map((s) => `• ${s}`).join("\n")}\n` : "Working changes\n"}\n${summary || "No changes."}\n\n(Offline summary — start Ollama on 127.0.0.1:11434 for an AI explanation.)`;
+  const text = `${kind === "commit" ? `Commit: ${heading.split("\n")[0]}\n` : kind === "branch" ? `Branch ${heading}: ${subjects.length} commit(s)\n${subjects.slice(0, 10).map((s) => `• ${s}`).join("\n")}\n` : "Working changes\n"}\n${summary || "No changes."}\n\n(${notice || "Offline summary: choose an AI provider in Settings → AI assistant, or start Ollama, for an AI explanation."})`;
   return { text, source: "local-rules" };
 }
 

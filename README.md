@@ -83,8 +83,9 @@ It detects SSH and HTTPS remotes, supports GitHub, GitLab, Gitea and Forgejo,
 and keeps entered provider tokens in memory only. File history now includes a
 revision viewer with previous/next navigation, root-revision previews and
 unified two-revision diffs. The Changes view also has a local commit-writing
-assistant: it can use Ollama on `127.0.0.1:11434` when available and otherwise
-creates a conservative offline draft from the staged index. Drafts support
+assistant: it uses the AI provider chosen in *Repository settings → AI
+assistant* (a local Ollama model, the default, or Claude through the Anthropic
+API) and otherwise creates a conservative offline draft from the staged index. Drafts support
 Conventional Commit or plain imperative style plus safe `#123`/`PROJECT-123`
 issue references. The Worktrees view reports dirty-file and conflict counts
 for every linked checkout and can open a selected worktree. Changes also
@@ -175,6 +176,42 @@ nested several levels deep.
   *Select the ones not done* to retry.
 - **Manifest:** export every submodule's path, URL, commit and branch as JSON
   (copy or download), to record or reproduce a tree's exact state.
+- **Commit through submodules, at any depth.** Staging a submodule from its
+  parent stages the changes inside it (nested submodules too), and
+  committing from the parent first gives every submodule with staged changes
+  a normal commit, deepest first; each parent then records its child's new
+  commit id and is committed itself. Nothing is left "-dirty". The commit box
+  lists which submodules will be committed. A detached submodule whose commit
+  is the tip of exactly one branch is put back on that branch first; otherwise
+  Chrono warns that the commit is on a detached HEAD. A failing hook stops at
+  that submodule, says which one, and offers the usual *Commit anyway*.
+
+## Several git identities
+
+Save identity profiles (name, email, signing key) in *Repository settings →
+Identity & signing*, then attach one to a repository or to a whole folder;
+Chrono adds a git `include`, so the CLI and other tools commit as that person
+too. For a one-off, **Commit as** in the commit box picks a profile for this
+commit (and the next ones in this repository while it stays chosen), for the
+repository and every submodule committed with it. *Always use here* turns the
+choice into the repository's identity.
+
+## AI assistant
+
+*Repository settings → AI assistant* chooses what drafts commit messages and
+explains commits, branches and working changes:
+
+- **Local model (Ollama)**, the default: nothing leaves the machine. Set the
+  address and model (default `qwen2.5:3b`, or `CHRONO_LOCAL_AI_MODEL`).
+- **Claude (Anthropic API)**: staged diffs and commit contents are sent to
+  Anthropic. Needs credentials: an API key saved on that page (stored owner-only on the server, never shown
+  again), `ANTHROPIC_API_KEY` in Chrono's environment, or an `ant auth login`
+  profile. The default model is Claude Opus 5.5; short tasks run at low effort,
+  and if Claude declines a request the API retries it on a fallback model.
+- **Off**: offline rules only.
+
+*Test* checks the chosen provider. When it can't answer, Chrono falls back to
+offline rules and says why.
 
 | | |
 |---|---|
@@ -407,6 +444,9 @@ npm run test:submodules # submodule tree, bulk actions, foreach and manifest
 npm run test:trust     # dubious-ownership detection and safe.directory trust
 npm run test:folders   # folder picker listing; no browser prompt dialogs
 npm run test:watch     # live changes: edits, commits and branch moves reported within one second
+npm run test:nested-commit # commits through nested submodules, deepest first
+npm run test:ai        # AI assistant settings and fallbacks (no network)
+npm run test:stash-history # stash nodes in the graph
 npm run test:lanes     # per-repository git lanes: sharing, isolation, cancelling
 npm run test:landscape # landscape scan and the embedded map page
 npm run test:all       # everything above

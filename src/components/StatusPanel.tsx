@@ -6,6 +6,7 @@ import { SplitHandle } from "./SplitHandle";
 import { WorkingDiffView } from "./WorkingDiffView";
 import { SubmoduleChangeDetails, submoduleSummary, type DiffGroup } from "./SubmoduleChangeDetails";
 import { api } from "../api";
+import { rowStaged, rowUnstaged } from "../submoduleStaging";
 
 type Props = {
   changes: FileChange[];
@@ -121,8 +122,9 @@ export function StatusPanel({ changes, repositoryPath, onStage, onStageHunks, on
 
   const grouped = useMemo(() => {
     const conflicts = changes.filter((change) => change.conflicted);
-    const staged = changes.filter((change) => !change.conflicted && change.indexStatus !== " " && change.indexStatus !== "?");
-    const unstaged = changes.filter((change) => !change.conflicted && (change.worktreeStatus !== " " || change.indexStatus === "?"));
+    // Submodules count as staged when something inside them is (see submoduleStaging.ts).
+    const staged = changes.filter((change) => !change.conflicted && rowStaged(change));
+    const unstaged = changes.filter((change) => !change.conflicted && rowUnstaged(change));
     return { conflicts, staged, unstaged };
   }, [changes]);
 
@@ -234,7 +236,7 @@ export function StatusPanel({ changes, repositoryPath, onStage, onStageHunks, on
                 const draft = await onDraftCommit({ style: draftStyle, issueReference: issueReference.trim() || undefined });
                 setMessage(draft.message);
                 setIssueReference(draft.issueReference || issueReference);
-                setDraftNotice(draft.source === "ollama" ? `Local model: ${draft.model || "Ollama"}` : "Offline local draft");
+                setDraftNotice(draft.source === "claude" ? `Claude: ${draft.model || "claude"}` : draft.source === "ollama" ? `Local model: ${draft.model || "Ollama"}` : draft.notice ? `Offline draft (${draft.notice})` : "Offline local draft");
               } catch (error) {
                 setDraftNotice(String(error));
               } finally {

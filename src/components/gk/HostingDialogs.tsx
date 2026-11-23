@@ -66,7 +66,7 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
       const result = await api.explain(repositoryPath, "pr", head, `${remote}/${base}`).catch(() => api.explain(repositoryPath, "pr", head, base));
       setDescription(result.text);
       if (!title && result.title) setTitle(result.title);
-      pushToast(result.source === "ollama" ? "Description drafted with local AI" : "Offline description drafted (Ollama not running)", "info");
+      pushToast(result.source === "claude" ? "Description drafted with Claude" : result.source === "ollama" ? "Description drafted with local AI" : "Offline description drafted (no AI provider answered; see Settings → AI assistant)", "info");
     } catch (error) { pushToast(errorText(error), "error"); }
     finally { setGenerating(false); }
   };

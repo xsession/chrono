@@ -53,6 +53,10 @@ jobs:
         run: npm run test:watch
       - name: Stash nodes in the history
         run: npm run test:stash-history
+      - name: Commits through nested submodules
+        run: npm run test:nested-commit
+      - name: AI assistant settings
+        run: npm run test:ai
       - name: Roadmap features
         run: npm run test:roadmap
       - name: Git smoke tests

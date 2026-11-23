@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { api } from "../../api";
-import type { CommitTemplate, ContributorRecord, FileChange, HookCommitResult } from "../../types";
+import type { CommitTemplate, ContributorRecord, FileChange, HookCommitResult, IdentityProfile, NestedCommit } from "../../types";
 import { Icon } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askConfirm, askText } from "../DialogHost";
 import { pushToast } from "../../toastBus";
 import { withLiveOutput } from "../../liveOutput";
 import { SubmoduleChangeDetails, submoduleSummary } from "../SubmoduleChangeDetails";
+import { isStaged, isUnstaged, nestedCommitPlan, rowStaged, rowUnstaged } from "../../submoduleStaging";
 
 type Props = {
   repositoryPath: string;
@@ -43,8 +44,7 @@ function letter(code: string, conflicted: boolean): { mark: string; kind: string
   }
 }
 
-const isStaged = (change: FileChange) => !change.conflicted && change.indexStatus !== " " && change.indexStatus !== "?" && change.indexStatus !== "";
-const isUnstaged = (change: FileChange) => change.conflicted || change.worktreeStatus !== " " && change.worktreeStatus !== "" || change.indexStatus === "?";
+
 
 /** GitKraken's right-hand WIP panel: Unstaged / Staged file lists with
  *  stage-all / unstage-all, path ⇄ tree view, per-file context menus, and the
@@ -66,6 +66,29 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
   const [showCoAuthors, setShowCoAuthors] = useState(false);
   const [explanation, setExplanation] = useState<{ text: string; source: string } | null>(null);
   const [explaining, setExplaining] = useState(false);
+  // Multi-user: commit as a saved identity profile (this commit and, while
+  // chosen, the next ones in this repository) instead of the configured user.
+  const [profiles, setProfiles] = useState<IdentityProfile[]>([]);
+  const [defaultIdentity, setDefaultIdentity] = useState<{ name: string; email: string; origin: string } | null>(null);
+  const commitAsKey = `chrono.commitAs.${repositoryPath}`;
+  const [commitAs, setCommitAs] = useState<string>(() => localStorage.getItem(commitAsKey) ?? "");
+  useEffect(() => {
+    setCommitAs(localStorage.getItem(commitAsKey) ?? "");
+    let cancelled = false;
+    api.profiles(repositoryPath).then((result) => { if (!cancelled) { setProfiles(result.profiles); setDefaultIdentity(result.effective); } }).catch(() => { if (!cancelled) { setProfiles([]); setDefaultIdentity(null); } });
+    return () => { cancelled = true; };
+  }, [repositoryPath, commitAsKey]);
+  const chosenProfile = profiles.find((profile) => profile.name === commitAs) ?? null;
+  const identity = chosenProfile ? { name: chosenProfile.userName, email: chosenProfile.userEmail } : null;
+  const chooseCommitAs = (name: string) => {
+    setCommitAs(name);
+    if (name) localStorage.setItem(commitAsKey, name); else localStorage.removeItem(commitAsKey);
+  };
+  const reportNested = (nested: NestedCommit[] | undefined) => {
+    if (!nested?.length) return;
+    const detached = nested.filter((entry) => entry.detached).map((entry) => entry.path);
+    pushToast(`Also committed in ${nested.map((entry) => entry.path).join(", ")}${detached.length ? `. On a detached HEAD in ${detached.join(", ")}: create a branch there before pushing.` : ""}`, detached.length ? "info" : "success", detached.length ? 12000 : 5000);
+  };
 
   useEffect(() => { api.commitTemplates(repositoryPath).then(setTemplates).catch(() => setTemplates([])); }, [repositoryPath]);
   useEffect(() => {
@@ -81,8 +104,10 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
   const templateTrigger = summary.startsWith("t:") ? summary.slice(2).trim().toLowerCase() : null;
   const templateMatches = templateTrigger === null ? [] : templates.filter((template) => template.name.toLowerCase().includes(templateTrigger));
 
-  const unstaged = useMemo(() => changes.filter(isUnstaged), [changes]);
-  const staged = useMemo(() => changes.filter(isStaged), [changes]);
+  const unstaged = useMemo(() => changes.filter(rowUnstaged), [changes]);
+  const staged = useMemo(() => changes.filter(rowStaged), [changes]);
+  const nestedPlan = useMemo(() => nestedCommitPlan(changes), [changes]);
+  const stagedFiles = staged.filter((change) => !change.submodule).length;
   const conflicts = changes.filter((change) => change.conflicted).length;
 
   useEffect(() => {
@@ -108,9 +133,10 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
     let succeeded = false;
     await run(amend ? "Amend commit" : "Commit", async () => {
       if (stageAllFirst) await api.stage(repositoryPath, unstaged.map((change) => change.path));
-      const result = await withLiveOutput(amend ? "Amend commit" : "Commit", (streamId) => api.commitWithHooks(repositoryPath, message, { amend, signoff, streamId }));
+      const result = await withLiveOutput(amend ? "Amend commit" : "Commit", (streamId) => api.commitWithHooks(repositoryPath, message, { amend, signoff, streamId, identity }));
       if (!result.ok) { failure = result; throw new Error(result.hookFailed ? `${result.hookFailed} hook failed` : result.output.trim() || "commit failed"); }
       succeeded = true;
+      reportNested(result.nested);
     });
     const failed = failure as HookCommitResult | null;
     if (!succeeded && failed?.hookFailed) {
@@ -123,9 +149,10 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
       ), { confirm: "Commit anyway (--no-verify)", danger: true });
       if (bypass) {
         await run("Commit (hooks bypassed)", async () => {
-          const retry = await api.commitWithHooks(repositoryPath, message, { amend, signoff, noVerify: true });
+          const retry = await api.commitWithHooks(repositoryPath, message, { amend, signoff, noVerify: true, identity });
           if (!retry.ok) throw new Error(retry.output.trim() || "commit failed");
           succeeded = true;
+          reportNested(retry.nested);
         });
       }
     }
@@ -136,6 +163,7 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
     setDrafting(true);
     try {
       const result = await api.draftCommit(repositoryPath, "auto", undefined, { style: "conventional" });
+      if (result.notice) pushToast(`${result.notice} Drafted with offline rules instead.`, "error", 12000);
       const [first, ...rest] = result.message.split(/\r?\n/);
       setSummary(first ?? "");
       setDescription(rest.join("\n").replace(/^\n+/, ""));
@@ -200,7 +228,7 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
       const name = slash >= 0 ? change.path.slice(slash + 1) : change.path;
       // A changed submodule lists what changed inside it, under the row of the
       // group its own changes belong to.
-      const sub = change.submodule && group === (isUnstaged(change) ? "unstaged" : "staged") ? change.submodule : null;
+      const sub = change.submodule && group === (rowUnstaged(change) ? "unstaged" : "staged") ? change.submodule : null;
       const subOpen = sub ? !collapsedSubs.has(change.path) : false;
       const toggleSub = () => setCollapsedSubs((current) => { const next = new Set(current); if (next.has(change.path)) next.delete(change.path); else next.add(change.path); return next; });
       const header = view === "tree" && folder !== lastFolder ? <div key={`${group}-dir-${folder}`} className="gk-wip-folder"><Icon name="folder" />{folder || "/"}</div> : null;
@@ -286,7 +314,7 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
       {explanation && (
         <div className="gk-wip-explain">
           <pre>{explanation.text}</pre>
-          <div><small>{explanation.source === "ollama" ? "local AI" : "offline summary"}</small><button type="button" className="gk-link-button" onClick={() => setExplanation(null)}>Dismiss</button></div>
+          <div><small>{explanation.source === "claude" ? "Claude" : explanation.source === "ollama" ? "local AI" : "offline summary"}</small><button type="button" className="gk-link-button" onClick={() => setExplanation(null)}>Dismiss</button></div>
         </div>
       )}
 
@@ -348,10 +376,33 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
             </div>
           </div>
         )}
+        <div className="gk-commit-as">
+          <label>
+            <span>Commit as</span>
+            <select value={chosenProfile ? commitAs : ""} onChange={(event) => chooseCommitAs(event.target.value)} aria-label="Commit as" title="Identity profiles are managed in Repository settings → Identity & signing">
+              <option value="">{defaultIdentity ? `${defaultIdentity.name} <${defaultIdentity.email}>` : "the configured git user"}</option>
+              {profiles.map((profile) => <option key={profile.name} value={profile.name}>{profile.name}: {profile.userName} &lt;{profile.userEmail}&gt;</option>)}
+            </select>
+          </label>
+          {chosenProfile && (
+            <button type="button" className="gk-link-button" disabled={busy} title="Make this profile the repository's identity (git config include), so every tool commits as it" onClick={() => void run(`Use ${chosenProfile.name} for this repository`, async () => {
+              await api.applyProfile(repositoryPath, chosenProfile.name, "repo");
+              chooseCommitAs("");
+              const refreshed = await api.profiles(repositoryPath);
+              setProfiles(refreshed.profiles); setDefaultIdentity(refreshed.effective);
+            })}>Always use here</button>
+          )}
+          {!profiles.length && <small title="Add profiles in Repository settings → Identity & signing">No profiles yet</small>}
+        </div>
+        {nestedPlan.length > 0 && !conflicts && (
+          <p className="gk-nested-plan" title="Each submodule gets a normal commit with this message, deepest first; this repository then records their new commit ids.">
+            Commits first in {nestedPlan.map((entry, index) => <span key={entry}>{index ? ", " : ""}<code>{entry}</code></span>)}, then here.
+          </p>
+        )}
         <button type="button" className="gk-commit-button" disabled={!canCommit} onClick={() => void commit()} title="Ctrl+Enter">
           {conflicts ? "Resolve conflicts to commit"
             : amend ? "Amend previous commit"
-            : staged.length ? `Commit changes to ${staged.length} file${staged.length === 1 ? "" : "s"}`
+            : staged.length ? `Commit ${[stagedFiles ? `${stagedFiles} file${stagedFiles === 1 ? "" : "s"}` : "", nestedPlan.length ? `${nestedPlan.length} submodule${nestedPlan.length === 1 ? "" : "s"}` : ""].filter(Boolean).join(" and ") || `changes to ${staged.length} file${staged.length === 1 ? "" : "s"}`}`
             : unstaged.length ? `Stage all & commit ${unstaged.length} file${unstaged.length === 1 ? "" : "s"}`
             : "No changes to commit"}
         </button>

@@ -167,6 +167,12 @@
 .gk-commit-box { flex: none; display: grid; gap: 6px; padding: 10px 12px 12px; background: var(--gk-bg-0); }
 .gk-commit-options { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: #b6bdc8; font-size: 11px; }
 .gk-commit-options label { display: inline-flex; align-items: center; gap: 4px; }
+.gk-commit-as { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; color: #b6bdc8; font-size: 11px; }
+.gk-commit-as label { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 200px; }
+.gk-commit-as select { flex: 1; min-width: 0; height: 24px; border: 1px solid var(--gk-line, #333944); border-radius: 3px; background: var(--gk-bg-2, #1b1f26); color: inherit; font-size: 11px; }
+.gk-commit-as small { color: #7d8794; }
+.gk-nested-plan { margin: 0; padding: 5px 7px; border-left: 2px solid #4f8cc9; background: rgba(79, 140, 201, .1); color: #b6c8dc; font-size: 11px; line-height: 1.45; }
+.gk-nested-plan code { font-size: 10.5px; color: #dce8f5; }
 .gk-commit-options .gk-link-button { margin-left: auto; text-decoration: none; }
 .gk-summary-row { display: grid; grid-template-columns: minmax(0, 1fr) 32px; align-items: center; border: 1px solid var(--gk-line); border-radius: 4px; background: var(--gk-bg-1); }
 .gk-summary-row input { min-width: 0; height: 30px; padding: 0 8px; border: 0; outline: 0; background: transparent; font-size: 12.5px; font-weight: 600; }
@@ -504,6 +510,14 @@ html.reduce-motion *, html.reduce-motion *::before, html.reduce-motion *::after 
 .st-row-actions.wrap { flex-wrap: wrap; }
 .st-note { margin: 0; color: var(--gk-grey); font-size: 11px; }
 .st-note code { word-break: break-all; }
+.st-note.is-warning { color: #f0b27a; }
+.st-note.is-ok { color: #7fd3a0; }
+.st-ai-providers { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.st-ai-provider { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--gk-line, #333944); border-radius: 6px; cursor: pointer; }
+.st-ai-provider.is-active { border-color: #4f8cc9; background: rgba(79, 140, 201, .1); }
+.st-ai-provider input { margin-top: 2px; }
+.st-ai-provider span { display: grid; gap: 2px; }
+.st-ai-provider small { color: var(--gk-grey, #8b95a3); font-size: 11px; }
 .st-kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 5px 12px; font-size: 12px; }
 .st-kv span { color: var(--gk-grey); }
 .st-kv code { font-size: 11px; word-break: break-all; }

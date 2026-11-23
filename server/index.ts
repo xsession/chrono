@@ -23,6 +23,7 @@ import * as rebasePlanner from "./src/rebasePlanner.ts";
 import * as explorer from "./src/explorer.ts";
 import * as gk from "./src/gkOps.ts";
 import * as features from "./src/features.ts";
+import * as ai from "./src/ai.ts";
 import * as lineStaging from "./src/lineStaging.ts";
 import * as submodules from "./src/submodules.ts";
 import { landscapeScan } from "./src/landscape.ts";
@@ -133,6 +134,13 @@ function str(value: unknown, field: string): string {
     throw new AppError("invalid", `missing or invalid field: ${field}`);
   }
   return value;
+}
+
+/** `{ name, email }` for a one-off commit identity, or null. */
+function commitIdentity(value: unknown): { name: string; email: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  return typeof record.name === "string" && typeof record.email === "string" ? { name: record.name, email: record.email } : null;
 }
 
 function optStr(value: unknown): string | null {
@@ -493,7 +501,7 @@ const routes: Record<string, Handler> = {
   hook_set_enabled: (body) => features.setHookEnabled(bodyPath(body), str(body.name, "name"), bool(body.enabled, "enabled")),
   commit_with_hooks: (body) =>
     gk.journaled(bodyPath(body), body.amend === true ? "Amend commit" : "Commit", "soft", () =>
-      features.commitWithHooks(bodyPath(body), { message: typeof body.message === "string" ? body.message : "", amend: body.amend === true, signoff: body.signoff === true, noVerify: body.noVerify === true, streamId: validStreamId(body.streamId) })),
+      features.commitWithHooks(bodyPath(body), { message: typeof body.message === "string" ? body.message : "", amend: body.amend === true, signoff: body.signoff === true, noVerify: body.noVerify === true, streamId: validStreamId(body.streamId), identity: commitIdentity(body.identity) })),
   stream_read: async (body) => {
     const id = validStreamId(body.id);
     if (!id) throw new AppError("invalid", "invalid stream id");
@@ -520,6 +528,16 @@ const routes: Record<string, Handler> = {
   stack_set_parent: (body) => features.setStackParent(bodyPath(body), str(body.branch, "branch"), optStr(body.parent)),
   stack_create: (body) => gk.journaled(bodyPath(body), `Create stacked branch ${String(body.name)}`, "keep", () => features.createStackedBranch(bodyPath(body), str(body.parent, "parent"), str(body.name, "name"))),
   stack_restack: (body) => gk.journaled(bodyPath(body), `Restack ${String(body.branch)}`, "keep", () => features.restack(bodyPath(body), str(body.branch, "branch"))),
+  // AI assistant: provider (Ollama / Claude / off), models, Claude API key (write-only).
+  ai_settings: () => ai.getAiSettings(),
+  ai_settings_save: (body) => ai.saveAiSettings({
+    provider: optStr(body.provider) ?? undefined,
+    ollamaUrl: optStr(body.ollamaUrl) ?? undefined,
+    ollamaModel: optStr(body.ollamaModel) ?? undefined,
+    claudeModel: optStr(body.claudeModel) ?? undefined,
+    claudeKey: body.claudeKey === null ? null : optStr(body.claudeKey) ?? undefined,
+  }),
+  ai_test: () => ai.testAi(),
   profiles_list: (body) => features.listProfiles(optStr(body.path)),
   profile_save: (body) => features.saveProfile({ name: str(body.name, "name"), userName: str(body.userName, "userName"), userEmail: str(body.userEmail, "userEmail"), signingKey: optStr(body.signingKey) ?? undefined, gpgFormat: optStr(body.gpgFormat) ?? undefined }),
   profile_delete: (body) => features.deleteProfile(str(body.name, "name")),

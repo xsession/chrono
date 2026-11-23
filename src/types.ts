@@ -106,7 +106,9 @@ export type CommitDraft = {
   message: string;
   style: CommitDraftStyle;
   issueReference: string | null;
-  source: "ollama" | "local-rules";
+  source: "ollama" | "claude" | "local-rules";
+  /** Why the AI provider could not be used (missing SDK or credentials). */
+  notice?: string;
   model: string | null;
   files: CommitDraftFile[];
   truncatedDiff: boolean;
@@ -537,6 +539,8 @@ export type CommitOptions = {
   amend?: boolean;
   signoff?: boolean;
   noVerify?: boolean;
+  /** Author and committer for this commit only (multi-user profiles). */
+  identity?: { name: string; email: string } | null;
 };
 
 export type UndoState = {
@@ -700,7 +704,17 @@ export type PerfStatus = {
 };
 export type PerfAction = "commit_graph" | "maintenance_register" | "maintenance_unregister" | "maintenance_run" | "fsmonitor_on" | "fsmonitor_off" | "untracked_cache" | "preset" | "gc";
 export type HookInfo = { name: string; path: string; exists: boolean; executable: boolean; size: number; preview: string };
-export type HookCommitResult = { ok: boolean; commit: string | null; output: string; exitCode: number; hookFailed: string | null; activeHooks: string[] };
+export type AiSettings = {
+  provider: "ollama" | "claude" | "off";
+  ollamaUrl: string;
+  ollamaModel: string;
+  claudeModel: string;
+  claudeModels: Array<{ id: string; label: string }>;
+  claudeKeySaved: boolean;
+  claudeEnvCredentials: boolean;
+};
+export type NestedCommit = { path: string; commit: string; detached: boolean; attachedTo: string | null };
+export type HookCommitResult = { ok: boolean; commit: string | null; nested?: NestedCommit[]; output: string; exitCode: number; hookFailed: string | null; activeHooks: string[] };
 export type AutolinkRule = { pattern: string; url: string };
 export type CommitTemplate = { id: string; name: string; text: string; source: "git" | "chrono" };
 export type ForkPointInfo = { branch: string; base: string | null; forkPoint: string | null; ahead: number; behind: number };

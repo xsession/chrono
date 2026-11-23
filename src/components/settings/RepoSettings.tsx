@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api, getDiffOptions, setDiffOptions } from "../../api";
-import type { AutolinkRule, CommitTemplate, CustomCommand, CustomCommandParam, DiffOptions, GitflowConfig, HookInfo, IdentityProfile, PerfAction, PerfStatus, SigningConfig } from "../../types";
+import type { AiSettings, AutolinkRule, CommitTemplate, CustomCommand, CustomCommandParam, DiffOptions, GitflowConfig, HookInfo, IdentityProfile, PerfAction, PerfStatus, SigningConfig } from "../../types";
 import { Icon, type IconName } from "../Icon";
 import { askConfirm } from "../DialogHost";
 import { pushToast } from "../../toastBus";
@@ -17,10 +17,11 @@ type Props = {
   initialTab?: SettingsTab;
 };
 
-export type SettingsTab = "identity" | "performance" | "hooks" | "links" | "templates" | "commands" | "gitflow" | "sparse" | "archive" | "display" | "shell";
+export type SettingsTab = "identity" | "ai" | "performance" | "hooks" | "links" | "templates" | "commands" | "gitflow" | "sparse" | "archive" | "display" | "shell";
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: IconName }> = [
   { id: "identity", label: "Identity & signing", icon: "users" },
+  { id: "ai", label: "AI assistant", icon: "command" },
   { id: "performance", label: "Performance", icon: "activity" },
   { id: "hooks", label: "Git hooks", icon: "commit" },
   { id: "links", label: "Issue links", icon: "external" },
@@ -242,6 +243,73 @@ function TemplatesTab({ repositoryPath, busy, run }: Props) {
   );
 }
 
+// ---------------------------------------------------------------- AI assistant
+function AiTab({ busy, run }: Pick<Props, "busy" | "run">) {
+  const [settings, setSettings] = useState<AiSettings | null>(null);
+  const [form, setForm] = useState({ provider: "ollama" as AiSettings["provider"], ollamaUrl: "", ollamaModel: "", claudeModel: "" });
+  const [key, setKey] = useState("");
+  const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+  const load = useCallback((next: AiSettings) => {
+    setSettings(next);
+    setForm({ provider: next.provider, ollamaUrl: next.ollamaUrl, ollamaModel: next.ollamaModel, claudeModel: next.claudeModel });
+  }, []);
+  useEffect(() => { api.aiSettings().then(load).catch((error) => pushToast(errorText(error), "error")); }, [load]);
+  if (!settings) return <Section title="AI assistant"><p className="st-note">Loading…</p></Section>;
+  const save = (extra: { claudeKey?: string | null } = {}) => run("Save AI settings", async () => {
+    load(await api.saveAiSettings({ ...form, ...extra }));
+    setKey(""); setTest(null);
+  });
+  const credentials = settings.claudeKeySaved ? "an API key saved here" : settings.claudeEnvCredentials ? "ANTHROPIC_API_KEY from the server's environment" : "none found yet (an `ant auth login` profile also works)";
+  return (
+    <Section title="AI assistant" hint="Drafts commit messages (✨ Draft message) and explains commits and working changes. Without a provider, Chrono uses offline rules." actions={
+      <>
+        <button type="button" className="ux-button" disabled={busy || testing} onClick={async () => { setTesting(true); try { setTest(await api.testAi()); } catch (error) { setTest({ ok: false, message: errorText(error) }); } finally { setTesting(false); } }}>{testing ? "Testing…" : "Test"}</button>
+        <button type="button" className="ux-primary-button" disabled={busy} onClick={() => void save()}>Save</button>
+      </>
+    }>
+      <div className="st-ai-providers" role="radiogroup" aria-label="AI provider">
+        {([
+          ["ollama", "Local model (Ollama)", "Runs on this machine; nothing leaves it."],
+          ["claude", "Claude (Anthropic API)", "Staged diffs and commit contents are sent to Anthropic."],
+          ["off", "Off", "Offline rules only."],
+        ] as const).map(([value, label, note]) => (
+          <label key={value} className={`st-ai-provider${form.provider === value ? " is-active" : ""}`}>
+            <input type="radio" name="ai-provider" checked={form.provider === value} onChange={() => setForm({ ...form, provider: value })} />
+            <span><strong>{label}</strong><small>{note}</small></span>
+          </label>
+        ))}
+      </div>
+      {form.provider === "ollama" && (
+        <div className="st-grid">
+          <label>Ollama address<input value={form.ollamaUrl} onChange={(event) => setForm({ ...form, ollamaUrl: event.target.value })} placeholder="http://127.0.0.1:11434" /></label>
+          <label>Model<input value={form.ollamaModel} onChange={(event) => setForm({ ...form, ollamaModel: event.target.value })} placeholder="qwen2.5:3b" /></label>
+        </div>
+      )}
+      {form.provider === "claude" && (
+        <>
+          <div className="st-grid">
+            <label>Model<select value={form.claudeModel} onChange={(event) => setForm({ ...form, claudeModel: event.target.value })}>
+              {settings.claudeModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.id === "claude-opus-5-5" ? " (default)" : ""}</option>)}
+              {!settings.claudeModels.some((model) => model.id === form.claudeModel) && <option value={form.claudeModel}>{form.claudeModel}</option>}
+            </select></label>
+            <label>API key{settings.claudeKeySaved ? " (saved; type to replace)" : ""}
+              <input type="password" autoComplete="off" value={key} onChange={(event) => setKey(event.target.value)} placeholder={settings.claudeKeySaved ? "••••••••" : "sk-ant-…"} />
+            </label>
+          </div>
+          <p className="st-note">Credentials in use: {credentials}. A saved key is stored only on the server (owner-only file) and is never shown again.</p>
+          <div className="st-row-actions">
+            <button type="button" className="ux-button" disabled={busy || !key.trim()} onClick={() => void save({ claudeKey: key.trim() })}>Save key</button>
+            {settings.claudeKeySaved && <button type="button" className="ux-button" disabled={busy} onClick={() => void save({ claudeKey: null })}>Remove saved key</button>}
+          </div>
+          <p className="st-note">If Claude declines a request, the API retries it on a fallback model it chooses. Short tasks run at low effort.</p>
+        </>
+      )}
+      {test && <p className={`st-note ${test.ok ? "is-ok" : "is-warning"}`} role="status">{test.message}</p>}
+    </Section>
+  );
+}
+
 // ---------------------------------------------------------------- commands
 function CommandsTab({ busy, run }: Props) {
   const [commands, setCommands] = useState<CustomCommand[]>([]);
@@ -412,6 +480,7 @@ export function RepoSettings(props: Props) {
       </nav>
       <div className="st-body">
         {tab === "identity" && <IdentityTab {...props} />}
+        {tab === "ai" && <AiTab busy={props.busy} run={props.run} />}
         {tab === "performance" && <PerformanceTab {...props} />}
         {tab === "hooks" && <HooksTab {...props} />}
         {tab === "links" && <LinksTab {...props} />}

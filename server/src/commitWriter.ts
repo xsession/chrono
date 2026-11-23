@@ -9,6 +9,7 @@
 import { repoInstructions } from "./features.ts";
 import { invalidError } from "./lib/errors.ts";
 import { repositoryRoot, runGit } from "./lib/git.ts";
+import { aiComplete, AiUnavailableError } from "./ai.ts";
 
 export type CommitDraftMode = "auto" | "rules" | "ollama";
 
@@ -33,8 +34,10 @@ export interface CommitDraft {
   message: string;
   style: CommitDraftStyle;
   issueReference: string | null;
-  source: "ollama" | "local-rules";
+  source: "ollama" | "claude" | "local-rules";
   model: string | null;
+  /** Why the AI provider could not be used (missing SDK or credentials). */
+  notice?: string;
   files: StagedFileDraft[];
   truncatedDiff: boolean;
 }
@@ -187,27 +190,6 @@ function parseModelDraft(raw: string): { subject: string; body: string } | null 
   return { subject: lines[0].replace(/^subject:\s*/i, ""), body: lines.slice(1).join("\n") };
 }
 
-async function ollamaDraft(model: string, prompt: string): Promise<{ subject: string; body: string } | null> {
-  try {
-    const response = await fetch("http://127.0.0.1:11434/api/generate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        prompt,
-        options: { temperature: 0.2, num_predict: 180 },
-      }),
-      signal: AbortSignal.timeout(2200),
-    });
-    if (!response.ok) return null;
-    const data = await response.json() as { response?: unknown };
-    return typeof data.response === "string" ? parseModelDraft(data.response) : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function draftCommitMessage(
   inputPath: string,
   mode: CommitDraftMode = "auto",
@@ -222,6 +204,8 @@ export async function draftCommitMessage(
   const fallback = localRulesDraft(snapshot.files, snapshot.stat, style);
   let draft = fallback;
   let source: CommitDraft["source"] = "local-rules";
+  let usedModel: string | null = null;
+  let notice: string | undefined;
   if (mode === "auto" || mode === "ollama") {
     const instructions = await repoInstructions(root).catch(() => "");
     const prompt = [
@@ -239,10 +223,23 @@ export async function draftCommitMessage(
       "\nStaged diff:",
       snapshot.diff,
     ].join("\n");
-    const modelDraft = await ollamaDraft(model, prompt);
-    if (modelDraft?.subject.trim()) {
-      draft = modelDraft;
-      source = "ollama";
+    try {
+      const answer = await aiComplete({
+        system: "You write Git commit messages. Follow the instructions exactly and return only the JSON object.",
+        prompt,
+        maxTokens: 180,
+        timeoutMs: mode === "auto" ? undefined : 60_000,
+        ollamaModel: requestedModel?.trim() ? model : null,
+      });
+      const modelDraft = answer ? parseModelDraft(answer.text) : null;
+      if (answer && modelDraft?.subject.trim()) {
+        draft = modelDraft;
+        source = answer.source;
+        usedModel = answer.model;
+      }
+    } catch (error) {
+      if (!(error instanceof AiUnavailableError)) throw error;
+      notice = error.message;
     }
   }
   const composed = compose(draft.subject, appendIssueReference(draft.body, issueReference));
@@ -251,7 +248,8 @@ export async function draftCommitMessage(
     style,
     issueReference,
     source,
-    model: source === "ollama" ? model : null,
+    model: usedModel,
+    ...(notice ? { notice } : {}),
     files: snapshot.files,
     truncatedDiff: snapshot.truncatedDiff,
   };

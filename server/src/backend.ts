@@ -15,6 +15,7 @@ import {
   runGit,
   type CommandResult,
   type CommitRecord, HISTORY_ALL_REFS } from "./lib/git.ts";
+import { commitSubmodules, stagePathsNested, unstagePathsNested } from "./nestedCommit.ts";
 
 export interface RepositorySummary {
   path: string;
@@ -302,18 +303,20 @@ export async function repositoryBranches(inputPath: string): Promise<BranchRecor
   return branches;
 }
 
+/** Staging a submodule also stages the changes inside it (nestedCommit.ts). */
 export async function stagePaths(inputPath: string, files: string[]): Promise<void> {
   if (files.length === 0) return;
-  await checked(inputPath, ["add", "--", ...files]);
+  await stagePathsNested(await repositoryRoot(inputPath), files);
 }
 
 export async function unstagePaths(inputPath: string, files: string[]): Promise<void> {
   if (files.length === 0) return;
-  await checked(inputPath, ["restore", "--staged", "--", ...files]);
+  await unstagePathsNested(await repositoryRoot(inputPath), files);
 }
 
 export async function createCommit(inputPath: string, message: string): Promise<string> {
   if (message.trim().length === 0) throw invalidError("commit message is empty");
+  await commitSubmodules(await repositoryRoot(inputPath), { message });
   await checked(inputPath, ["commit", "-m", message]);
   return (await checkedStdout(inputPath, ["rev-parse", "HEAD"])).trim();
 }
