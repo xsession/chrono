@@ -13,6 +13,15 @@ Rewritten from the original Tauri/Rust stack to pure TypeScript.
 | ![Forks and upstreams of Renode and its submodules](docs/screenshots/forks.jpg) | ![The terminal UI](docs/screenshots/tui.png) |
 | [Forks and upstreams](#forks-and-upstreams) | [Terminal UI](#terminal-ui-chrono-tui) |
 
+## Documentation
+
+- [Tutorial](docs/TUTORIAL.md): a hands-on walk through every feature, on a
+  practice repository with a fork and a submodule that you create in a minute.
+- [Theory of operation](docs/THEORY_OF_OPERATION.md): how Chrono works inside:
+  processes, transport, git lanes, state, live changes, undo, nested commits,
+  forks, the AI assistant and llama.cpp, the landscape map, security.
+- [Releasing](docs/RELEASING.md): versions, installers and release builds.
+
 ## Stack
 
 - Node.js 22+ (runs the TypeScript backend directly via native type-stripping — no build step for the server)
@@ -76,8 +85,8 @@ Browser (React 19)  ──WebSocket /api/rpc──────▶  Node server (
     connections, branch-name chips, HEAD marker, filtered-history gaps.
   - `src/submoduleStaging.ts` — which changed submodules count as staged (shared
     by the commit panel and the Changes view).
-- `electron/` — desktop shell. Spawns the backend itself on a random port in
-  14210-14310 (no separate server needed).
+- `electron/` — desktop shell. Spawns the backend itself on a random port
+  from 14210 upwards (no separate server needed).
 - `android/` — Capacitor companion. A client that connects to a running Chrono
   server over HTTPS (enter its address via the Backend button in the app).
 
@@ -95,7 +104,7 @@ series versions from a common base using Git's native `range-diff`; health
 metrics are read-only until an explicit object scan is requested.
 It detects SSH and HTTPS remotes, supports GitHub, GitLab, Gitea, Forgejo and
 self-hosted Bitbucket Server / Data Center,
-and keeps entered provider tokens in memory only. File history now includes a
+and keeps entered provider tokens for the browser session only. File history now includes a
 revision viewer with previous/next navigation, root-revision previews and
 unified two-revision diffs. The Changes view also has a local commit-writing
 assistant: it uses the AI provider chosen in *Repository settings → AI
@@ -512,8 +521,8 @@ starter-electron.bat                                  # build + launch (Windows)
 # --packager build installers into release/
 ```
 
-The backend starts inside the app on a port in 14210-14310 — no other process
-needed.
+The backend starts inside the app on a random port from 14210 upwards — no
+other process needed.
 
 ## Android (companion)
 
