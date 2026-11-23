@@ -6,10 +6,12 @@ Rewritten from the original Tauri/Rust stack to pure TypeScript.
 
 | | |
 |---|---|
-| ![Graph view with two repository tabs](docs/screenshots/multi-repo-tabs.jpg) | ![Codebase landscape map of Renode](docs/screenshots/landscape-map.jpg) |
+| ![Graph view with two repository tabs, branch/tag column and author nodes](docs/screenshots/multi-repo-tabs.jpg) | ![Codebase landscape map of Renode](docs/screenshots/landscape-map.jpg) |
 | Graph, with one tab per open repository | [Landscape map](#codebase-landscape-map): the code as terrain |
-| ![Submodule mind map](docs/screenshots/submodule-mind-map.jpg) | ![TortoiseGit-style explorer](docs/screenshots/linux-desktop-explorer.png) |
+| ![Submodule mind map](docs/screenshots/submodule-mind-map.jpg) | ![TortoiseGit-style explorer with its right-click menu](docs/screenshots/explorer.jpg) |
 | [Submodule mind map](#large-multi-repo-trees-submodules) | [TortoiseGit explorer](#tortoisegit-explorer) |
+| ![Forks and upstreams of Renode and its submodules](docs/screenshots/forks.jpg) | ![The terminal UI](docs/screenshots/tui.png) |
+| [Forks and upstreams](#forks-and-upstreams) | [Terminal UI](#terminal-ui-chrono-tui) |
 
 ## Stack
 
@@ -91,7 +93,8 @@ repository-health, file history/blame/contributor/activity views plus a
 provider-aware pull-request triage surface. Range review compares two patch
 series versions from a common base using Git's native `range-diff`; health
 metrics are read-only until an explicit object scan is requested.
-It detects SSH and HTTPS remotes, supports GitHub, GitLab, Gitea and Forgejo,
+It detects SSH and HTTPS remotes, supports GitHub, GitLab, Gitea, Forgejo and
+self-hosted Bitbucket Server / Data Center,
 and keeps entered provider tokens in memory only. File history now includes a
 revision viewer with previous/next navigation, root-revision previews and
 unified two-revision diffs. The Changes view also has a local commit-writing
@@ -124,7 +127,8 @@ The Graph view follows GitKraken's layout:
 - **`// WIP` node:** sits above the newest commit. Clicking it opens the commit panel: Unstaged and Staged lists (path or tree view), stage/unstage all, per-file menus (discard, stash, ignore, history, show in Explorer), a summary with a 72-character counter, a description, amend, sign-off and AI draft. Ctrl+Enter commits.
 - **Undo / Redo** (Ctrl+Z / Ctrl+Y): the server records the effect of each Chrono action on branches and HEAD (commit, checkout, branch create/delete, reset, merge, pull, cherry-pick, revert). Undo restores the previous state, using `reset --soft` for commits and `reset --keep` otherwise. Redo re-applies it. Both refuse to run if the repository was changed outside Chrono in the meantime. The journal is saved to `undo-journal.json` in the config directory, so it survives server restarts.
 - **Compare two commits:** select a commit, then Ctrl+click (⌘+click) another. The right panel lists the files that differ between them and clicking a file shows its diff over the graph.
-- **Author avatars:** each graph row shows the author's initials on a colour derived from their email.
+- **Author nodes:** each commit node carries the author's initials on a colour derived from their email; merges stay small dots and HEAD has a dashed ring.
+- **Branch / Tag column:** the branches and tags pointing at a commit sit on its row as a pill in the lane colour, joined to the node by a line. A local branch and its remote-tracking twin share one pill. Drag the graph column narrower to clip the outer lanes; double-click the grip to fit the graph again.
 
 ## Opening repositories and tabs
 
@@ -228,6 +232,8 @@ dependencies are often forks), at any depth.
 Syncing a submodule moves its checkout, so the parent then shows it as
 changed: commit that to record the new commit id.
 
+![Forks & upstreams: Renode is 720 commits behind renode/renode, its submodules are listed under it](docs/screenshots/forks.jpg)
+
 ## Several git identities
 
 Save identity profiles (name, email, signing key) in *Repository settings →
@@ -237,6 +243,8 @@ too. For a one-off, **Commit as** in the commit box picks a profile for this
 commit (and the next ones in this repository while it stays chosen), for the
 repository and every submodule committed with it. *Always use here* turns the
 choice into the repository's identity.
+
+![Commit box: a staged submodule is committed first, then the parent; Commit as picks an identity profile](docs/screenshots/commit-nested.jpg)
 
 ## Terminal UI (chrono-tui)
 
@@ -261,6 +269,8 @@ drop. Everywhere: `p` pull, `P` push, `f` fetch, `z`/`Z` undo/redo, `q` quit.
 The installed command runs Chrono's own binary in Node mode, so it needs no
 display.
 
+![chrono-tui: files with a changed submodule, the staged diff, branches and the commit graph](docs/screenshots/tui.png)
+
 ## AI assistant
 
 *Repository settings → AI assistant* chooses what drafts commit messages and
@@ -282,7 +292,10 @@ to offline rules and says why.
   3. *Server:* port, context size and GPU layers (`-ngl`). Chrono starts
      `llama-server` when the assistant is first used (or with *Save & start*),
      waits until the model has loaded, shows its log, and stops it when
-     Chrono exits. *Listen on the local network* makes it usable from other
+     Chrono exits; a watchdog stops it even if Chrono's backend crashes.
+     *Start automatically* loads the model when Chrono starts, so the first
+     draft is quick, and *Keep the model in RAM* (`--mlock`) stops the OS
+     swapping it out between uses. *Listen on the local network* makes it usable from other
      machines, protected by an API key you set.
 - **Server on the network:** any OpenAI-compatible server elsewhere on your
   network: llama.cpp's `llama-server`, LM Studio, vLLM, LocalAI, or another
@@ -290,7 +303,8 @@ to offline rules and says why.
   *Find models* lists what it serves; add its API key if it needs one.
 - **Ollama:** an Ollama server on this machine or another one (default
   `http://127.0.0.1:11434`, model `qwen2.5:3b` or `CHRONO_LOCAL_AI_MODEL`).
-  This is the default provider.
+  This is the default provider. Chrono preloads the model at start and when
+  the settings change, and renews Ollama's `keep_alive` so it stays loaded.
 - **Claude (Anthropic API):** staged diffs and commit contents are sent to
   Anthropic. Needs credentials: an API key saved on that page,
   `ANTHROPIC_API_KEY` in Chrono's environment, or an `ant auth login`
@@ -301,6 +315,8 @@ to offline rules and says why.
 API keys saved on this page (Claude, network server, the self-hosted server's
 network key) are stored owner-only in `CHRONO_CONFIG_DIR/ai.json` on the
 server and are never sent back to the browser or written to logs.
+
+![AI assistant settings: self-hosted llama.cpp with an installed build, a downloaded model and the server running](docs/screenshots/ai-self-hosted.jpg)
 
 ## Codebase landscape map
 
@@ -342,6 +358,11 @@ The map is a self-contained page (`public/landscape/index.html`) shown in a
 sandboxed frame: it cannot reach Chrono or the network, loads nothing from the
 internet, and only exchanges messages with the view around it.
 
+| | |
+|---|---|
+| ![Landscape map of Renode: regions, highways, entry-point stars](docs/screenshots/landscape-map.jpg) | ![Landscape map of Chrono with the recent-changes heatmap on](docs/screenshots/landscape-heatmap.jpg) |
+| Renode: stars mark entry points, green ones tests | Heatmap: what changed in the last month glows |
+
 ## TortoiseGit explorer
 
 The **Explorer (TortoiseGit)** view (Ctrl+4) is a Windows-Explorer-style browser of the working copy. It shows a folder tree, sortable details and TortoiseGit icon overlays (normal, modified, staged, added, deleted, conflicted, unversioned, ignored, plus assume-unchanged and skip-worktree flags). Right-clicking an item, a selection or the empty background opens the TortoiseGit shell menu:
@@ -350,6 +371,8 @@ The **Explorer (TortoiseGit)** view (Ctrl+4) is a Windows-Explorer-style browser
 - **TortoiseGit ▸:** Pull, Fetch, Push · Diff, Diff with previous version, Diff later / Diff two files · Show log, Show Reflog, Browse References, Revision graph, Repo-browser, Check for modifications, Blame · Resolve (mine/theirs), Revert…, Clean up… · Switch/Checkout, Merge, Create Branch, Create Tag, Export · Rebase, Stash Save/Pop/List, Bisect · Add…, Add to ignore list (by name or extension, local or root .gitignore), Delete and add to ignore list, Delete (keep local), Rename (git mv), Delete, Revert to revision · Index flags (assume-unchanged, skip-worktree) · LFS (lock, unlock, track, locks, pull) · Submodule Update · Create Patch, Apply Patch · Settings, About.
 
 Keyboard: F5 refresh, F2 rename, Del delete, Backspace up a folder, Ctrl+A select all, Shift+F10 opens the menu. "Open" and "Open containing folder" run on the server host, so they only work when Chrono listens on localhost.
+
+![Explorer with the TortoiseGit submenu open on a folder](docs/screenshots/explorer.jpg)
 
 ## Trust, safety and workflow features
 
@@ -371,9 +394,9 @@ These features come from the roadmap in `reports/Git client feature gap analysis
 - **Branch cleanup:** finds branches that were merged, squash- or rebase-merged, whose upstream was deleted, or that are stale. They can be archived under `refs/chrono/archive` (restorable from Settings) or deleted, and both can be undone.
 - **Stacked branches:** each branch can have a parent, stored as `branch.<name>.chronoParent`. "Create stacked branch" makes a new branch on top of another. "Restack" rebases the whole stack with `rebase --update-refs` from its tip. The parent is also the default base for pull requests.
 - **Pull requests and CI:**
-  - Create GitHub pull requests, GitLab merge requests and Gitea/Forgejo pull requests, with the repository's PR template, a preview of the commits and diffstat, and a generated description.
-  - The commit inspector shows CI check status and can re-run GitHub Actions jobs or GitLab pipelines.
-  - Provider tokens are kept for the browser session only. For GitHub Enterprise or self-hosted servers, set the API base in the pull-request dialog; Chrono remembers it per host.
+  - Create GitHub pull requests, GitLab merge requests, Gitea/Forgejo pull requests and Bitbucket Server / Data Center pull requests (draft on 8.18+), with the repository's PR template, a preview of the commits and diffstat, and a generated description.
+  - The commit inspector shows CI check status and can re-run GitHub Actions jobs or GitLab pipelines. On Bitbucket Server it shows the build statuses reported by Jenkins, Bamboo, TeamCity and others.
+  - Provider tokens are kept for the browser session only. For GitHub Enterprise or self-hosted servers, set the API base in the pull-request dialog, and the provider where the URL does not give it away; Chrono remembers both per host. Bitbucket Server is recognised from `/scm/PROJECT/repo.git` clone URLs, SSH on port 7999, or a host named bitbucket.
 - **Custom commands:** your own commands, defined as one argument per line, appear in the palette and on the commit, branch and file menus. They support `$REPO`, `$BRANCH`, `$SHA`, `$FILES` and `$PARAM_name`, plus parameter dialogs. Each variable is substituted into a single argument, so values never pass through a shell. Commands other than git only run when the server listens on localhost.
 - **Image diff:** side by side, swipe, onion skin and pixel difference, with Git LFS content fetched through `git cat-file --filters`.
 - **Agent sessions:** creates a worktree on a new branch, opens a terminal there and starts an agent CLI (Claude Code, Codex, Gemini, Aider or any command). The worktree's uncommitted work shows as its own WIP entry above the graph.
