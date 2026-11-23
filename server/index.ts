@@ -66,14 +66,24 @@ function branchActionLabel(body: Record<string, unknown>): string {
 
 async function resolveHost(body: Record<string, unknown>): Promise<features.RemoteHost> {
   const host = await features.remoteHost(bodyPath(body), optStr(body.remote) ?? "origin");
-  if (!host) throw new AppError("invalid", "could not detect a GitHub/GitLab/Gitea remote — check the remote URL");
+  if (!host) throw new AppError("invalid", "could not detect a GitHub/GitLab/Gitea/Bitbucket Server remote — check the remote URL");
   const apiBase = optStr(body.apiBase);
   if (apiBase) {
     if (!/^https?:\/\//i.test(apiBase)) throw new AppError("invalid", "API base must be an http(s) URL");
     host.apiBase = apiBase.replace(/\/+$/, "");
   }
+  // A provider picked by hand (self-hosted servers on plain host names) wins
+  // over detection; a Bitbucket Server picked this way still needs its API base.
   const provider = optStr(body.provider);
-  if (provider === "github" || provider === "gitlab" || provider === "gitea") host.provider = provider;
+  if (provider && (features.HOSTING_PROVIDERS as readonly string[]).includes(provider) && provider !== host.provider) {
+    host.provider = provider as features.HostingProvider;
+    if (provider === "bitbucket-server") {
+      if (!apiBase) throw new AppError("invalid", "set the API base for Bitbucket Server, e.g. https://bitbucket.example.com/rest/api/1.0");
+      if (!host.owner.startsWith("~")) host.owner = host.owner.toUpperCase();
+      const root = features.bitbucketServerRoot(host.apiBase);
+      host.webBase = host.owner.startsWith("~") ? `${root}/users/${host.owner.slice(1)}/repos/${host.repository}` : `${root}/projects/${host.owner}/repos/${host.repository}`;
+    }
+  }
   return host;
 }
 

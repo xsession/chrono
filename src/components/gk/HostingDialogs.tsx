@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../../api";
-import type { CheckRun, CleanupCandidate, RemoteHost } from "../../types";
+import type { CheckRun, CleanupCandidate, HostingProvider, RemoteHost } from "../../types";
+import { HOSTING_PROVIDER_LABELS } from "../../types";
 import { Icon } from "../Icon";
 import { pushToast } from "../../toastBus";
-import { ensureToken, forgetToken, getApiBase, getToken, setApiBase as saveApiBase } from "../../providerTokens";
+import { ensureToken, forgetToken, getApiBase, getProviderOverride, getToken, setApiBase as saveApiBase, setProviderOverride } from "../../providerTokens";
 import { notifyIfHidden } from "../../notify";
 import { plural } from "../../plural";
 import { aiSourceLabel } from "../../aiSource";
@@ -46,8 +47,9 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
   const [generating, setGenerating] = useState(false);
   const [created, setCreated] = useState<{ number: number; url: string } | null>(null);
   const [apiBase, setApiBase] = useState("");
+  const [provider, setProvider] = useState<HostingProvider>("github");
 
-  useEffect(() => { setHost(undefined); api.remoteHost(repositoryPath, remote).then((value) => { setHost(value); setApiBase(value ? getApiBase(value.host) || value.apiBase : ""); }).catch(() => setHost(null)); }, [repositoryPath, remote]);
+  useEffect(() => { setHost(undefined); api.remoteHost(repositoryPath, remote).then((value) => { setHost(value); setApiBase(value ? getApiBase(value.host) || value.apiBase : ""); if (value) setProvider(getProviderOverride(value.host) || value.provider); }).catch(() => setHost(null)); }, [repositoryPath, remote]);
   useEffect(() => { api.prTemplate(repositoryPath).then((template) => { if (template) setDescription((current) => current || template); }).catch(() => undefined); }, [repositoryPath]);
   useEffect(() => {
     let cancelled = false;
@@ -74,11 +76,12 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
 
   const submit = async () => {
     if (!host) return;
-    const token = await ensureToken(host.host, host.provider);
+    const token = await ensureToken(host.host, provider);
     if (!token) return;
     await run(`Create pull request ${head} → ${base}`, async () => {
       if (apiBase && apiBase !== host.apiBase) saveApiBase(host.host, apiBase); else saveApiBase(host.host, "");
-      const result = await api.createPullRequest(repositoryPath, { remote, token, head, base, title, description, draft, apiBase: apiBase || undefined });
+      setProviderOverride(host.host, provider !== host.provider ? provider : "");
+      const result = await api.createPullRequest(repositoryPath, { remote, token, head, base, title, description, draft, apiBase: apiBase || undefined, provider });
       setCreated(result);
       notifyIfHidden("Pull request created", `#${result.number} ${title}`);
     });
@@ -96,9 +99,16 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
           <label>Remote<select value={remote} onChange={(event) => setRemote(event.target.value)}>{remotes.map((name) => <option key={name}>{name}</option>)}</select></label>
           <label>Into (base)<input value={base} onChange={(event) => setBase(event.target.value)} /></label>
           <label>From (head)<input value={head} readOnly /></label>
-          <label>API base<input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder="https://api.github.com" /></label>
+          <label>Provider<select value={provider} onChange={(event) => {
+            const next = event.target.value as HostingProvider;
+            setProvider(next);
+            // The detected API base belongs to the detected provider: clear it for another one, restore it on the way back.
+            if (host && next !== host.provider && apiBase === host.apiBase) setApiBase("");
+            if (host && next === host.provider && !apiBase) setApiBase(host.apiBase);
+          }}>{(Object.keys(HOSTING_PROVIDER_LABELS) as HostingProvider[]).map((value) => <option key={value} value={value}>{HOSTING_PROVIDER_LABELS[value]}</option>)}</select></label>
+          <label>API base<input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder={provider === "bitbucket-server" ? "https://bitbucket.example.com/rest/api/1.0" : "https://api.github.com"} /></label>
         </div>
-        <p className="tg-note">{host === undefined ? "Detecting provider…" : host ? <>Provider: <b>{host.provider}</b> · {host.owner}/{host.repository}{getToken(host.host) ? <> · token set <button type="button" className="gk-link-button" onClick={() => { forgetToken(host.host); pushToast("Token forgotten", "info"); }}>forget</button></> : " · you will be asked for a token"}</> : "This remote is not a GitHub, GitLab or Gitea URL."}</p>
+        <p className="tg-note">{host === undefined ? "Detecting provider…" : host ? <>Provider: <b>{HOSTING_PROVIDER_LABELS[provider]}</b>{provider !== host.provider ? " (chosen by hand)" : ""} · {host.owner}/{host.repository}{getToken(host.host) ? <> · token set <button type="button" className="gk-link-button" onClick={() => { forgetToken(host.host); pushToast("Token forgotten", "info"); }}>forget</button></> : " · you will be asked for a token"}</> : "This remote is not a GitHub, GitLab, Gitea or Bitbucket Server URL."}</p>
         <label className="gk-dialog-field"><span>Title</span><input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
         <div className="tg-message-head"><strong>Description</strong><button type="button" className="ux-button compact" disabled={generating} onClick={() => void generate()}>{generating ? "Generating…" : "✨ Generate"}</button></div>
         <textarea className="tg-message" rows={10} value={description} onChange={(event) => setDescription(event.target.value)} />
@@ -122,12 +132,12 @@ export function CiChecks({ repositoryPath, sha, remote = "origin" }: { repositor
   useEffect(() => { setState(null); setError(null); api.remoteHost(repositoryPath, remote).then(setHost).catch(() => setHost(null)); }, [repositoryPath, remote, sha]);
   const load = async (interactive: boolean) => {
     if (!host) return;
-    const token = interactive ? await ensureToken(host.host, host.provider) : getToken(host.host);
+    const token = interactive ? await ensureToken(host.host, getProviderOverride(host.host) || host.provider) : getToken(host.host);
     if (token === null) return;
     setLoading(true); setError(null);
     try {
       const previous = state?.state;
-      const next = await api.ciChecks(repositoryPath, sha, token, remote, getApiBase(host.host) || undefined);
+      const next = await api.ciChecks(repositoryPath, sha, token, remote, getApiBase(host.host) || undefined, getProviderOverride(host.host) || undefined);
       setState(next);
       if (previous && previous !== next.state && next.state === "failure") notifyIfHidden("CI failed", `${sha.slice(0, 8)} on ${host.owner}/${host.repository}`);
     } catch (reason) { setError(errorText(reason)); }
@@ -149,7 +159,7 @@ export function CiChecks({ repositoryPath, sha, remote = "origin" }: { repositor
               <span aria-hidden="true">{icon(check)}</span>
               <a href={check.url || undefined} target="_blank" rel="noreferrer" title={`${check.name}: ${check.conclusion || check.status}`}>{check.name}</a>
               <small>{check.conclusion || check.status}</small>
-              {check.rerunnable && <button type="button" className="ux-button compact" onClick={async () => { const token = await ensureToken(host.host, host.provider); if (!token) return; try { pushToast(await api.rerunCheck(repositoryPath, check, token, remote, getApiBase(host.host) || undefined), "success"); void load(false); } catch (reason) { pushToast(errorText(reason), "error"); } }}>Re-run</button>}
+              {check.rerunnable && <button type="button" className="ux-button compact" onClick={async () => { const token = await ensureToken(host.host, getProviderOverride(host.host) || host.provider); if (!token) return; try { pushToast(await api.rerunCheck(repositoryPath, check, token, remote, getApiBase(host.host) || undefined, getProviderOverride(host.host) || undefined), "success"); void load(false); } catch (reason) { pushToast(errorText(reason), "error"); } }}>Re-run</button>}
             </div>
           ))}
           {!state.checks.length && <div className="gk-empty">No checks reported for this commit.</div>}

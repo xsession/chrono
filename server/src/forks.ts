@@ -12,7 +12,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { invalidError } from "./lib/errors.ts";
 import { repositoryRoot, runGit } from "./lib/git.ts";
-import { parseRemote } from "./features.ts";
+import { bitbucketRepoPath, parseRemote } from "./features.ts";
 import { submodulesOf } from "./nestedCommit.ts";
 
 export interface ForkRemote { name: string; url: string; web: string | null; owner: string | null; repository: string | null }
@@ -91,6 +91,8 @@ function compareUrl(origin: ForkRemote | null, upstream: ForkRemote | null, base
   if (!origin?.web || !upstream?.web || !base || !branch || !origin.owner) return null;
   const host = parseRemote(upstream.url);
   if (host?.provider === "gitlab") return `${origin.web}/-/merge_requests/new?merge_request%5Bsource_branch%5D=${encodeURIComponent(branch)}`;
+  // Bitbucket Server opens the create page on the fork; the target repository is picked there.
+  if (host?.provider === "bitbucket-server") return `${origin.web}/pull-requests?create&sourceBranch=${encodeURIComponent(`refs/heads/${branch}`)}`;
   if (host?.provider === "github") return `${upstream.web}/compare/${encodeURIComponent(base)}...${encodeURIComponent(origin.owner)}:${encodeURIComponent(origin.repository ?? "")}:${encodeURIComponent(branch)}`;
   return `${upstream.web}/compare/${encodeURIComponent(base)}...${encodeURIComponent(origin.owner)}:${encodeURIComponent(branch)}`;
 }
@@ -148,7 +150,7 @@ async function git(dir: string, args: string[], what: string): Promise<string> {
   return result.stdout;
 }
 
-/** Look up the repository `origin` was forked from (GitHub, GitLab, Gitea; public API, no token). */
+/** Look up the repository `origin` was forked from (GitHub, GitLab, Gitea, Bitbucket Server; public API, no token). */
 export async function detectParent(inputPath: string, relative = ""): Promise<{ url: string; web: string; defaultBranch: string | null } | null> {
   const dir = await resolveTarget(inputPath, relative);
   const { origin } = pickRemotes(await remotesOf(dir));
@@ -168,6 +170,18 @@ export async function detectParent(inputPath: string, relative = ""): Promise<{ 
     const data = await get(`${host.apiBase}/projects/${encodeURIComponent(`${host.owner}/${host.repository}`)}`);
     const parent = data?.forked_from_project;
     return parent ? { url: parent.http_url_to_repo, web: parent.web_url, defaultBranch: parent.default_branch ?? null } : null;
+  }
+  if (host.provider === "bitbucket-server") {
+    // Anonymous access only works on public projects; private servers answer 401 → no parent.
+    const data = await get(`${host.apiBase}${bitbucketRepoPath(host)}`);
+    const parent = data?.origin;
+    if (!parent?.slug || !parent.project?.key) return null;
+    const clone = (parent.links?.clone ?? []) as Array<{ href?: string; name?: string }>;
+    const url = clone.find((link) => link.name === "http")?.href ?? clone[0]?.href;
+    if (!url) return null;
+    const branch = await get(`${host.apiBase}${bitbucketRepoPath({ owner: parent.project.key, repository: parent.slug })}/default-branch`)
+      ?? await get(`${host.apiBase}${bitbucketRepoPath({ owner: parent.project.key, repository: parent.slug })}/branches/default`);
+    return { url, web: parent.links?.self?.[0]?.href ?? url, defaultBranch: branch?.displayId ?? null };
   }
   const data = await get(`${host.apiBase}/repos/${host.owner}/${host.repository}`);
   const parent = data?.fork ? data.parent : null;

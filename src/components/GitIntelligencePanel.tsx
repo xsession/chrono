@@ -9,7 +9,7 @@ import { RevisionDiffView } from "./RevisionDiffView";
 type Tab = "search" | "compare" | "review" | "health" | "file" | "blame" | "contributors" | "stats" | "treemap" | "pulls";
 
 type PullRequestConfig = {
-  provider: "github" | "gitlab" | "gitea" | "forgejo";
+  provider: "github" | "gitlab" | "gitea" | "forgejo" | "bitbucket-server";
   baseUrl: string;
   owner: string;
   repository: string;
@@ -32,6 +32,22 @@ function detectPullRequestConfig(remote: RemoteRecord): PullRequestConfig | null
   const parts = parsed.pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "").split("/").filter(Boolean);
   if (parts.length < 2) return null;
   const host = parsed.hostname.toLowerCase();
+  // Bitbucket Server: …/[context/]scm/PROJECT/repo.git over HTTP, port 7999 over SSH.
+  const scm = parts.indexOf("scm");
+  const viaSsh = Boolean(ssh) || !/^https?:$/.test(parsed.protocol);
+  const httpBitbucket = !viaSsh && scm !== -1 && parts.length === scm + 3;
+  const sshBitbucket = viaSsh && parts.length === 2 && (parsed.port === "7999" || (host.includes("bitbucket") && !host.endsWith("bitbucket.org")));
+  if (httpBitbucket || sshBitbucket) {
+    const project = httpBitbucket ? parts[scm + 1] : parts[0];
+    const context = httpBitbucket && scm > 0 ? `/${parts.slice(0, scm).join("/")}` : "";
+    const origin = httpBitbucket ? `${parsed.protocol}//${parsed.host}` : `https://${parsed.hostname}`;
+    return {
+      provider: "bitbucket-server",
+      baseUrl: `${origin}${context}/rest/api/1.0`,
+      owner: project.startsWith("~") ? project : project.toUpperCase(),
+      repository: httpBitbucket ? parts[scm + 2] : parts[1],
+    };
+  }
   const provider: PullRequestConfig["provider"] = host.includes("github") ? "github" : host.includes("gitlab") ? "gitlab" : host.includes("forgejo") ? "forgejo" : "gitea";
   return {
     provider,
@@ -456,9 +472,9 @@ export function GitIntelligencePanel({ repositoryPath, branches, onOpenCommit }:
           </div>
           {remotes.length > 0 && <div className="ux-pr-remotes"><span>Git remotes</span>{remotes.map((remote) => <button key={remote.name} className={remote.name === "origin" ? "is-active" : ""} onClick={() => { const detected = detectPullRequestConfig(remote); if (detected) setPullRequestConfig(detected); }}>{remote.name}</button>)}</div>}
           <div className="ux-pr-config">
-            <label><span>Provider</span><select value={pullRequestConfig.provider} onChange={(event) => setPullRequestConfig((current) => ({ ...current, provider: event.target.value as PullRequestConfig["provider"] }))}><option value="github">GitHub</option><option value="gitlab">GitLab</option><option value="gitea">Gitea</option><option value="forgejo">Forgejo</option></select></label>
-            <label className="wide"><span>API base URL</span><input value={pullRequestConfig.baseUrl} onChange={(event) => setPullRequestConfig((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.github.com" /></label>
-            <label><span>Owner / group</span><input value={pullRequestConfig.owner} onChange={(event) => setPullRequestConfig((current) => ({ ...current, owner: event.target.value }))} placeholder="owner or group/path" /></label>
+            <label><span>Provider</span><select value={pullRequestConfig.provider} onChange={(event) => setPullRequestConfig((current) => ({ ...current, provider: event.target.value as PullRequestConfig["provider"] }))}><option value="github">GitHub</option><option value="gitlab">GitLab</option><option value="gitea">Gitea</option><option value="forgejo">Forgejo</option><option value="bitbucket-server">Bitbucket Server</option></select></label>
+            <label className="wide"><span>API base URL</span><input value={pullRequestConfig.baseUrl} onChange={(event) => setPullRequestConfig((current) => ({ ...current, baseUrl: event.target.value }))} placeholder={pullRequestConfig.provider === "bitbucket-server" ? "https://bitbucket.example.com/rest/api/1.0" : "https://api.github.com"} /></label>
+            <label><span>Owner / group</span><input value={pullRequestConfig.owner} onChange={(event) => setPullRequestConfig((current) => ({ ...current, owner: event.target.value }))} placeholder={pullRequestConfig.provider === "bitbucket-server" ? "project key, e.g. PROJ" : "owner or group/path"} /></label>
             <label><span>Repository</span><input value={pullRequestConfig.repository} onChange={(event) => setPullRequestConfig((current) => ({ ...current, repository: event.target.value }))} placeholder="repository" /></label>
             <label><span>Token (optional)</span><input type="password" value={pullRequestToken} onChange={(event) => setPullRequestToken(event.target.value)} placeholder="not stored" /></label>
             <button className="ux-primary-button" disabled={busy || !pullRequestConfig.owner.trim() || !pullRequestConfig.repository.trim()} onClick={() => void loadPullRequests()}>Load PRs</button>

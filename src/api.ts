@@ -463,11 +463,11 @@ export const api = {
   fileBlob: (path: string, revision: string, file: string) => invoke<FileBlob>("file_blob", { path, revision, file }),
   remoteHost: (path: string, remote = "origin") => invoke<RemoteHost | null>("remote_host", { path, remote }),
   prTemplate: (path: string) => invoke<string>("pr_template", { path }),
-  createPullRequest: (path: string, request: { remote: string; token: string; head: string; base: string; title: string; description: string; draft: boolean; apiBase?: string }) =>
+  createPullRequest: (path: string, request: { remote: string; token: string; head: string; base: string; title: string; description: string; draft: boolean; apiBase?: string; provider?: string }) =>
     invoke<{ number: number; url: string }>("pr_create", { path, ...request }),
-  ciChecks: (path: string, sha: string, token: string, remote = "origin", apiBase?: string) =>
-    invoke<{ state: string; checks: CheckRun[] }>("ci_checks", { path, sha, token, remote, apiBase }),
-  rerunCheck: (path: string, check: CheckRun, token: string, remote = "origin", apiBase?: string) => invoke<string>("ci_rerun", { path, check, token, remote, apiBase }),
+  ciChecks: (path: string, sha: string, token: string, remote = "origin", apiBase?: string, provider?: string) =>
+    invoke<{ state: string; checks: CheckRun[] }>("ci_checks", { path, sha, token, remote, apiBase, provider }),
+  rerunCheck: (path: string, check: CheckRun, token: string, remote = "origin", apiBase?: string, provider?: string) => invoke<string>("ci_rerun", { path, check, token, remote, apiBase, provider }),
 
   // Roadmap Tier 3
   createAgentWorktree: (path: string, name: string, base: string, location: string | null = null) => invoke<{ path: string; branch: string }>("agent_worktree_create", { path, name, base, location }),

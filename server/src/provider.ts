@@ -1,4 +1,4 @@
-// Pull request providers: GitHub, GitLab, Gitea/Forgejo.
+// Pull request providers: GitHub, GitLab, Gitea/Forgejo, Bitbucket Server.
 //
 // Ported from `src-tauri/src/provider.rs` using Node's built-in fetch (the Rust
 // backend used reqwest).
@@ -36,6 +36,21 @@ function number(value: unknown, pointer: string): number {
 }
 
 function normalize(provider: string, value: Record<string, unknown>): PullRequestRecord {
+  if (provider === "bitbucket-server") {
+    const self = (value.links as { self?: Array<{ href?: unknown }> } | undefined)?.self?.[0]?.href;
+    const updated = typeof value.updatedDate === "number" ? new Date(value.updatedDate).toISOString() : null;
+    return {
+      id: String(number(value, "/id")),
+      number: number(value, "/id"),
+      title: text(value, "/title"),
+      author: text(value, "/author/user/displayName") || text(value, "/author/user/name"),
+      state: text(value, "/state").toLowerCase(), // OPEN | MERGED | DECLINED
+      sourceBranch: text(value, "/fromRef/displayId"),
+      targetBranch: text(value, "/toRef/displayId"),
+      webUrl: typeof self === "string" ? self : "",
+      updatedAt: updated,
+    };
+  }
   if (provider === "gitlab") {
     return {
       id: String(number(value, "/id")),
@@ -90,6 +105,13 @@ export async function listPullRequests(
       url = `${base}/repos/${owner}/${repository}/pulls?state=all&limit=100`;
       if (token) headers["Authorization"] = `Bearer ${token}`;
       break;
+    case "bitbucket-server":
+      // base is the REST API root, e.g. https://bitbucket.example.com/rest/api/1.0;
+      // owner is the project key (~user for personal repositories).
+      url = `${base}/projects/${encodeURIComponent(owner)}/repos/${encodeURIComponent(repository)}/pull-requests?state=ALL&limit=100`;
+      headers["Accept"] = "application/json";
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      break;
     default:
       throw new AppError("invalid", `unsupported provider: ${provider}`);
   }
@@ -103,7 +125,11 @@ export async function listPullRequests(
   if (!response.ok) {
     throw httpError(`provider responded ${response.status} for ${url}`);
   }
-  const body: unknown = await response.json().catch(() => null);
+  let body: unknown = await response.json().catch(() => null);
+  // Bitbucket Server pages its results: { values: [...], isLastPage, ... }.
+  if (normalized === "bitbucket-server" && body && typeof body === "object" && Array.isArray((body as { values?: unknown }).values)) {
+    body = (body as { values: unknown[] }).values;
+  }
   if (!Array.isArray(body)) {
     throw new AppError("command", `provider response from ${url}: expected a JSON array`);
   }

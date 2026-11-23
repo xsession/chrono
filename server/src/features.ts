@@ -486,7 +486,8 @@ export async function getAutolinks(inputPath: string): Promise<{ rules: Autolink
   const suggested: AutolinkRule[] = [];
   const remote = (await runGit(root, ["remote", "get-url", "origin"])).stdout.trim();
   const host = parseRemote(remote);
-  if (host) {
+  // Bitbucket Server has no issue tracker of its own (teams use Jira).
+  if (host && host.provider !== "bitbucket-server") {
     const issues = host.provider === "gitlab" ? `${host.webBase}/-/issues/$1` : `${host.webBase}/issues/$1`;
     suggested.push({ pattern: "#(\\d+)", url: issues });
   }
@@ -1103,20 +1104,63 @@ export async function notesSet(inputPath: string, commit: string, text: string, 
 // Hosting providers: remote parsing, PR creation, CI checks
 // ===========================================================================
 
-export interface RemoteHost { provider: "github" | "gitlab" | "gitea"; host: string; owner: string; repository: string; apiBase: string; webBase: string }
+export type HostingProvider = "github" | "gitlab" | "gitea" | "bitbucket-server";
+export const HOSTING_PROVIDERS: readonly HostingProvider[] = ["github", "gitlab", "gitea", "bitbucket-server"];
+
+/** For "bitbucket-server", owner is the project key (~user for a personal
+ *  repository) and repository is the repository slug. */
+export interface RemoteHost { provider: HostingProvider; host: string; owner: string; repository: string; apiBase: string; webBase: string }
+
+/** Self-hosted Bitbucket Server / Data Center. Clone URLs look like
+ *  https://host[:7990][/context]/scm/PROJECT/repo.git or
+ *  ssh://git@host:7999/project/repo.git (7999 is its default SSH port). */
+function bitbucketServerHost(scheme: string, host: string, port: string, parts: string[]): RemoteHost | null {
+  const isHttp = scheme === "http:" || scheme === "https:";
+  const scm = isHttp ? parts.indexOf("scm") : -1;
+  let context: string[] = [];
+  let project: string;
+  let slug: string;
+  if (scm !== -1 && parts.length === scm + 3) {
+    context = parts.slice(0, scm);
+    project = parts[scm + 1];
+    slug = parts[scm + 2];
+  } else if (!isHttp && parts.length === 2 && (port === "7999" || (/bitbucket/i.test(host) && !/(^|\.)bitbucket\.org$/i.test(host)))) {
+    project = parts[0];
+    slug = parts[1];
+  } else return null;
+  // Project keys are upper case; a personal repository lives under ~user.
+  const owner = project.startsWith("~") ? project : project.toUpperCase();
+  const origin = `${isHttp ? scheme : "https:"}//${isHttp && port ? `${host}:${port}` : host}${context.length ? `/${context.join("/")}` : ""}`;
+  const webBase = owner.startsWith("~") ? `${origin}/users/${owner.slice(1)}/repos/${slug}` : `${origin}/projects/${owner}/repos/${slug}`;
+  return { provider: "bitbucket-server", host, owner, repository: slug, apiBase: `${origin}/rest/api/1.0`, webBase };
+}
+
+/** Server root of a Bitbucket Server API base (…/rest/api/1.0 → …). */
+export function bitbucketServerRoot(apiBase: string): string {
+  return apiBase.replace(/\/+$/, "").replace(/\/rest\/api\/(1\.0|latest)$/, "");
+}
+
+/** REST path of a Bitbucket Server repository below the API base. */
+export function bitbucketRepoPath(target: Pick<RemoteHost, "owner" | "repository">): string {
+  return `/projects/${encodeURIComponent(target.owner)}/repos/${encodeURIComponent(target.repository)}`;
+}
 
 export function parseRemote(url: string): RemoteHost | null {
   const trimmed = url.trim();
   let host = "";
   let repoPath = "";
+  let scheme = "ssh:";
+  let port = "";
   const scp = /^(?:[^@]+@)?([^:/]+):(.+)$/.exec(trimmed);
   if (/^[a-z]+:\/\//i.test(trimmed)) {
-    try { const parsed = new URL(trimmed); host = parsed.hostname; repoPath = parsed.pathname; } catch { return null; }
+    try { const parsed = new URL(trimmed); host = parsed.hostname; repoPath = parsed.pathname; scheme = parsed.protocol; port = parsed.port; } catch { return null; }
   } else if (scp) {
     host = scp[1]; repoPath = scp[2];
   } else return null;
   const parts = repoPath.replace(/^\/+/, "").replace(/\.git$/, "").split("/").filter(Boolean);
   if (parts.length < 2) return null;
+  const bitbucket = host === "github.com" ? null : bitbucketServerHost(scheme, host, port, parts);
+  if (bitbucket) return bitbucket;
   const repository = parts.pop()!;
   const owner = parts.join("/");
   if (host === "github.com") return { provider: "github", host, owner, repository, apiBase: "https://api.github.com", webBase: `https://github.com/${owner}/${repository}` };
@@ -1144,7 +1188,10 @@ async function providerFetch(url: string, init: RequestInit): Promise<unknown> {
   catch (error) { throw new AppError("http", `request to ${url} failed: ${(error as Error).message}`); }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    const detail = body && typeof body === "object" ? String((body as Record<string, unknown>).message ?? (body as Record<string, unknown>).error ?? "") : "";
+    // Bitbucket Server reports errors as { errors: [{ message }] }.
+    const record = body && typeof body === "object" ? body as Record<string, unknown> : null;
+    const errors = Array.isArray(record?.errors) ? (record.errors as Array<Record<string, unknown>>).map((entry) => String(entry?.message ?? "")).filter(Boolean).join("; ") : "";
+    const detail = record ? String(record.message ?? record.error ?? "") || errors : "";
     throw new AppError("http", `provider responded ${response.status}${detail ? `: ${detail}` : ""}`);
   }
   return body;
@@ -1163,6 +1210,19 @@ export async function createPullRequest(target: RemoteHost, token: string, reque
   if (target.provider === "github") {
     const body = await providerFetch(`${target.apiBase}/repos/${target.owner}/${target.repository}/pulls`, { method: "POST", headers, body: JSON.stringify({ title: request.title, body: request.body, head: request.head, base: request.base, draft: request.draft }) }) as Record<string, unknown>;
     return { number: Number(body.number), url: String(body.html_url) };
+  }
+  if (target.provider === "bitbucket-server") {
+    const repository = { slug: target.repository, project: { key: target.owner } };
+    const payload: Record<string, unknown> = {
+      title: request.title,
+      description: request.body,
+      fromRef: { id: `refs/heads/${request.head}`, repository },
+      toRef: { id: `refs/heads/${request.base}`, repository },
+    };
+    if (request.draft) payload.draft = true; // Bitbucket 8.18+; older servers ignore it
+    const body = await providerFetch(`${target.apiBase}${bitbucketRepoPath(target)}/pull-requests`, { method: "POST", headers, body: JSON.stringify(payload) }) as Record<string, unknown>;
+    const links = body.links as { self?: Array<{ href?: string }> } | undefined;
+    return { number: Number(body.id), url: String(links?.self?.[0]?.href ?? `${target.webBase}/pull-requests/${String(body.id)}`) };
   }
   if (target.provider === "gitlab") {
     const project = encodeURIComponent(`${target.owner}/${target.repository}`);
@@ -1188,6 +1248,20 @@ export async function ciChecks(target: RemoteHost, token: string, sha: string): 
     }
     const combined = await providerFetch(`${target.apiBase}/repos/${target.owner}/${target.repository}/commits/${rev}/status`, { headers }).catch(() => null) as { statuses?: Array<Record<string, unknown>> } | null;
     for (const status of combined?.statuses ?? []) checks.push({ id: String(status.id), name: String(status.context), status: "completed", conclusion: String(status.state), url: String(status.target_url ?? ""), rerunnable: false });
+  } else if (target.provider === "bitbucket-server") {
+    // Build statuses that Jenkins, Bamboo, TeamCity… post to Bitbucket.
+    const statuses = await providerFetch(`${bitbucketServerRoot(target.apiBase)}/rest/build-status/1.0/commits/${rev}?limit=100`, { headers }) as { values?: Array<Record<string, unknown>> } | null;
+    for (const build of statuses?.values ?? []) {
+      const state = String(build.state ?? "");
+      checks.push({
+        id: String(build.key ?? build.name ?? ""),
+        name: String(build.name ?? build.key ?? "build"),
+        status: state === "INPROGRESS" ? "in_progress" : "completed",
+        conclusion: state === "SUCCESSFUL" ? "success" : state === "FAILED" ? "failure" : state === "INPROGRESS" ? "pending" : state.toLowerCase(),
+        url: String(build.url ?? ""),
+        rerunnable: false,
+      });
+    }
   } else if (target.provider === "gitlab") {
     const project = encodeURIComponent(`${target.owner}/${target.repository}`);
     const pipelines = await providerFetch(`${target.apiBase}/projects/${project}/pipelines?sha=${rev}&per_page=20`, { headers }) as Array<Record<string, unknown>>;
