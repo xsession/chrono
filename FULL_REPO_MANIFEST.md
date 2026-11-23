@@ -27,6 +27,15 @@ Qt/C++ Chrono repository or any Rust toolchain to build or run.
 - tests and smoke suites (including an end-to-end API server smoke test)
 - research, implementation and visual-QA documentation
 - application icon required by the frontend
+- Electron desktop shell, Capacitor Android companion, Docker image and
+  installer scripts (`install-linux.sh`, `install-windows.bat`/`.ps1`)
+- multi-repository tabs with live change detection (`server/src/repoWatch.ts`)
+- submodule tooling: mind map, bulk actions, what changed inside a submodule,
+  and commits through nested submodules (`server/src/nestedCommit.ts`)
+- codebase landscape map with a recent-changes heatmap (`public/landscape/`)
+- identity profiles with a per-commit "Commit as" choice
+- AI assistant: local Ollama, Claude through `@anthropic-ai/sdk`, or offline
+  rules (`server/src/ai.ts`)
 
 ## Deliberately excluded
 
@@ -35,30 +44,24 @@ Qt/C++ Chrono repository or any Rust toolchain to build or run.
 - `dist/`
 - machine-specific caches
 
-`package-lock.json` is not included in this snapshot. `npm install` will generate it;
-commit the generated lock file after validating your chosen toolchain if you want
-reproducible dependency pinning.
+`package-lock.json` is committed, so `npm ci` installs exactly the pinned
+dependencies (CI and the release workflow use it).
 
-## Validation performed
+## Validation
 
-- `npm run typecheck` (frontend + server): PASS
-- `npm run build` (tsc + vite build): PASS
-- conflict-marker unit test: PASS
-- merge/rebase/cherry-pick/revert operation smoke tests: PASS
-- Conflict Center Git mechanics smoke tests: PASS
-- interactive rebase planner smoke tests: PASS
-- Git Intelligence smoke tests: PASS
-- end-to-end API server smoke test (`npm run test:api`, 66 checks): PASS
+Every push runs the CI workflow (`.github/workflows/ci.yml`): typecheck,
+build and the full test suite on Linux, unit tests on Windows and macOS, shell
+and workflow lint, and packaging checks for the desktop app, server tarball,
+Docker image and Android APK. `npm run test:all` runs the same suite locally;
+the README's *Tests* section lists what each part covers.
 
 ## Local validation
 
 ```bash
-npm install
+npm ci
 npm run typecheck
 npm run build
-npm run test:markers
-npm run test:git
-npm run test:api
+npm run test:all
 npm run dev        # API server :1421 + Vite dev server :1420
 npm start          # production: API server on :1421 serves dist/
 ```

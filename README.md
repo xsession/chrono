@@ -49,8 +49,13 @@ Browser (React 19)  ──WebSocket /api/rpc──────▶  Node server (
     squash/fixup/drop, `--update-refs`, todo injected via GIT_SEQUENCE_EDITOR)
   - `server/src/insights.ts` — search, compare, range-diff review, repository
     health, file/line history, blame, contributors, worktrees
-  - `server/src/commitWriter.ts` — local-first staged-diff commit drafting
-    with optional loopback Ollama and deterministic offline fallback
+  - `server/src/commitWriter.ts` — staged-diff commit drafting through the AI
+    assistant, with a deterministic offline fallback
+  - `server/src/ai.ts` — AI assistant: Ollama, Claude (Anthropic SDK) or off;
+    settings and the write-only API key in `CHRONO_CONFIG_DIR/ai.json`
+  - `server/src/nestedCommit.ts` — staging into submodules and committing
+    through nested submodules, deepest first
+  - `server/src/repoWatch.ts` — file-system watchers behind live changes
   - `server/src/provider.ts` — pull requests (GitHub/GitLab/Gitea/Forgejo)
     with the Git Intelligence pull-request triage tab and remote auto-detection
   - `server/src/workspaces.ts` — workspace persistence (`~/.chrono-next/workspaces.json`)
@@ -62,6 +67,8 @@ Browser (React 19)  ──WebSocket /api/rpc──────▶  Node server (
     assignment), unit-tested in `tests/graph-layout.test.ts`.
   - `src/components/CommitGraph.tsx` — History timeline: real branch/merge
     connections, branch-name chips, HEAD marker, filtered-history gaps.
+  - `src/submoduleStaging.ts` — which changed submodules count as staged (shared
+    by the commit panel and the Changes view).
 - `electron/` — desktop shell. Spawns the backend itself on a random port in
   14210-14310 (no separate server needed).
 - `android/` — Capacitor companion. A client that connects to a running Chrono
@@ -72,7 +79,7 @@ Browser (React 19)  ──WebSocket /api/rpc──────▶  Node server (
 - Node.js 22+
 - Git 2.38+ recommended (required for rebase `--update-refs`)
 - Electron desktop: nothing extra (the starter installs it)
-- Android companion: JDK 17+ and the Android SDK
+- Android companion: JDK 21+ (Capacitor 7) and the Android SDK
 
 The Git Intelligence view includes offline history search/compare/range review,
 repository-health, file history/blame/contributor/activity views plus a
@@ -293,7 +300,7 @@ These features come from the roadmap in `reports/Git client feature gap analysis
 - **Image diff:** side by side, swipe, onion skin and pixel difference, with Git LFS content fetched through `git cat-file --filters`.
 - **Agent sessions:** creates a worktree on a new branch, opens a terminal there and starts an agent CLI (Claude Code, Codex, Gemini, Aider or any command). The worktree's uncommitted work shows as its own WIP entry above the graph.
 - **Git-flow:** initialise, then start and finish features, releases and hotfixes. Finishing uses `merge --no-ff` and creates the tag, signed when tag signing is on. It is all done with plain git commands and can be undone.
-- **Explain:** explains a commit, a branch or your working changes in plain language. It uses local Ollama when it is running and otherwise falls back to a deterministic summary.
+- **Explain:** explains a commit, a branch or your working changes in plain language. It uses the AI assistant chosen in settings (local Ollama by default, or Claude) and otherwise falls back to a deterministic summary that says why.
 - **Other:** git notes on commits, sparse-checkout controls, and clone options for shallow, blobless, treeless, single-branch and sparse clones.
 - **Accessibility:**
   - A colour-blind-safe graph palette, distinct node shapes per lane, high contrast and reduced motion.
@@ -344,6 +351,17 @@ install-windows.bat --uninstall
 - **The .deb/.rpm route** asks for sudo once. It replaces an earlier per-user AppImage install, so only one Chrono remains.
 - **On Windows,** close Chrono before installing. The setup runs silently and adds the Start menu and desktop shortcuts, the `chrono://` handler and the Explorer **Chrono** menu.
 - **Settings are kept** when you uninstall.
+- **Windows needs about 400 MB free** on the target drive. The script checks
+  before building; use `--dir` to install elsewhere when C: is full.
+- **No Visual Studio needed.** Packaging uses node-pty's prebuilt N-API
+  binaries as they are (`"npmRebuild": false`), so the Spectre-mitigated
+  libraries a source rebuild would need are not required.
+- **If the setup stops with exit code 2,** the script says why: Chrono still
+  running (it checks for processes started from an installed copy), an
+  all-users install a per-user setup cannot replace, or a broken earlier
+  install. Removing a broken install: uninstall it from Settings > Apps, or
+  delete its `%LOCALAPPDATA%\Programs\Chrono` folder and its entry under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall`.
 
 ### Packages
 
@@ -398,8 +416,9 @@ needed.
 
 ## Android (companion)
 
-The starter installs Node 22+, JDK 17+ and the Android SDK as needed, then
-builds the debug APK:
+The starter installs Node 22+, JDK 21+ and the Android SDK as needed, then
+builds the debug APK (Capacitor 7 compiles for Java 21, so JDK 17 fails with
+"invalid source release: 21"):
 
 ```bash
 starter-android.bat            # build + APK (Windows)
@@ -445,7 +464,7 @@ npm run test:trust     # dubious-ownership detection and safe.directory trust
 npm run test:folders   # folder picker listing; no browser prompt dialogs
 npm run test:watch     # live changes: edits, commits and branch moves reported within one second
 npm run test:nested-commit # commits through nested submodules, deepest first
-npm run test:ai        # AI assistant settings and fallbacks (no network)
+npm run test:ai        # AI assistant settings, fallbacks and the Claude request (local mock, no internet)
 npm run test:stash-history # stash nodes in the graph
 npm run test:lanes     # per-repository git lanes: sharing, isolation, cancelling
 npm run test:landscape # landscape scan and the embedded map page

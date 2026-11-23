@@ -1,6 +1,6 @@
 # Chrono Android companion starter (Windows).
 #
-# Checks/installs prerequisites (Node 22+, JDK 17+, Android SDK) and builds
+# Checks/installs prerequisites (Node 22+, JDK 21+, Android SDK) and builds
 # the debug APK with ./gradlew assembleDebug.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File starter-android.ps1            # build + APK
@@ -54,30 +54,29 @@ if (-not $nodeVer) {
   Write-Host ('Node.js ' + $nodeVer)
 }
 
-# --- JDK 17+ (Capacitor 7 / Gradle need a modern JDK; the build will not work on JDK 8) ---
-Step 'Checking Java (JDK 17+)'
+# --- JDK 21+ (Capacitor 7 compiles for Java 21; JDK 17 fails with "invalid source release: 21") ---
+Step 'Checking Java (JDK 21+)'
 function Test-JavaOk {
   try {
     $out = & java -version 2>&1 | Select-Object -First 1
-    if ($out -match '"(\d+)[^"]*"' -and [int]$Matches[1] -ge 17) { return ($Matches[0] + ' ' + $Matches[1]) }
-    if ($out -match 'version "(\d+|17|21)' -and [int]$Matches[1] -ge 17) { return $Matches[0] }
+    if ($out -match '"(\d+)[^"]*"' -and [int]$Matches[1] -ge 21) { return ($Matches[0] + ' ' + $Matches[1]) }
   } catch { }
   return $null
 }
 if (-not (Test-JavaOk)) {
-  Write-Host 'JDK 17+ not found - installing Temurin 17 (winget)...'
+  Write-Host 'JDK 21+ not found - installing Temurin 21 (winget)...'
   $installed = $false
   if (Get-Command winget -ErrorAction SilentlyContinue) {
-    try { winget install -e --id EclipseAdoptium.Temurin.17.JDK --silent --accept-source-agreements --accept-package-agreements 2>$null; $installed = $true } catch { }
+    try { winget install -e --id EclipseAdoptium.Temurin.21.JDK --silent --accept-source-agreements --accept-package-agreements 2>$null; $installed = $true } catch { }
   }
-  if (-not $installed -and (Get-Command choco -ErrorAction SilentlyContinue)) { choco install temurin17jdk -y; $installed = $true }
+  if (-not $installed -and (Get-Command choco -ErrorAction SilentlyContinue)) { choco install temurin21jdk -y; $installed = $true }
   if ($installed) {
     $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
     $j = Test-JavaOk
     if (-not $j) { throw 'JDK was installed but java is not on PATH yet. Reopen the terminal and run starter-android.ps1 again.' }
     Write-Host ('Installed JDK ' + $j)
   } else {
-    throw 'Could not install a JDK automatically. Install JDK 17+ (https://adoptium.net) and run starter-android.ps1 again.'
+    throw 'Could not install a JDK automatically. Install JDK 21+ (https://adoptium.net) and run starter-android.ps1 again.'
   }
 } else {
   Write-Host ('Java ' + (Test-JavaOk))

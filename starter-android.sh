@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Chrono Android companion starter (Linux/macOS).
 #
-# Checks/installs prerequisites (Node 22+, JDK 17+, Android SDK) and builds
+# Checks/installs prerequisites (Node 22+, JDK 21+, Android SDK) and builds
 # the debug APK with ./gradlew assembleDebug.
 #
 #   ./starter-android.sh            build + APK
@@ -50,17 +50,18 @@ if [ -z "$NODE_MAJOR" ] || [ "$NODE_MAJOR" -lt 22 ]; then
 fi
 echo "node $(node --version), npm $(npm --version)"
 
-step "Checking Java (JDK 17+)"
-if ! java -version 2>&1 | head -1 | grep -Eq 'version "(17|1[8-9]|[2-9][0-9])'; then
-  echo "JDK 17+ not found - installing..."
+step "Checking Java (JDK 21+)"
+# Capacitor 7 compiles for Java 21; JDK 17 fails with "invalid source release: 21".
+if ! java -version 2>&1 | head -1 | grep -Eq 'version "(2[1-9]|[3-9][0-9])'; then
+  echo "JDK 21+ not found - installing..."
   if have brew; then
-    brew install --cask temurin@17 || brew install openjdk@17
+    brew install --cask temurin@21 || brew install openjdk@21
   elif have apt-get; then
-    sudo apt-get install -y openjdk-17-jdk
+    sudo apt-get install -y openjdk-21-jdk
   elif have dnf; then
-    sudo dnf install -y java-17-openjdk-devel
+    sudo dnf install -y java-21-openjdk-devel
   else
-    echo "error: install JDK 17+ (https://adoptium.net) and run ./starter-android.sh again." >&2
+    echo "error: install JDK 21+ (https://adoptium.net) and run ./starter-android.sh again." >&2
     exit 1
   fi
 fi

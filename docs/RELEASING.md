@@ -38,8 +38,8 @@ To rebuild an existing tag, run the workflow manually ("Run workflow") and enter
 ## CI on every push / pull request
 
 `.github/workflows/ci.yml` runs:
-- **Linux:** typecheck, build and the full test suite (`test:unit`, `test:lines`, `test:roadmap`, `test:git`, `test:api`).
-- **Windows and macOS:** typecheck, build and unit tests.
+- **Linux:** typecheck, build and the full test suite: `test:unit`, `test:lines`, `test:submodules`, `test:trust`, `test:lanes`, `test:landscape`, `test:folders`, `test:watch`, `test:stash-history`, `test:nested-commit`, `test:ai`, `test:roadmap`, `test:git` and `test:api` (the same set as `npm run test:all`).
+- **Windows and macOS:** typecheck, build, unit tests and line staging.
 - **Linting:** shellcheck and actionlint.
 - **Packaging checks:**
   - an unpacked Linux desktop build, whose backend is started to check it runs;
@@ -57,3 +57,26 @@ npm run dist:linux   # or dist:win / dist:mac — output in release/
 npm run dist:server  # release/chrono-server-<version>.tar.gz
 docker build -t chrono .
 ```
+
+The desktop packages use node-pty's prebuilt N-API binaries as they are
+(`"npmRebuild": false` in `package.json`), so packaging needs no C++ toolchain.
+node-pty's debug symbols (`.pdb`) and build sources are left out of the
+packages.
+
+## Troubleshooting local builds
+
+- **Android: "invalid source release: 21".** Capacitor 7 compiles for Java 21;
+  build with JDK 21 or newer (`JAVA_HOME`). The starters check for it.
+- **Windows: makensis "error creating mmap".** NSIS is 32-bit and keeps its
+  working files in `%TEMP%`; free space on that drive (usually C:).
+- **Windows: the setup exits with code 2.** It could not remove the installed
+  version: Chrono is still running, an all-users install is in the way, or an
+  earlier install broke halfway (often because the disk filled up).
+  `install-windows.bat` checks the first two before running the setup and
+  names what it finds. A broken install is removed from Settings > Apps, or by
+  deleting `%LOCALAPPDATA%\Programs\Chrono` and its entry under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall`.
+- **Windows: "Spectre-mitigated libraries are required".** An older checkout
+  rebuilt node-pty from source; current ones do not (see above).
+- **Line-ending test failures on Windows.** The test repositories set
+  `core.autocrlf false`; a global `core.autocrlf true` is fine.
