@@ -4,7 +4,7 @@ import { strict as assert } from "node:assert";
 import {
   layoutGraph, LANE_W, LANE_PAD, ROW_H, laneX, graphWidth,
   GRAPH_COLORS, firstParentChain, unionIds,
-  graphLabels, graphLabelsWidth, labelTextWidth, graphLabelYs,
+  commitRefTags, describeRefTag, authorInitials, authorHue,
 } from "../src/graph.ts";
 import type { CommitRecord } from "../src/types.ts";
 
@@ -51,11 +51,14 @@ function rowOf(result, id: string) {
   // M is the tip: no arriving lines, two lines leaving toward its parents.
   assert.equal(m.top.length, 0, "tip has no arriving segments");
   assert.equal(m.bottom.length, 2, "merge leaves two lines to its parents");
-  // A and B each leave one line to root; both converge onto root's lane,
-  // so root receives a single merged arriving line.
-  assert.equal(root.top.length, 1, "lines converge at root");
-  assert.ok(a.bottom.some((seg) => seg.to === root.lane), "A's line ends at root's lane");
-  assert.ok(b.bottom.some((seg) => seg.to === root.lane), "B's line ends at root's lane");
+  // A and B each keep their own lane down to root and bend in there
+  // (git log --graph): straight lines out, one arrival per branch at root.
+  assert.equal(a.bottom.length, 1);
+  assert.equal(a.bottom[0].from, a.bottom[0].to, "A's line runs straight down its lane");
+  assert.equal(b.bottom[0].from, b.bottom[0].to, "B's line runs straight down its lane");
+  assert.equal(root.top.length, 2, "both branches arrive at root");
+  assert.ok(root.top.every((seg) => seg.to === root.lane), "every arrival ends at root's node");
+  assert.deepEqual(root.top.map((seg) => seg.from).sort(), [a.lane, b.lane].sort());
 }
 
 // 3. Chain continuation: chains keep their lane away from junctions, and
@@ -68,8 +71,9 @@ function rowOf(result, id: string) {
   assert.equal(s0.lane, s1.lane, "side chain is straight");
   assert.ok(m0.lane === m1.lane || m0.lane === s0.lane, "junction sits on a chain lane");
   // Both chains connect into the junction.
-  assert.ok(m1.bottom.some((seg) => seg.to === m0.lane), "main chain line reaches junction");
-  assert.ok(s0.bottom.some((seg) => seg.to === m0.lane), "side chain line reaches junction");
+  const arrivals = m0.top.filter((seg) => seg.to === m0.lane).map((seg) => seg.from);
+  assert.ok(arrivals.includes(m1.lane), "main chain line reaches junction");
+  assert.ok(arrivals.includes(s0.lane), "side chain line reaches junction");
 }
 
 // 4. Octopus merge: all extra parents arrive at the merge row.
@@ -80,12 +84,10 @@ function rowOf(result, id: string) {
   assert.equal(m.isMerge, true);
   assert.equal(m.top.length, 0, "tip has no arriving segments");
   assert.equal(m.bottom.length, 3, "three lines leave the octopus");
-  // All three lines terminate at the root's lane and converge into a single
-  // merged arrival.
-  assert.equal(root.top.length, 1, "octopus lines merge at root");
-  assert.equal(rowOf(r, "p1").bottom.some((seg) => seg.to === root.lane), true);
-  assert.equal(rowOf(r, "p2").bottom.some((seg) => seg.to === root.lane), true);
-  assert.equal(rowOf(r, "p3").bottom.some((seg) => seg.to === root.lane), true);
+  // Each parent keeps its lane down to root, where all three bend in.
+  assert.equal(root.top.length, 3, "three arrivals at root");
+  assert.ok(root.top.every((seg) => seg.to === root.lane));
+  assert.deepEqual(root.top.map((seg) => seg.from).sort(), ["p1", "p2", "p3"].map((id) => rowOf(r, id).lane).sort());
 }
 
 // 5. Unknown/missing parents are ignored without throwing.
@@ -148,14 +150,14 @@ function rowOf(result, id: string) {
 
 // 8. Geometry helpers.
 {
-  assert.equal(LANE_W, 19);
-  assert.equal(LANE_PAD, 13);
+  assert.equal(LANE_W, 26);
+  assert.equal(LANE_PAD, 16);
   assert.equal(ROW_H, 38);
-  assert.equal(laneX(0), 13);
-  assert.equal(laneX(2), 13 + 2 * 19);
+  assert.equal(laneX(0), 16);
+  assert.equal(laneX(2), 16 + 2 * 26);
   assert.equal(graphWidth(1), 96, "minimum width clamp");
   assert.equal(graphWidth(3), 96, "minimum width clamp");
-  assert.equal(graphWidth(5), 13 * 2 + 4 * 19, "beyond the clamp");
+  assert.equal(graphWidth(5), 16 * 2 + 4 * 26, "beyond the clamp");
 }
 
 // 9. FIFO recycled colors: even with 12 concurrent branches (far beyond the
@@ -197,8 +199,8 @@ function rowOf(result, id: string) {
     assert.ok(["A", "B"].includes(seg.targetId ?? ""), "targetId is a real parent id");
   }
   const root = rowOf(r, "root");
-  assert.equal(root.top.length, 1);
-  assert.ok(Array.isArray(root.top[0].sourceIds) && root.top[0].sourceIds.includes("A") && root.top[0].sourceIds.includes("B"), "top segment names its children");
+  assert.equal(root.top.length, 2, "one arrival per child branch");
+  assert.deepEqual(root.top.map((seg) => seg.sourceIds).sort(), [["A"], ["B"]], "each arriving segment names its child");
 }
 
 // 10b. through segments expose the edge's full row span (from child row to
@@ -245,41 +247,57 @@ function rowOf(result, id: string) {
   assert.equal(unionIds(null, undefined).size, 0);
 }
 
-// 12. Inline ref labels (GitEmber drawLabel): prefix stripping, ordering
-//     (HEAD → current branch → other branches → tags), width budgeting.
+// 12. Ref tags (Branch / Tag column): local + remote twins merge into one
+//     tag, ordering current → local → remote-only → tags → stash → worktree.
 {
   const branches = [
     { name: "feature/x", target: "c1", current: false, remote: false },
     { name: "main", target: "c1", current: true, remote: false },
     { name: "origin/main", target: "c1", current: false, remote: true },
+    { name: "origin/dependabot/ws", target: "c1", current: false, remote: true },
+    { name: "origin/elsewhere", target: "c2", current: false, remote: true },
   ];
-  const labels = graphLabels("c1", branches, "c1", [{ name: "v1.0", target: "c1" }, { name: "other", target: "c2" }]);
-  assert.deepEqual(labels.map((label) => label.name), ["HEAD", "main", "feature/x", "v1.0"]);
-  assert.deepEqual(labels.map((label) => label.kind), ["head", "branch", "branch", "tag"]);
-  // Remotes and other commits' tags are excluded.
-  assert.ok(!labels.some((label) => label.name === "origin/main"));
-  assert.ok(!labels.some((label) => label.name === "other"));
-  // Width math: sum of pills + gaps + start offset.
-  assert.equal(graphLabelsWidth(labels), 6 + labels.reduce((sum, label) => sum + labelTextWidth(label.name), 0) + 4 * (labels.length - 1));
-  assert.equal(graphLabelsWidth([]), 0);
-  // Pill Y positions stay within the row and are ordered.
-  const ys = graphLabelYs(3);
-  assert.equal(ys.length, 3);
-  assert.ok(ys[0] < ys[1] && ys[1] < ys[2], "pill ys ordered");
-  assert.ok(ys[0] >= 0 && ys[2] + 12 <= ROW_H, "pill ys within the row");
-  assert.equal(graphLabelYs(4).length, 3, "ref pills are capped to the row height");
-  // A commit with no refs at all gets no pills.
-  assert.equal(graphLabels("c2", branches, "c1").length, 0);
+  const tags = commitRefTags("c1", branches, "c1", [{ name: "v1.0", target: "c1" }, { name: "other", target: "c2" }]);
+  assert.deepEqual(tags.map((tag) => tag.name), ["main", "feature/x", "dependabot/ws", "v1.0"]);
+  assert.deepEqual(tags.map((tag) => tag.kind), ["branch", "branch", "branch", "tag"]);
+  assert.deepEqual(tags[0], { name: "main", kind: "branch", local: true, remotes: ["origin/main"], current: true });
+  assert.equal(tags[2].local, false, "remote-only branch");
+  assert.match(describeRefTag(tags[0]), /main \(checked out\) — local, origin\/main/);
+  // HEAD only appears when no checked-out branch points here (detached).
+  const detached = commitRefTags("c2", branches, "c2");
+  assert.deepEqual(detached.map((tag) => [tag.name, tag.kind]), [["HEAD", "head"], ["elsewhere", "branch"]]);
+  assert.equal(commitRefTags("c3", branches, "c1").length, 0);
 
-  const anchored = graphLabels(
+  const anchored = commitRefTags(
     "c1",
     branches,
     "c1",
     [],
     [{ ref: "stash@{0}", message: "graph stash", target: "c1" }],
-    [{ path: "/tmp/feature", branch: "feature/x", head: "c1" }],
+    [{ path: "/tmp/feature", branch: "feature/x", head: "c1" }, { path: "/tmp/probe", branch: null, head: "c1" }],
   );
-  assert.deepEqual(anchored.slice(-2).map((label) => [label.name, label.kind]), [["stash@{0}", "stash"], ["wt:feature/x", "worktree"]]);
+  // The worktree on feature/x is already shown by that branch; the detached one is not.
+  assert.deepEqual(anchored.slice(-2).map((tag) => [tag.name, tag.kind]), [["stash@{0}", "stash"], ["wt:detached c1", "worktree"]]);
+  // origin/HEAD (listed as "origin") is not a branch of its own.
+  assert.equal(commitRefTags("c1", [...branches, { name: "origin", target: "c1", current: false, remote: true }, { name: "origin/HEAD", target: "c1", current: false, remote: true }], "c1").length, 3);
+}
+
+// 13. Author marks inside the commit nodes.
+{
+  assert.equal(authorInitials("Iványi László"), "IL");
+  assert.equal(authorInitials("dependabot[bot]"), "D");
+  assert.equal(authorInitials("Ada Byron Lovelace"), "AL");
+  assert.equal(authorInitials(""), "?");
+  assert.equal(authorHue("A", "a@x.hu"), authorHue("Someone else", "A@X.hu"), "hue follows the email");
+  assert.ok(authorHue("A", "") >= 0 && authorHue("A", "") < 360);
+}
+
+// 14. Many branch tips on one parent (dependabot): every node lane is counted.
+{
+  const tips = ["t1", "t2", "t3", "t4", "t5"].map((id) => c(id, "base"));
+  const layout = layoutGraph([...tips, c("base")]);
+  const widest = Math.max(...layout.items.map((item) => item.lane));
+  assert.ok(layout.laneCount > widest, `laneCount ${layout.laneCount} must cover lane ${widest}`);
 }
 
 console.log("graph layout: all assertions passed");

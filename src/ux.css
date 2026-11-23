@@ -1136,6 +1136,9 @@ body {
   overflow: visible;
 }
 
+/* Narrowed below the graph by the user: the outer lanes are clipped. */
+.ux-graph-cell.is-clipped { overflow: hidden; }
+
 .ux-graph-svg {
   display: block;
   position: absolute;
@@ -1174,6 +1177,7 @@ body {
 }
 
 .ux-graph-line {
+  fill: none;
   stroke-width: 2;
   stroke-linecap: round;
 }
@@ -1188,8 +1192,9 @@ body {
 
 .ux-graph-node--merge { fill: var(--ux-bg-1); stroke-width: 1.5; }
 
-.ux-commit-row:hover .ux-graph-node { fill: var(--ux-accent); }
-.ux-commit-row.is-selected .ux-graph-node { fill: var(--ux-accent); }
+/* Author nodes keep their own colour; hover and selection brighten the ring. */
+.ux-commit-row:hover .ux-graph-author .ux-graph-node { stroke-width: 3; }
+.ux-commit-row.is-selected .ux-graph-node { stroke: #fff !important; stroke-width: 2.5; }
 
 /* Subject column: text first (truncates), then inline ref pills so they
    never sit on top of a lane line. */
@@ -1250,51 +1255,82 @@ body {
    renders muted but still visible. */
 .ux-graph-line.is-dim { opacity: 0.28; }
 .ux-graph-node.is-dim { opacity: 0.35; }
-.ux-graph-label.is-dim { opacity: 0.35; }
+.ux-graph-author.is-dim { opacity: 0.35; }
 .ux-commit-row.is-dimmed > span:not(.ux-graph-cell),
 .ux-commit-row.is-dimmed > code {
   opacity: 0.45;
 }
 
-/* Inline ref pills in the graph column (GitEmber drawLabel). The SVG is
-   absolutely positioned in the graph cell; the pills sit at the right edge
-   of the lanes and may overflow into the subject cell's 8px padding. */
+/* Commit nodes carry the author's initials (src/graph.ts authorInitials). */
 .ux-graph-svg { z-index: 1; }
-.ux-graph-label-box {
-  fill: var(--ux-bg-2);
-  stroke: var(--ux-border-strong);
-  stroke-width: 1;
-}
-.ux-graph-label-box--head {
-  fill: var(--ux-accent);
-  stroke: transparent;
-}
-.ux-graph-label-box--branch {
-  fill: var(--ux-accent-soft);
-  stroke: var(--ux-accent);
-}
-.ux-graph-label-box--tag {
-  fill: #3b3426;
-  stroke: #c29452;
-}
-.ux-graph-label-box--stash {
-  fill: #3c2d3d;
-  stroke: #c483c9;
-}
-.ux-graph-label-box--worktree {
-  fill: #263b34;
-  stroke: #71bf8b;
-}
-.ux-graph-label-text {
+.ux-graph-initials {
   font-family: var(--ux-font);
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  fill: var(--ux-text-2);
-  paint-order: stroke;
+  fill: #fff;
+  pointer-events: none;
 }
-.ux-graph-label-text--head { fill: #fff; }
-.ux-graph-label:hover .ux-graph-label-box { filter: brightness(1.2); }
+.ux-graph-head-ring {
+  fill: none;
+  stroke: var(--ux-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+.ux-graph-ref-link { stroke-width: 1.5; opacity: 0.85; }
+
+/* Branch / Tag column (GitKraken): the refs that point at a commit sit on
+   its row, the top of their branch chain, as a pill tinted with the lane
+   colour (--lane); a line runs on from the pill to the node. */
+.ux-commit-row > .ux-ref-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 100%;
+  padding: 0 0 0 6px;
+}
+.ux-ref-cell.has-refs::after {
+  content: "";
+  flex: 1 1 auto;
+  min-width: 4px;
+  height: 1.5px;
+  background: var(--lane);
+  opacity: 0.85;
+}
+.ux-ref-pill {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--lane);
+  background: color-mix(in srgb, var(--lane) 30%, var(--ux-bg-1));
+  color: #e8edf4;
+  font-size: 11px;
+  font-weight: 500;
+}
+.ux-ref-pill.is-current { background: color-mix(in srgb, var(--lane) 55%, var(--ux-bg-1)); color: #fff; font-weight: 700; }
+.ux-ref-pill .ux-icon { flex: none; width: 12px; height: 12px; }
+.ux-ref-pill-name { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
+.ux-ref-pill-folder { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: 0.7; }
+.ux-ref-pill-leaf { flex: 0 0 auto; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ux-ref-where { flex: none; opacity: 0.75; font-size: 8px; }
+.ux-ref-pill--tag { border-style: dashed; }
+.ux-ref-pill--head { background: var(--ux-accent); border-color: var(--ux-accent); }
+.ux-ref-more {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--ux-bg-1);
+  border: 1px solid var(--lane);
+  color: var(--ux-text-2);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
 
 /* History toolbar: highlight-mode segmented control + filter mode select. */
 .ux-highlight-modes {

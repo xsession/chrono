@@ -4,10 +4,10 @@ import type { ChangeEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as 
 import type { BranchRecord, CommitDetails, CommitRecord, HistoryChangeStat, StashRef, TagRecord, WorktreeSummary } from "../types";
 import { api } from "../api";
 import {
-  graphLabelYs, graphLabels, graphLabelsWidth, graphWidth, labelTextWidth,
+  authorHue, authorInitials, commitRefTags, describeRefTag, graphWidth,
   firstParentChain, laneX, layoutGraph, ROW_H, unionIds,
 } from "../graph";
-import type { GraphLabel, GraphRowData } from "../graph";
+import type { GraphRowData, RefTag } from "../graph";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
 import { ColumnGrip, useStoredColumns, useStoredWidth } from "./ColumnGrip";
@@ -72,7 +72,10 @@ const HIDDEN_REFS_STORAGE = "chrono.history.hiddenRefs";
 const FILTER_HISTORY_MAX = 10;
 // History columns the user can resize (Graph has its own stored width and
 // Commit takes whatever is left, but never less than COMMIT_MIN).
-const HISTORY_COLUMNS = { author: 140, date: 142, changes: 116, sha: 84 };
+// v2: the stored width may now be narrower than the graph (v1 never was).
+const GRAPH_WIDTH_STORAGE = "chrono.history.graphWidth.v2";
+const GRAPH_MIN_WIDTH = 48;
+const HISTORY_COLUMNS = { refs: 190, author: 140, date: 142, changes: 116, sha: 84 };
 const COMMIT_MIN = 160;
 
 function formatDate(value: string): string {
@@ -84,11 +87,42 @@ function formatDate(value: string): string {
 
 /** GitKraken-style author avatar: initials on a colour derived from the email. */
 function Avatar({ name, email }: { name: string; email: string }) {
-  let hash = 0;
-  for (const ch of (email || name).toLowerCase()) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
-  const hue = Math.abs(hash) % 360;
-  const initials = name.split(/[\s._-]+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "?";
-  return <span className="gk-avatar" style={{ background: `hsl(${hue} 45% 38%)` }} aria-hidden="true">{initials}</span>;
+  return <span className="gk-avatar" style={{ background: `hsl(${authorHue(name, email)} 45% 38%)` }} aria-hidden="true">{authorInitials(name)}</span>;
+}
+
+/** Radius of a commit node, which carries its author's initials. */
+const NODE_R = 11;
+
+/** A ref name whose folder part (dependabot/npm_and_yarn/) gives way first,
+ *  so the part that tells branches apart stays readable in a narrow column. */
+function RefName({ name }: { name: string }) {
+  const cut = name.lastIndexOf("/") + 1;
+  return (
+    <span className="ux-ref-pill-name">
+      {cut > 0 && <span className="ux-ref-pill-folder">{name.slice(0, cut)}</span>}
+      <span className="ux-ref-pill-leaf">{name.slice(cut)}</span>
+    </span>
+  );
+}
+
+/** Branch / Tag cell: the refs pointing at this row's commit (the top of
+ *  their branch chain), the first one as a pill in the lane's colour and the
+ *  rest as "+n", with a line running on to the node in the graph column. */
+function RefTagCell({ tags, color }: { tags: RefTag[]; color: string }) {
+  if (!tags.length) return <span className="ux-ref-cell" />;
+  const [first, ...rest] = tags;
+  const icon = first.kind === "tag" ? "tag" : first.kind === "stash" ? "stash" : first.kind === "worktree" ? "worktree" : first.current ? "check" : "branch";
+  return (
+    <span className="ux-ref-cell has-refs" style={{ ["--lane" as string]: color }} title={tags.map(describeRefTag).join("\n")}>
+      <span className={`ux-ref-pill ux-ref-pill--${first.kind}${first.current ? " is-current" : ""}`}>
+        <Icon name={icon} />
+        <RefName name={first.name} />
+        {first.kind === "branch" && first.local && <span className="ux-ref-where" aria-label="local">●</span>}
+        {first.remotes.length > 0 && <Icon name="cloud" className="ux-ref-where" />}
+      </span>
+      {rest.length > 0 && <span className="ux-ref-more">+{rest.length}</span>}
+    </span>
+  );
 }
 
 function loadStoredHistory(): string[] {
@@ -119,58 +153,69 @@ type CommitContextMenu = {
   y: number;
 };
 
+/** Corner radius where a lane turns into or out of a node row. */
+const ELBOW_R = 8;
+
+/** A line arriving from the top of the row at x `fx`: down its lane, then a
+ *  rounded turn along the node's centre line into the node at `tx`. */
+function elbowIn(fx: number, tx: number, y: number): string {
+  if (fx === tx) return `M ${fx} 0 L ${tx} ${y}`;
+  const s = Math.sign(tx - fx);
+  const r = Math.min(ELBOW_R, Math.abs(tx - fx), y);
+  return `M ${fx} 0 L ${fx} ${y - r} Q ${fx} ${y} ${fx + s * r} ${y} L ${tx} ${y}`;
+}
+
+/** A line leaving the node at `fx` toward a parent's lane at `tx`: along the
+ *  centre line, then a rounded turn down that lane to the row's bottom. */
+function elbowOut(fx: number, tx: number, y: number): string {
+  if (fx === tx) return `M ${fx} ${y} L ${tx} ${ROW_H}`;
+  const s = Math.sign(tx - fx);
+  const r = Math.min(ELBOW_R, Math.abs(tx - fx), ROW_H - y);
+  return `M ${fx} ${y} L ${tx - s * r} ${y} Q ${tx} ${y} ${tx} ${y + r} L ${tx} ${ROW_H}`;
+}
+
 /** SVG of one commit row: arriving lines (top), pass-through lines, lines
- *  leaving toward parents (bottom), the node, and inline ref pills.
+ *  leaving toward parents (bottom), the node with its author's initials, and
+ *  (when refs point here) the line from the Branch / Tag column to the node.
  *  When `highlight` is a set, every piece of geometry not feeding from / to
  *  a highlighted commit is dimmed (SourceGit highlight modes). */
 function RowGraph({
-  item, isHead, highlight, labels, labelX, svgWidth,
+  item, isHead, highlight, hasRefs, svgWidth,
 }: {
   item: GraphRowData;
   isHead: boolean;
   /** null = no dimming; otherwise the highlighted commit id set */
   highlight: Set<string> | null;
-  labels: GraphLabel[];
-  labelX: number;
+  hasRefs: boolean;
   svgWidth: number;
 }) {
   const y = ROW_H / 2;
+  const x = laneX(item.lane);
   const dimOf = (ids: string[] | undefined): boolean =>
     highlight !== null && !(ids ?? []).some((id) => highlight.has(id));
   const nodeDim = highlight !== null && !highlight.has(item.commit.id);
-  const visibleLabels = labels.slice(0, 3);
-  const labelYs = graphLabelYs(visibleLabels.length);
-  let labelOffset = labelX;
+  const { authorName, authorEmail } = item.commit;
   return (
     <svg className="ux-graph-svg" width={svgWidth} height={ROW_H} viewBox={`0 0 ${svgWidth} ${ROW_H}`} aria-hidden="true">
+      {hasRefs && <line className={`ux-graph-line ux-graph-ref-link${nodeDim ? " is-dim" : ""}`} style={{ stroke: item.color }} x1={0} y1={y} x2={x} y2={y} />}
       {item.through.map((seg, index) => (
         <line key={`t${index}`} className={`ux-graph-line${dimOf(seg.childIds) ? " is-dim" : ""}`} style={{ stroke: seg.color }} x1={laneX(seg.lane)} y1={0} x2={laneX(seg.lane)} y2={ROW_H} />
       ))}
       {item.top.map((seg, index) => (
-        <line key={`top${index}`} className={`ux-graph-line${dimOf(seg.sourceIds) ? " is-dim" : ""}`} style={{ stroke: seg.color }} x1={laneX(seg.from)} y1={0} x2={laneX(seg.to)} y2={y} />
+        <path key={`top${index}`} className={`ux-graph-line${dimOf(seg.sourceIds) ? " is-dim" : ""}`} style={{ stroke: seg.color }} d={elbowIn(laneX(seg.from), laneX(seg.to), y)} />
       ))}
       {item.bottom.map((seg, index) => (
-        <line key={`b${index}`} className={`ux-graph-line${dimOf(seg.targetId ? [seg.targetId] : undefined) ? " is-dim" : ""}`} style={{ stroke: seg.color }} x1={laneX(seg.from)} y1={y} x2={laneX(seg.to)} y2={ROW_H} />
+        <path key={`b${index}`} className={`ux-graph-line${dimOf(seg.targetId ? [seg.targetId] : undefined) ? " is-dim" : ""}`} style={{ stroke: seg.color }} d={elbowOut(laneX(seg.from), laneX(seg.to), y)} />
       ))}
       {item.isMerge
-        ? <>
-            <circle cx={laneX(item.lane)} cy={y} r={7.5} className={`ux-graph-node ux-graph-node--merge${nodeDim ? " is-dim" : ""}`} style={{ stroke: item.color }} />
-            {isHead && <circle cx={laneX(item.lane)} cy={y} r={3} style={{ fill: "var(--ux-accent)" }} />}
-          </>
-        : <circle cx={laneX(item.lane)} cy={y} r={5} className={`ux-graph-node${nodeDim ? " is-dim" : ""}`} style={{ stroke: item.color }} />}
-      {visibleLabels.map((label, index) => {
-        const width = labelTextWidth(label.name);
-        const pillX = labelOffset;
-        const pillY = labelYs[index];
-        labelOffset += width + 4;
-        return (
-          <g key={label.name} className={`ux-graph-label${nodeDim ? " is-dim" : ""}`}>
-            <title>{label.name}</title>
-            <rect x={pillX} y={pillY} width={width} height={12} rx={6} className={`ux-graph-label-box ux-graph-label-box--${label.kind}`} />
-            <text x={pillX + width / 2} y={pillY + 9} textAnchor="middle" className={`ux-graph-label-text${label.kind === "head" ? " ux-graph-label-text--head" : ""}`}>{label.name}</text>
-          </g>
-        );
-      })}
+        // Merges stay small dots, so the people's commits stand out.
+        ? <circle cx={x} cy={y} r={5} className={`ux-graph-node ux-graph-node--merge${nodeDim ? " is-dim" : ""}`} style={{ stroke: item.color, fill: item.color }} />
+        : <g className={`ux-graph-author${nodeDim ? " is-dim" : ""}`}>
+            <title>{`${authorName} <${authorEmail}>`}</title>
+            <circle cx={x} cy={y} r={NODE_R} className="ux-graph-node" style={{ stroke: item.color, fill: `hsl(${authorHue(authorName, authorEmail)} 45% 38%)` }} />
+            <text x={x} y={y} className="ux-graph-initials" textAnchor="middle" dominantBaseline="central">{authorInitials(authorName)}</text>
+          </g>}
+      {isHead && <circle cx={x} cy={y} r={item.isMerge ? 8.5 : NODE_R + 3.5} className="ux-graph-head-ring" />}
     </svg>
   );
 }
@@ -213,7 +258,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const viewCustomized = highlightMode !== "all" || graphScope !== "all" || hiddenRefs.length > 0 || filterMode !== "message";
   const [showChanges, setShowChanges] = useState(() => localStorage.getItem("chrono.history.changes") !== "off");
-  const [graphColWidthOverride, setGraphColWidthOverride] = useState<number>(() => Number.parseInt(localStorage.getItem("chrono.history.graphWidth") ?? "0", 10) || 0);
+  const [graphColWidthOverride, setGraphColWidthOverride] = useState<number>(() => Number.parseInt(localStorage.getItem(GRAPH_WIDTH_STORAGE) ?? "0", 10) || 0);
   const [tags, setTags] = useState<TagRecord[]>([]);
   const [stashes, setStashes] = useState<StashRef[]>([]);
   const [openingWorktree, setOpeningWorktree] = useState<string | null>(null);
@@ -392,19 +437,18 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
             })()
           : null;
 
-  // Inline ref pills (GitEmber drawLabel) paint at the end of the lanes; rows
-  // whose pills don't fit in the graph column overflow into the subject
-  // cell's 8px padding only (never over the commit text).
-  const labelBudget = graphWidthPx + 8;
-
-  // The graph column is at least as wide as the graph itself (so lanes never
-  // clip into the commit text) and the user can widen it for breathing room.
-  const graphColWidth = Math.max(graphWidthPx, graphColWidthOverride);
+  // The graph column fits the whole graph until the user drags it. Then it
+  // keeps their width: wider leaves room, narrower clips the outer lanes
+  // (GitKraken) so a many-branch graph cannot push the commit text away.
+  // Resetting (double-click the grip) goes back to fitting the graph.
+  const graphColWidth = graphColWidthOverride > 0 ? graphColWidthOverride : graphWidthPx;
+  const graphClipped = graphColWidth < graphWidthPx;
 
   const applyGraphWidth = (width: number) => {
-    const clamped = Math.min(600, Math.max(graphWidthPx, Math.round(width)));
+    const clamped = width <= 0 ? 0 : Math.min(600, Math.max(GRAPH_MIN_WIDTH, Math.round(width)));
     setGraphColWidthOverride(clamped);
-    localStorage.setItem("chrono.history.graphWidth", String(clamped));
+    if (clamped) localStorage.setItem(GRAPH_WIDTH_STORAGE, String(clamped));
+    else localStorage.removeItem(GRAPH_WIDTH_STORAGE);
   };
   const startGraphResize = (event: ReactPointerEvent<HTMLSpanElement>) => {
     event.stopPropagation();
@@ -553,8 +597,8 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   })();
   const wip = worktrees.filter((worktree) => !worktree.isMain && (worktree.dirtyCount > 0 || worktree.conflictCount > 0));
   // Commit takes the free space; every other column has a stored width.
-  const gridTemplate = `${graphColWidth}px minmax(${COMMIT_MIN}px, 1fr) ${columns.author}px ${columns.date}px ${showChanges ? `${columns.changes}px ` : ""}${columns.sha}px`;
-  const gridMinWidth = graphColWidth + COMMIT_MIN + columns.author + columns.date + (showChanges ? columns.changes : 0) + columns.sha;
+  const gridTemplate = `${columns.refs}px ${graphColWidth}px minmax(${COMMIT_MIN}px, 1fr) ${columns.author}px ${columns.date}px ${showChanges ? `${columns.changes}px ` : ""}${columns.sha}px`;
+  const gridMinWidth = columns.refs + graphColWidth + COMMIT_MIN + columns.author + columns.date + (showChanges ? columns.changes : 0) + columns.sha;
   const rowStyle = { gridTemplateColumns: gridTemplate, minWidth: gridMinWidth };
   const contextMenuStyle = contextMenu ? {
     left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 244)),
@@ -708,6 +752,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
 
         <div ref={historyGridRef} className={`ux-commit-grid${showChanges ? " show-changes" : ""}`} aria-label="Commit history list" onScroll={updateHistoryViewport}>
           <div className="ux-commit-grid-header" style={rowStyle}>
+            <span>Branch / Tag<ColumnGrip label="Resize branch and tag column" onDelta={(delta) => resizeColumn("refs", delta)} onReset={() => resetColumn("refs")} /></span>
             <span>Graph<ColumnGrip label="Resize graph column" onDelta={(delta) => applyGraphWidth(graphColWidth + delta)} onReset={() => applyGraphWidth(0)} /></span>
             {/* Commit fills the free space, so its edge moves the Author column's left side. */}
             <span>Commit<ColumnGrip label="Resize commit column" onDelta={(delta) => resizeColumn("author", -delta)} onReset={() => resetColumn("author")} /></span>
@@ -731,7 +776,8 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               if (entry.kind === "elided") {
                 return (
                   <div key={`elided-${displayIndex}`} className="ux-commit-row ux-elided-row" style={rowStyle} aria-hidden="true">
-                    <span className="ux-graph-cell" style={{ width: graphColWidth }}>
+                    <span className="ux-ref-cell" />
+                    <span className={`ux-graph-cell${graphClipped ? " is-clipped" : ""}`} style={{ width: graphColWidth }}>
                       <svg className="ux-graph-svg" width={graphWidthPx} height={ROW_H} viewBox={`0 0 ${graphWidthPx} ${ROW_H}`}>
                         {entry.throughLanes.map((lane) => (
                           <line key={lane} className="ux-graph-line ux-graph-line--dashed" x1={laneX(lane)} y1={0} x2={laneX(lane)} y2={ROW_H} style={{ stroke: "var(--ux-text-3)" }} />
@@ -752,21 +798,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               const isHead = headSha === commit.id;
               const isDimmed = highlight !== null && !highlight.has(commit.id);
               const stat = stats.get(commit.id);
-              // Inline ref pills (prefix-stripped, HEAD first) clipped to the
-              // label budget — refs that don't fit collapse into a "+n" chip.
-              const labelX = laneX(item.lane) + 12;
-              const allLabels = graphLabels(commit.id, branches, headSha, tags, stashes, worktrees);
-              const rowLabels: GraphLabel[] = [];
-              let labelUsed = 0;
-              for (const label of allLabels) {
-                if (rowLabels.length >= 3) break;
-                const width = labelTextWidth(label.name) + (rowLabels.length > 0 ? 4 : 0);
-                if (labelUsed + width > labelBudget - labelX) break;
-                rowLabels.push(label);
-                labelUsed += width;
-              }
-              const clippedRefs = allLabels.length - rowLabels.length;
-              const svgWidth = Math.max(graphWidthPx, labelX + labelUsed + 2);
+              const refTags = commitRefTags(commit.id, branches, headSha, tags, stashes, worktrees);
               return (
                 <div
                   key={commit.id}
@@ -775,7 +807,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                   role="button"
                   tabIndex={0}
                   aria-pressed={isSelected}
-                  aria-label={`${item.isMerge ? "Merge commit" : "Commit"} ${commit.subject}, by ${commit.authorName}, ${formatDate(commit.authoredAt)}${allLabels.length ? `, refs ${allLabels.map((label) => label.name).join(", ")}` : ""}${isHead ? ", HEAD" : ""}${signatures.get(commit.id) && signatures.get(commit.id)!.status !== "N" ? `, ${SIGNATURE_LABEL[signatures.get(commit.id)!.status]?.text ?? "signed"}` : ""}`}
+                  aria-label={`${item.isMerge ? "Merge commit" : "Commit"} ${commit.subject}, by ${commit.authorName}, ${formatDate(commit.authoredAt)}${refTags.length ? `, refs ${refTags.map((tag) => tag.name).join(", ")}` : ""}${isHead ? ", HEAD" : ""}${signatures.get(commit.id) && signatures.get(commit.id)!.status !== "N" ? `, ${SIGNATURE_LABEL[signatures.get(commit.id)!.status]?.text ?? "signed"}` : ""}`}
                   onClick={(event) => {
                     if ((event.ctrlKey || event.metaKey) && selected && selected.id !== commit.id && !inspector) {
                       setCompareWith(commit);
@@ -799,8 +831,9 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                     }
                   }}
                 >
-                  <span className="ux-graph-cell" style={{ width: graphColWidth }} aria-label={item.isMerge ? `${commit.parents.length} parents` : "Commit"}>
-                    <RowGraph item={item} isHead={isHead} highlight={highlight} labels={rowLabels} labelX={labelX} svgWidth={svgWidth} />
+                  <RefTagCell tags={refTags} color={item.color} />
+                  <span className={`ux-graph-cell${graphClipped ? " is-clipped" : ""}`} style={{ width: graphColWidth }} aria-label={item.isMerge ? `${commit.parents.length} parents` : "Commit"}>
+                    <RowGraph item={item} isHead={isHead} highlight={highlight} hasRefs={refTags.length > 0} svgWidth={graphWidthPx} />
                     <span
                       className="ux-graph-resize"
                       title="Drag to resize the graph column (or use ←/→)"
@@ -819,9 +852,6 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                   <span className="ux-commit-subject">
                     <span className="ux-commit-subject-text"><Linkified text={commit.subject} rules={autolinkRules} /></span>
                     <SignatureBadge info={signatures.get(commit.id)} compact />
-                    {clippedRefs > 0 && (
-                      <span className="ux-graph-chip ux-graph-chip--muted" title={`${clippedRefs} more ref${clippedRefs === 1 ? "" : "s"} on this commit`}>+{clippedRefs}</span>
-                    )}
                   </span>
                   <span className="gk-author-cell" title={`${commit.authorName} <${commit.authorEmail}>`}><Avatar name={commit.authorName} email={commit.authorEmail} /><span>{commit.authorName}</span></span><span>{formatDate(commit.authoredAt)}</span>
                   {showChanges && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} file${stat.filesChanged === 1 ? "" : "s"}, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}

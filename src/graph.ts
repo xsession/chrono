@@ -34,8 +34,8 @@ export const GRAPH_COLORS = [
   "var(--lane-7, #98c379)", // light green
 ];
 
-export const LANE_W = 19;
-export const LANE_PAD = 13;
+export const LANE_W = 26;
+export const LANE_PAD = 16;
 // Must equal the rendered row height (.ux-commit-rows .ux-commit-row in
 // ux.css): each row's SVG spans the full row so vertical lines connect
 // across row boundaries without a gap.
@@ -271,7 +271,11 @@ export function layoutGraph(commits: CommitRecord[]): GraphLayout {
       commit.parents.forEach((parentId, parentIndex) => {
         if (!index.has(parentId)) return;
         const existing = findHold(parentId);
-        if (existing === -1) {
+        // A branch whose parent another lane already waits for keeps its own
+        // lane down to that parent and bends in there (GitKraken / git log
+        // --graph), instead of cutting across the lanes between right away.
+        const ownLane = parentIndex === 0 && existing !== -1 && existing !== lane && !holds[lane];
+        if (existing === -1 || ownLane) {
           const toLane = parentIndex === 0 ? lane : laneForParent(parentId);
           const childColor = parentIndex === 0 ? color : pickColor();
           const hold: Hold = { id: parentId, color: childColor, sourceRows: [visRow], sourceIds: [commit.id] };
@@ -327,7 +331,10 @@ export function layoutGraph(commits: CommitRecord[]): GraphLayout {
   // `items` is already in visRow (display) order from the loop above.
   for (const depthInfo of depths) depthInfo.items.sort((a, b) => a.lane - b.lane);
 
-  return { items, byId, depths, visThrough, laneCount: Math.max(1, holds.length) };
+  // Tips that share a depth are shifted right past `holds` (several branch
+  // tips on one parent never reserve those lanes), so count placed nodes too.
+  const widest = items.reduce((max, item) => Math.max(max, item.lane + 1), 0);
+  return { items, byId, depths, visThrough, laneCount: Math.max(1, holds.length, widest) };
 }
 
 /**
@@ -357,71 +364,89 @@ export function unionIds(...sets: Array<Set<string> | null | undefined>): Set<st
 }
 
 // ---------------------------------------------------------------------------
-// Inline ref labels (GitEmber drawLabel / gitg LabelRenderer): branch/tag
-// names painted as small rounded pills at the end of the lane in the graph
-// column, prefix-stripped. Pure text math (no DOM) so it is unit-testable and
-// usable from any renderer.
+// Ref tags (GitKraken Branch / Tag column): every ref that points at a
+// commit, shown on that commit's row, i.e. at the top of its branch chain.
+// A local branch and its remote-tracking twins (same short name) share one
+// tag that says where the ref exists. Pure data, so it is unit-testable.
 // ---------------------------------------------------------------------------
 
-export type GraphLabelKind = "branch" | "tag" | "head" | "stash" | "worktree";
+export type RefTagKind = "branch" | "head" | "tag" | "stash" | "worktree";
 
-export interface GraphLabel {
-  /** display text, refs/…/ prefixes stripped */
+export interface RefTag {
+  /** display text: refs/... prefixes and the remote name stripped */
   name: string;
-  kind: GraphLabelKind;
+  kind: RefTagKind;
+  /** a local branch of this name points here */
+  local: boolean;
+  /** full names of remote-tracking branches of this name that point here */
+  remotes: string[];
+  /** the checked-out branch */
+  current: boolean;
 }
 
-const CHAR_W = 5.4;
-const LABEL_PAD = 9;
+const stripRef = (ref: string): string =>
+  ref.replace(/^refs\/remotes\//, "").replace(/^refs\/heads\//, "").replace(/^refs\/tags\//, "");
 
-export function labelTextWidth(text: string): number {
-  return Math.round(text.length * CHAR_W + LABEL_PAD);
-}
-
-/** Pills shown for a commit row, in paint order (HEAD first, then
- *  branches, then tags). Prefix-stripped names, first-parent branch first. */
-export function graphLabels(
+/** Tags for one commit row, most important first: the current branch (or
+ *  HEAD when detached), other branches, tags, stashes, worktree heads. */
+export function commitRefTags(
   commitId: string,
   branches: { name: string; target: string; current: boolean; remote: boolean }[],
   headSha: string | null | undefined,
   tags: { name: string; target: string }[] = [],
   stashes: { ref: string; message: string; target: string }[] = [],
   worktrees: { path: string; branch: string | null; head: string }[] = [],
-): GraphLabel[] {
-  const strip = (ref: string): string =>
-    ref.replace(/^refs\/remotes\//, "").replace(/^refs\/heads\//, "").replace(/^refs\/tags\//, "");
-  const entries: { label: GraphLabel; order: number }[] = [];
-  if (headSha && commitId === headSha) entries.push({ label: { name: "HEAD", kind: "head" }, order: 0 });
+): RefTag[] {
+  const byName = new Map<string, RefTag>();
   for (const branch of branches) {
-    if (branch.target !== commitId || branch.remote) continue;
-    entries.push({ label: { name: strip(branch.name), kind: "branch" }, order: branch.current ? 1 : 2 });
+    if (branch.target !== commitId) continue;
+    const full = stripRef(branch.name);
+    // origin/HEAD (listed as "origin") only names the remote's default branch.
+    if (branch.remote && (!full.includes("/") || full.endsWith("/HEAD"))) continue;
+    const name = branch.remote ? full.replace(/^[^/]+\//, "") : full;
+    const tag = byName.get(name) ?? { name, kind: "branch" as const, local: false, remotes: [], current: false };
+    if (branch.remote) tag.remotes.push(full);
+    else tag.local = true;
+    if (branch.current && !branch.remote) tag.current = true;
+    byName.set(name, tag);
   }
-  for (const tag of tags) if (tag.target === commitId) entries.push({ label: { name: tag.name, kind: "tag" }, order: 3 });
-  for (const stash of stashes) if (stash.target === commitId) entries.push({ label: { name: stash.ref.replace(/^refs\/stash/, "stash"), kind: "stash" }, order: 4 });
-  for (const worktree of worktrees) if (worktree.head === commitId) {
-    const name = worktree.branch || `detached ${worktree.head.slice(0, 8)}`;
-    entries.push({ label: { name: `wt:${name}`, kind: "worktree" }, order: 5 });
+  const out: { tag: RefTag; order: number }[] = [];
+  const hasCurrent = [...byName.values()].some((tag) => tag.current);
+  if (headSha && commitId === headSha && !hasCurrent) {
+    out.push({ tag: { name: "HEAD", kind: "head", local: true, remotes: [], current: true }, order: 0 });
   }
-  // HEAD first, then branches, tags, stashes and worktree heads (name-stable).
-  entries.sort((a, b) => a.order - b.order || a.label.name.localeCompare(b.label.name));
-  return entries.map((entry) => entry.label);
+  for (const tag of byName.values()) out.push({ tag, order: tag.current ? 0 : tag.local ? 1 : 2 });
+  for (const tag of tags) if (tag.target === commitId) out.push({ tag: { name: stripRef(tag.name), kind: "tag", local: true, remotes: [], current: false }, order: 3 });
+  for (const stash of stashes) if (stash.target === commitId) out.push({ tag: { name: stash.ref.replace(/^refs\/stash/, "stash"), kind: "stash", local: true, remotes: [], current: false }, order: 4 });
+  // A worktree on a branch is already shown by that branch; only a detached
+  // one needs its own tag.
+  for (const worktree of worktrees) if (worktree.head === commitId && !(worktree.branch && byName.has(stripRef(worktree.branch)))) {
+    out.push({ tag: { name: `wt:${worktree.branch || `detached ${worktree.head.slice(0, 8)}`}`, kind: "worktree", local: true, remotes: [], current: false }, order: 5 });
+  }
+  out.sort((a, b) => a.order - b.order || a.tag.name.localeCompare(b.tag.name));
+  return out.map((entry) => entry.tag);
 }
 
-/** Total px needed by a row's label pills (name width + 4px gaps + 6px start). */
-export function graphLabelsWidth(labels: GraphLabel[]): number {
-  if (labels.length === 0) return 0;
-  return 6 + labels.reduce((sum, label) => sum + labelTextWidth(label.name), 0) + 4 * (labels.length - 1);
+/** One-line description of a tag for tooltips and screen readers. */
+export function describeRefTag(tag: RefTag): string {
+  if (tag.kind !== "branch") return tag.name;
+  const where = [tag.local ? "local" : "", ...tag.remotes].filter(Boolean).join(", ");
+  return `${tag.name}${tag.current ? " (checked out)" : ""} — ${where}`;
 }
 
-/** Y positions (row is ROW_H tall) for up to three 12px pills, step 12px —
- *  the whole stack always fits inside the row, so pills from adjacent rows
- *  can never collide. */
-export function graphLabelYs(count: number): number[] {
-  const out: number[] = [];
-  const pillH = 12;
-  const step = 12;
-  const visibleCount = Math.min(3, Math.max(0, count));
-  const start = (ROW_H - (step * Math.max(0, visibleCount - 1) + pillH)) / 2;
-  for (let i = 0; i < visibleCount; i += 1) out.push(Math.round(start + i * step));
-  return out;
+// ---------------------------------------------------------------------------
+// Author marks drawn inside the commit nodes: initials on a colour derived
+// from the email, so one person keeps one colour across the whole graph.
+// ---------------------------------------------------------------------------
+
+export function authorInitials(name: string): string {
+  const parts = name.split(/[\s._-]+/).filter(Boolean);
+  const letters = parts.length > 1 ? [parts[0], parts[parts.length - 1]] : parts;
+  return letters.map((part) => [...part][0]?.toUpperCase() ?? "").join("").slice(0, 2) || "?";
+}
+
+export function authorHue(name: string, email: string): number {
+  let hash = 0;
+  for (const ch of (email || name).toLowerCase()) hash = (hash * 31 + ch.charCodeAt(0)) | 0;
+  return Math.abs(hash) % 360;
 }
