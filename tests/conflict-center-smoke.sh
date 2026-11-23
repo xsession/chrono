@@ -12,7 +12,7 @@ trap 'rm -rf "$ROOT"' EXIT
 new_repo() {
   local name="$1"
   local repo="$ROOT/$name"
-  git init -q "$repo"
+  git init -q -b master "$repo"
   git -C "$repo" config user.name "$GIT_AUTHOR_NAME"
   git -C "$repo" config user.email "$GIT_AUTHOR_EMAIL"
   printf '%s\n' "$repo"
@@ -138,7 +138,7 @@ fi
 # 7. Submodule gitlink conflicts are resolved in the index by selecting a commit side.
 repo="$(new_repo gitlink-super)"
 sub="$ROOT/gitlink-sub"
-git init -q "$sub"
+git init -q -b master "$sub"
 git -C "$sub" config user.name "$GIT_AUTHOR_NAME"
 git -C "$sub" config user.email "$GIT_AUTHOR_EMAIL"
 printf 'base\n' > "$sub/f" && git -C "$sub" add f && git -C "$sub" commit -qm base

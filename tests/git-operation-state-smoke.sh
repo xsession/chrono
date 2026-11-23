@@ -5,7 +5,7 @@ ROOT=$(mktemp -d)
 trap 'rm -rf "$ROOT"' EXIT
 cd "$ROOT"
 
-git init -q
+git init -q -b master
 git config user.email test@example.com
 git config user.name "Chrono UX Smoke"
 
