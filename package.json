@@ -109,7 +109,15 @@
       "dist/**",
       "public/**",
       "node_modules/ws/**",
-      "node_modules/node-pty/**"
+      "node_modules/node-pty/**",
+      "node_modules/@anthropic-ai/**",
+      "node_modules/@opentelemetry/api/**",
+      "node_modules/standardwebhooks/**",
+      "node_modules/@stablelib/base64/**",
+      "node_modules/fast-sha256/**",
+      "node_modules/json-schema-to-ts/**",
+      "node_modules/@babel/runtime/**",
+      "node_modules/ts-algebra/**"
     ],
     "extraResources": [
       {
