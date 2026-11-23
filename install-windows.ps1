@@ -186,7 +186,7 @@ try {
   if ($installDir) { $setupArgs += " /D=$installDir" }
   $proc = Start-Process -FilePath $setup -ArgumentList $setupArgs -Wait -PassThru
   if ($proc.ExitCode -eq 2) {
-    $found = (@(Get-ChronoInstalls) | ForEach-Object { "$($_.DisplayName) $($_.DisplayVersion) at $($_.InstallLocation)" }) -join '; '
+    $found = (@(Get-ChronoInstalls) | ForEach-Object { "$($_.DisplayName) (uninstaller: $($_.UninstallString))" }) -join '; '
     if (-not $found) {
       throw "setup stopped (exit code 2) and, run silently, gives no reason. Run it normally to see the message: & '$setup' /currentuser"
     }
