@@ -7,6 +7,7 @@ import { Icon } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askConfirm, askText } from "../DialogHost";
 import { pushToast } from "../../toastBus";
+import { plural } from "../../plural";
 
 type Filter = "all" | "attention" | "dirty" | "drift" | "uninitialized" | "outdated";
 type Mode = "list" | "mindmap";
@@ -351,7 +352,7 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
                       {node.state === "uninitialized" ? <small>—</small> : <>
                         {node.branch ? <><Icon name="branch" />{node.branch}</> : <code>{node.commit.slice(0, 8)}</code>}
                         {(node.ahead > 0 || node.behind > 0) && <small className="sm-ab">{node.ahead ? `↑${node.ahead}` : ""}{node.behind ? `↓${node.behind}` : ""}</small>}
-                        {(node.tracking?.behind ?? 0) > 0 && <small className="sm-outdated" title={`The checked-out commit is ${node.tracking!.behind} commit(s) behind origin/${node.tracking!.branch} (as of the last fetch). Update to remote moves it there.`}>{node.tracking!.behind} behind {node.tracking!.branch}</small>}
+                        {(node.tracking?.behind ?? 0) > 0 && <small className="sm-outdated" title={`The checked-out commit is ${plural(node.tracking!.behind, "commit")} behind origin/${node.tracking!.branch} (as of the last fetch). Update to remote moves it there.`}>{node.tracking!.behind} behind {node.tracking!.branch}</small>}
                       </>}
                     </span>
                     <span className="sm-url" title={node.url ?? undefined}>{node.url ? node.url.replace(/^(https?:\/\/|git@|file:\/\/)/, "").replace(/\.git$/, "") : ""}</span>

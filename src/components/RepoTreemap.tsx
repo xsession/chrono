@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
+import { plural } from "../plural";
 
 type FileStat = { path: string; size: number; churn: number; commits: number };
 type Node = { name: string; path: string; size: number; churn: number; commits: number; files: number; isDir: boolean };
@@ -106,7 +107,7 @@ export function RepoTreemap({ repositoryPath, onOpenFileHistory }: { repositoryP
               onMouseEnter={() => setHover(rect.node)}
               onFocus={() => setHover(rect.node)}
               onClick={() => (rect.node.isDir ? setDir(rect.node.path) : onOpenFileHistory?.(rect.node.path))}
-              title={`${rect.node.path}\n${formatBytes(rect.node.size)} · ${rect.node.files} file(s) · ${rect.node.churn} lines changed in ${rect.node.commits} commit-file changes`}
+              title={`${rect.node.path}\n${formatBytes(rect.node.size)} · ${plural(rect.node.files, "file")} · ${rect.node.churn} lines changed in ${rect.node.commits} commit-file changes`}
             >
               {rect.w > 60 && rect.h > 18 && <span>{rect.node.name}{rect.node.isDir ? "/" : ""}</span>}
             </button>
@@ -114,7 +115,7 @@ export function RepoTreemap({ repositoryPath, onOpenFileHistory }: { repositoryP
         })}
       </div>
       <footer className="tm-foot">
-        {hover ? <span><b>{hover.path}</b> · {formatBytes(hover.size)} · {hover.files} file(s) · {hover.churn} lines changed recently</span> : <span>Area = {metric === "size" ? "file size at HEAD" : "lines changed"}; colour = recent churn per file (blue calm → red hot). Click a folder to drill in.</span>}
+        {hover ? <span><b>{hover.path}</b> · {formatBytes(hover.size)} · {plural(hover.files, "file")} · {hover.churn} lines changed recently</span> : <span>Area = {metric === "size" ? "file size at HEAD" : "lines changed"}; colour = recent churn per file (blue calm → red hot). Click a folder to drill in.</span>}
         {data?.truncated && <em>Showing the 60,000 largest files.</em>}
       </footer>
     </div>

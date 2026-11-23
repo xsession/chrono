@@ -2,6 +2,7 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import type { BranchRecord, PullMode, PushOptions, RepositorySummary, UndoState, Workspace } from "../../types";
 import { Icon, type IconName } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
+import { plural } from "../../plural";
 
 type Props = {
   path: string;
@@ -23,6 +24,8 @@ type Props = {
   onStash: () => void;
   onPop: () => void;
   onTerminal: () => void;
+  /** Remotes configured (null: not known yet). With none, Pull/Push are off. */
+  remoteCount?: number | null;
   onExplorer: () => void;
   onSearch: () => void;
   onSwitchBranch: (branch: BranchRecord) => void;
@@ -44,6 +47,8 @@ const PULL_LABEL: Record<PullMode, string> = {
   rebase: "Pull (rebase)",
 };
 
+const NO_REMOTE = "This repository has no remote. Add one with the + next to REMOTE in the left panel.";
+
 function ToolButton({ icon, label, onClick, disabled, title, badge, active, caret, onCaret }: { icon: IconName; label: string; onClick: () => void; disabled?: boolean; title?: string; badge?: number; active?: boolean; caret?: boolean; onCaret?: (event: ReactMouseEvent<HTMLButtonElement>) => void }) {
   return (
     <div className={`gk-tool${caret ? " has-caret" : ""}`}>
@@ -63,6 +68,7 @@ export function GkToolbar(props: Props) {
   const { path, summary, branches, busy, operationActive, undo } = props;
   const menu = useContextMenu();
   const disabled = !path || busy;
+  const noRemote = props.remoteCount === 0;
   const current = branches.find((branch) => branch.current) ?? null;
   const anchor = (event: ReactMouseEvent<HTMLElement>) => {
     const rect = (event.currentTarget.closest(".gk-tool, .gk-picker") ?? event.currentTarget).getBoundingClientRect();
@@ -158,11 +164,11 @@ export function GkToolbar(props: Props) {
         <ToolButton icon="undo" label="Undo" disabled={disabled || !undo?.canUndo} title={undo?.undoLabel ? `Undo ${undo.undoLabel} (Ctrl+Z)` : "Nothing to undo"} onClick={props.onUndo} />
         <ToolButton icon="redo" label="Redo" disabled={disabled || !undo?.canRedo} title={undo?.redoLabel ? `Redo ${undo.redoLabel} (Ctrl+Y)` : "Nothing to redo"} onClick={props.onRedo} />
         <span className="gk-toolbar-gap" />
-        <ToolButton icon="download" label={props.pullMode === "fetch" ? "Fetch" : "Pull"} badge={summary?.behind || undefined} disabled={disabled || (operationActive && props.pullMode !== "fetch")} title={PULL_LABEL[props.pullMode]} onClick={() => props.onPull(props.pullMode)} caret onCaret={pullMenu} />
-        <ToolButton icon="upload" label="Push" badge={summary?.ahead || undefined} disabled={disabled || operationActive} onClick={() => props.onPush({})} caret onCaret={pushMenu} />
+        <ToolButton icon="download" label={props.pullMode === "fetch" ? "Fetch" : "Pull"} badge={summary?.behind || undefined} disabled={disabled || noRemote || (operationActive && props.pullMode !== "fetch")} title={noRemote ? NO_REMOTE : PULL_LABEL[props.pullMode]} onClick={() => props.onPull(props.pullMode)} caret onCaret={pullMenu} />
+        <ToolButton icon="upload" label="Push" badge={summary?.ahead || undefined} disabled={disabled || noRemote || operationActive} title={noRemote ? NO_REMOTE : undefined} onClick={() => props.onPush({})} caret onCaret={pushMenu} />
         <span className="gk-toolbar-gap" />
         <ToolButton icon="branch" label="Branch" disabled={disabled} onClick={props.onBranch} title="Create a branch at HEAD and check it out" />
-        <ToolButton icon="stash" label="Stash" disabled={disabled || props.dirtyCount === 0} onClick={props.onStash} title={props.dirtyCount ? `Stash ${props.dirtyCount} changed file(s)` : "No changes to stash"} />
+        <ToolButton icon="stash" label="Stash" disabled={disabled || props.dirtyCount === 0} onClick={props.onStash} title={props.dirtyCount ? `Stash ${plural(props.dirtyCount, "changed file")}` : "No changes to stash"} />
         <ToolButton icon="pop" label="Pop" disabled={disabled || props.stashCount === 0} badge={props.stashCount || undefined} onClick={props.onPop} title={props.stashCount ? "Pop the latest stash" : "No stashes"} />
       </div>
 

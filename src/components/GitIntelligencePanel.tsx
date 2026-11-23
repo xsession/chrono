@@ -104,7 +104,7 @@ function HealthPanel({ health, onScan, busy }: { health: RepositoryHealth | null
   return <div className="ux-health-panel">
     <div className="ux-health-toolbar"><div><strong>{health.branch || "Detached HEAD"}</strong><span>{health.head ? health.head.slice(0, 12) : "No commit yet"}</span></div><button className="ux-button" disabled={busy} onClick={() => onScan(false)}>Refresh</button><button className="ux-primary-button" disabled={busy} onClick={() => onScan(true)}>Run object scan</button></div>
     <div className="ux-health-grid">
-      <HealthMetric label="Working-tree files" value={health.dirtyFiles} tone={health.dirtyFiles ? "warn" : "good"} detail={health.conflictFiles ? `${health.conflictFiles} conflicts` : "clean index/worktree"} />
+      <HealthMetric label="Changed files" value={health.dirtyFiles} tone={health.dirtyFiles ? "warn" : "good"} detail={health.conflictFiles ? `${health.conflictFiles} conflict${health.conflictFiles === 1 ? "" : "s"}` : health.dirtyFiles ? "uncommitted changes" : "clean index and worktree"} />
       <HealthMetric label="Worktrees" value={health.worktreeCount} tone={health.dirtyWorktreeCount ? "warn" : "good"} detail={health.dirtyWorktreeCount ? `${health.dirtyWorktreeCount} dirty` : "all clean"} />
       <HealthMetric label="Submodules" value={health.submoduleCount} tone={health.changedSubmoduleCount ? "warn" : "neutral"} detail={health.changedSubmoduleCount ? `${health.changedSubmoduleCount} changed` : "in recorded state"} />
       <HealthMetric label="Loose objects" value={health.objectCount} tone={objectState} detail={`${health.packedObjectCount} packed`} />

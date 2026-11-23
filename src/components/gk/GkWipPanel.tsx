@@ -264,7 +264,7 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
     <div className="gk-wip-panel" onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); void commit(); } }}>
       <header className="gk-wip-header">
         <div>
-          <strong>{changes.length} file change{changes.length === 1 ? "" : "s"}</strong>
+          <strong>{changes.length} changed file{changes.length === 1 ? "" : "s"}</strong>
           <span>on {branch ?? "detached HEAD"}</span>
         </div>
         <div className="gk-wip-header-actions">

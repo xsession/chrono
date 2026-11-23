@@ -48,6 +48,7 @@ import type { ExplorerFocus } from "./components/explorer/FileExplorer";
 import { askFields } from "./components/DialogHost";
 import { chooseFolder, FolderPickerHost } from "./components/FolderPicker";
 import { LandscapeView } from "./components/gk/LandscapeView";
+import { plural } from "./plural";
 
 type RepositorySnapshot = {
   summary: RepositorySummary;
@@ -342,6 +343,24 @@ export default function App() {
       if (requestId === historyRequestRef.current) setHistoryLoadingDirection(null);
     }
   }, [historyHasNewer, historyLoading, historyWindow, path]);
+
+  // Whether the repository has any remote: without one, Pull and Push can
+  // only fail with git's "no tracking information", so they are disabled.
+  const [remoteCount, setRemoteCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!path) { setRemoteCount(null); return; }
+    let cancelled = false;
+    api.remotes(path).then((list) => { if (!cancelled) setRemoteCount(list.length); }).catch(() => { if (!cancelled) setRemoteCount(null); });
+    return () => { cancelled = true; };
+  }, [path, refreshKey]);
+
+  // Close the WIP diff once its file has no changes left (committed, discarded
+  // or reverted elsewhere) instead of showing an empty diff. Files inside a
+  // submodule are listed under the submodule, so only top-level ones are checked.
+  useEffect(() => {
+    if (!wipDiff || wipDiffRepo) return;
+    if (!changes.some((change) => change.path === wipDiff)) setWipDiff(null);
+  }, [changes, wipDiff, wipDiffRepo]);
 
   // Start on HEAD, not on whatever is newest (a stash or another branch). The
   // history can arrive before HEAD is known, so an automatic pick moves to HEAD
@@ -761,7 +780,7 @@ export default function App() {
     listKnownRepos: async () => workspaces[0]?.repositories.map((repository) => repository.path) ?? [],
     selectBranch: async (name) => { if (!path) return { ok: false, error: "no repository open" }; try { const record = branches.find((branch) => branch.name === name); if (!record) return { ok: false, error: `branch not found: ${name}` }; if (record.remote) await api.checkoutRemoteBranch(path, name); else await api.switchBranch(path, name); await refresh(); return { ok: true }; } catch (error) { return { ok: false, error: String(error) }; } },
     selectCommit: async (sha) => { const commit = commits.find((candidate) => candidate.id === sha || candidate.id.startsWith(sha)); if (!commit) return { ok: false, error: `commit not found: ${sha}` }; setSelectedCommit(commit); setView("history"); return { ok: true }; },
-    runSearch: async (query, mode = "message") => { if (!path) return { ok: false, error: "no repository open" }; try { const results = await api.historyQuery(path, { query, mode }); setSelectedCommit(results[0] ?? null); setView("history"); setMessage(`Found ${results.length} commit(s) matching “${query}”`); return { ok: true, result: results.length }; } catch (error) { return { ok: false, error: String(error) }; } },
+    runSearch: async (query, mode = "message") => { if (!path) return { ok: false, error: "no repository open" }; try { const results = await api.historyQuery(path, { query, mode }); setSelectedCommit(results[0] ?? null); setView("history"); setMessage(`Found ${plural(results.length, "commit")} matching “${query}”`); return { ok: true, result: results.length }; } catch (error) { return { ok: false, error: String(error) }; } },
     toggleLeftPanel: () => setSidebarCollapsed((value) => !value),
     toggleDetailPanel: () => { if (selectedCommit) setView("history"); else pushToast("Select a commit first — details show in the history view", "info"); },
     closeModals: () => { setPalette(false); setCloneOpen(false); setGitLogOpen(false); setKeybindingsOpen(false); },
@@ -822,12 +841,12 @@ export default function App() {
     { id: "open", title: "Open repository", category: "File", keywords: ["folder", "repo"], run: () => void openRepository() },
     { id: "clone", title: "Clone repository", category: "File", keywords: ["remote", "url"], run: () => void cloneRepository() },
     { id: "refresh", title: "Refresh repository", category: "Repository", shortcut: "F5", disabled: !path, run: () => void refresh() },
-    { id: "fetch", title: "Fetch all remotes", category: "Remote", disabled: !path, run: () => void runRepositoryAction("Fetch", () => api.fetch(path)) },
-    { id: "pull", title: "Pull current branch (fast-forward only)", category: "Remote", disabled: !path || operationActive, run: () => runPull("ff-only") },
-    { id: "pull-ff", title: "Pull (fast-forward if possible)", category: "Remote", disabled: !path || operationActive, run: () => runPull("ff") },
-    { id: "pull-rebase", title: "Pull (rebase)", category: "Remote", disabled: !path || operationActive, run: () => runPull("rebase") },
-    { id: "push", title: "Push current branch", category: "Remote", disabled: !path || operationActive, run: () => void runPush({}) },
-    { id: "push-force", title: "Force push (with lease)", category: "Remote", disabled: !path || operationActive, run: () => void runPush({ force: true }) },
+    { id: "fetch", title: "Fetch all remotes", category: "Remote", disabled: !path || remoteCount === 0, run: () => void runRepositoryAction("Fetch", () => api.fetch(path)) },
+    { id: "pull", title: "Pull current branch (fast-forward only)", category: "Remote", disabled: !path || remoteCount === 0 || operationActive, run: () => runPull("ff-only") },
+    { id: "pull-ff", title: "Pull (fast-forward if possible)", category: "Remote", disabled: !path || remoteCount === 0 || operationActive, run: () => runPull("ff") },
+    { id: "pull-rebase", title: "Pull (rebase)", category: "Remote", disabled: !path || remoteCount === 0 || operationActive, run: () => runPull("rebase") },
+    { id: "push", title: "Push current branch", category: "Remote", disabled: !path || remoteCount === 0 || operationActive, run: () => void runPush({}) },
+    { id: "push-force", title: "Force push (with lease)", category: "Remote", disabled: !path || remoteCount === 0 || operationActive, run: () => void runPush({ force: true }) },
     { id: "undo", title: undoState?.undoLabel ? `Undo ${undoState.undoLabel}` : "Undo", category: "Edit", shortcut: "Ctrl+Z", disabled: !undoState?.canUndo, run: () => void runUndo("undo") },
     { id: "redo", title: undoState?.redoLabel ? `Redo ${undoState.redoLabel}` : "Redo", category: "Edit", shortcut: "Ctrl+Y", disabled: !undoState?.canRedo, run: () => void runUndo("redo") },
     { id: "new-branch", title: "Create branch", category: "Branch", disabled: !path, run: () => void quickBranch() },
@@ -868,7 +887,7 @@ export default function App() {
     { id: "recovery", title: "Open recovery & maintenance", category: "Repository", keywords: ["reflog", "fsck", "lfs"], disabled: !path, run: () => setView("recovery") },
     { id: "sidebar", title: sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar", category: "View", shortcut: "Ctrl+B", run: () => setSidebarCollapsed((value) => !value) },
     { id: "cherry", title: "Open UI workbench", category: "Developer", run: () => setView("cherry") }
-  ], [customCommands, openSettings, runCustom, selectedCommit, summary?.branch, branches, conflictCount, dirtyCount, operation.canContinue, operation.canSkip, operationActive, path, quickBranch, quickPop, quickStash, refresh, runOperationAction, runPull, runPush, runRepositoryAction, runUndo, sidebarCollapsed, undoState]);
+  ], [customCommands, openSettings, runCustom, selectedCommit, summary?.branch, branches, conflictCount, dirtyCount, operation.canContinue, operation.canSkip, operationActive, path, quickBranch, quickPop, quickStash, refresh, runOperationAction, runPull, runPush, runRepositoryAction, runUndo, sidebarCollapsed, undoState, remoteCount]);
 
   const currentBranch = summary?.branch || "Detached HEAD";
 
@@ -924,6 +943,7 @@ export default function App() {
       <main className={`ux-main${operationActive ? " has-operation" : ""}`}>
         <GkToolbar
           path={path}
+          remoteCount={remoteCount}
           summary={summary}
           branches={branches}
           busy={busy}
@@ -999,7 +1019,14 @@ export default function App() {
 
         <section className="ux-content" aria-live="polite">
           <ErrorBoundary label="This view" resetKey={`${path}|${view}`}>
-          {!path && view !== "cherry" && (
+          {!path && view !== "cherry" && busy && repoTabs.length > 0 && (
+            <div className="ux-welcome is-loading" role="status">
+              <div className="ux-welcome-mark"><i className="ux-spinner" /></div>
+              <h1>Opening repository…</h1>
+              <p>Reading history, branches and working changes.</p>
+            </div>
+          )}
+          {!path && view !== "cherry" && !(busy && repoTabs.length > 0) && (
             <div className="ux-welcome">
               <div className="ux-welcome-mark"><Icon name="repository" /></div>
               <h1>Open a repository</h1>
@@ -1048,7 +1075,7 @@ export default function App() {
               {leftPanelOpen && <SplitHandle label="Resize branches panel" onDelta={resizeLeftPanel} onReset={resetLeftPanel} />}
               <CommitGraph
                 repositoryPath={path} commits={commits} branches={branches} headSha={summary?.head ?? undefined}
-                selected={selectedCommit}
+                selected={wipSelected ? null : selectedCommit}
                 onSelect={(commit) => { setWipSelected(false); setWipDiff(null); setSelectedCommit(commit); }}
                 onCopyCommit={copyCommitSha} onCommitAction={runCommitAction} onCreateBranchAt={createBranchAt} onCreateTagAt={createTagAt} onResetTo={resetToCommit}
                 actionBusy={busy || operationActive} onOpenWorktree={refresh}

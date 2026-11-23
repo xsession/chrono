@@ -68,9 +68,9 @@ function IdentityTab({ repositoryPath, busy, run }: Props) {
     <>
       <Section title="Current identity" hint="What git will write as author and committer in this repository.">
         <div className="st-kv">
-          <span>Name</span><strong>{config?.userName || "—"}</strong>
-          <span>Email</span><strong>{config?.userEmail || "—"}</strong>
-          <span>Defined in</span><code>{effective?.origin || config?.identityOrigin || "—"}</code>
+          <span>Name</span><strong>{config ? config.userName || "not set" : "Loading…"}</strong>
+          <span>Email</span><strong>{config ? config.userEmail || "not set" : "Loading…"}</strong>
+          <span>Defined in</span><code>{effective?.origin || config?.identityOrigin || (config ? "—" : "…")}</code>
         </div>
       </Section>
 

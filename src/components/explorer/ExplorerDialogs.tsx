@@ -6,6 +6,7 @@ import { DiffHunks } from "../DiffHunks";
 import { CommitDiffView } from "../CommitDiffView";
 import { Icon } from "../Icon";
 import { pushToast } from "../../toastBus";
+import { plural } from "../../plural";
 
 export type ExplorerDialog =
   | { kind: "commit"; files: string[] }
@@ -141,7 +142,7 @@ function CommitDialog({ repositoryPath, branch, files, busy, run, onClose, onOpe
         <button type="button" className="ux-button compact" onClick={async () => { try { const draft = await api.draftCommit(repositoryPath, "auto"); setMessage(draft.message); } catch (error) { pushToast(String(error), "error"); } }}>Draft</button>
       </div>
       <textarea className="tg-message" value={message} onChange={(event) => setMessage(event.target.value)} rows={6} placeholder="Describe the change…" autoFocus onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === "Enter") void submit(); }} />
-      <div className="tg-message-meta"><span className={message.split("\n")[0].length > 72 ? "is-over" : ""}>Subject: {message.split("\n")[0].length}/72</span>{conflicts > 0 && <span className="is-over">{conflicts} conflicted file(s) must be resolved first</span>}</div>
+      <div className="tg-message-meta"><span className={message.split("\n")[0].length > 72 ? "is-over" : ""}>Subject: {message.split("\n")[0].length}/72</span>{conflicts > 0 && <span className="is-over">{plural(conflicts, "conflicted file")} must be resolved first</span>}</div>
       <div className="tg-message-head"><strong>Changes made (double-click on file for diff):</strong><label className="tg-inline"><input type="checkbox" checked={showUnversioned} onChange={(event) => setShowUnversioned(event.target.checked)} />Show unversioned files</label></div>
       {changes ? <ChangeChecklist changes={changes} checked={checked} setChecked={setChecked} onDiff={(file) => onOpenDialog({ kind: "diff", file, mode: "working" })} /> : <div className="gk-empty"><i className="ux-spinner" />Scanning…</div>}
     </Shell>

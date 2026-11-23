@@ -5,6 +5,7 @@ import { Icon } from "../Icon";
 import { pushToast } from "../../toastBus";
 import { ensureToken, forgetToken, getApiBase, getToken, setApiBase as saveApiBase } from "../../providerTokens";
 import { notifyIfHidden } from "../../notify";
+import { plural } from "../../plural";
 
 const errorText = (error: unknown) => String(error).replace(/^Error: /, "");
 
@@ -102,7 +103,7 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
         <textarea className="tg-message" rows={10} value={description} onChange={(event) => setDescription(event.target.value)} />
         {preview && (
           <div className="gk-pr-preview">
-            <strong>Preview: {preview.commits.length} commit(s) · {preview.files} file(s) · <b>+{preview.additions}</b> <i>−{preview.deletions}</i></strong>
+            <strong>Preview: {plural(preview.commits.length, "commit")} · {plural(preview.files, "file")} · <b>+{preview.additions}</b> <i>−{preview.deletions}</i></strong>
             <ul>{preview.commits.slice(0, 12).map((subject, index) => <li key={index}>{subject}</li>)}</ul>
           </div>
         )}

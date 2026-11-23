@@ -9,6 +9,7 @@ import { Icon, type IconName } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askChoice, askConfirm, askFields, askText } from "../DialogHost";
 import { pushToast } from "../../toastBus";
+import { plural } from "../../plural";
 
 type Props = {
   repositoryPath: string;
@@ -220,7 +221,7 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
       ...(branch.upstream ? [
         { id: "pull", label: isCurrent ? "Pull (fast-forward only)" : `Fast-forward ${branch.name} to ${branch.upstream}`, icon: "download" as IconName, disabled: busy || branch.behind === 0, onSelect: () => run(`Pull ${branch.name}`, () => api.branchAction(repositoryPath, { action: "pull_branch", branch: branch.name })) },
       ] : []),
-      { id: "push", label: branch.upstream ? `Push ${branch.name}` : `Push ${branch.name} and set upstream`, icon: "upload", disabled: busy, onSelect: () => run(`Push ${branch.name}`, () => api.branchAction(repositoryPath, { action: "push", branch: branch.name })) },
+      { id: "push", label: branch.upstream ? `Push ${branch.name}` : remotes.length ? `Push ${branch.name} and set upstream` : `Push ${branch.name} (no remote yet)`, icon: "upload", disabled: busy || !remotes.length, onSelect: () => run(`Push ${branch.name}`, () => api.branchAction(repositoryPath, { action: "push", branch: branch.name })) },
       { kind: "separator", id: "s1" },
       ...(!isCurrent && current ? [
         { id: "merge", label: `Merge ${branch.name} into ${current.name}`, disabled: busy, onSelect: () => predicted("merge", branch.name, null, `Merge ${branch.name}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: branch.name })) },
@@ -334,7 +335,7 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
     let note: string | undefined;
     try {
       const prediction = await api.predictConflicts(repositoryPath, "merge", source, target.name);
-      if (prediction.supported) note = prediction.clean ? "✓ No conflicts expected (merge-tree dry run)." : `⚠ ${prediction.files.length} file(s) would conflict: ${prediction.files.slice(0, 6).join(", ")}${prediction.files.length > 6 ? "…" : ""}`;
+      if (prediction.supported) note = prediction.clean ? "✓ No conflicts expected (merge-tree dry run)." : `⚠ ${plural(prediction.files.length, "file")} would conflict: ${prediction.files.slice(0, 6).join(", ")}${prediction.files.length > 6 ? "…" : ""}`;
     } catch { note = undefined; }
     const choice = await askChoice(`Drop ${source} onto ${target.name}`, choices, note);
     if (choice === "merge") await run(`Merge ${source}`, () => api.branchAction(repositoryPath, { action: "merge_into_current", branch: source }));
