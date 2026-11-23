@@ -24,16 +24,40 @@ git push origin main --follow-tags
 The tag starts `.github/workflows/release.yml`:
 
 1. **verify:** the tag must equal `package.json`'s version.
-2. **desktop**, on Linux, Windows and macOS runners:
-   - Linux: AppImage, `.deb`, `.rpm`, `.tar.gz`.
+2. **installers** (`.github/workflows/installers.yml`, see below):
    - Windows: NSIS installer (x64 + ARM64, adds the Explorer "Chrono" menu) and a portable `.exe`.
-   - macOS: `.dmg` + `.zip` (Intel + Apple silicon).
-3. **server:** `chrono-server-<version>.tar.gz`, the headless web server.
-4. **android:** the companion APK.
-5. **docker:** a multi-arch image (amd64 + arm64) tagged `<version>`, `<major>.<minor>` and `latest`.
-6. **publish:** a GitHub Release with every file, `SHA256SUMS.txt` and generated notes. Tags like `v1.0.0-rc.1` become pre-releases.
+   - Linux: `.deb` (Ubuntu/Debian), `.pacman` (Arch Linux), `.rpm`, AppImage, `.tar.gz`.
+   - Each is installed, started and uninstalled on a clean system; the release
+     is only published when all of them pass.
+3. **desktop** (macOS runner): `.dmg` + `.zip` (Intel + Apple silicon).
+4. **server:** `chrono-server-<version>.tar.gz`, the headless web server.
+5. **android:** the companion APK.
+6. **docker:** a multi-arch image (amd64 + arm64) tagged `<version>`, `<major>.<minor>` and `latest`.
+7. **publish:** a GitHub Release with every file, `SHA256SUMS.txt` and generated notes. Tags like `v1.0.0-rc.1` become pre-releases.
 
 To rebuild an existing tag, run the workflow manually ("Run workflow") and enter the tag.
+
+## Installers without a release
+
+`.github/workflows/installers.yml` builds and tests the Windows, Ubuntu/Debian
+and Arch Linux installers on its own. Run it from the Actions tab
+(**Installers → Run workflow**, optionally with a branch, tag or commit) to get
+the installers as build artifacts without publishing anything. It also runs on
+pull requests that change `package.json`, `build/`, `electron/` or the workflow
+itself, and `release.yml` calls it for every release.
+
+| Job | What it does |
+|---|---|
+| Build Linux | `electron-builder --linux --x64`: `.deb`, `.pacman`, `.rpm`, AppImage, `.tar.gz` (uploads `installers-linux`) |
+| Build Windows | `electron-builder --win`: NSIS x64 + ARM64 and portable (uploads `installers-windows`), signed when `WIN_CSC_LINK` is set |
+| Install on Ubuntu 22.04, 24.04, Debian 12 | `apt-get install ./…amd64.deb` in a clean container, checks the files, starts the installed backend and waits for `/api/health`, then `apt-get remove` and checks that `chrono` and `chrono-open` are gone |
+| Install on Arch Linux | The same with `pacman -U` / `pacman -R` in an `archlinux` container |
+| Install on Windows | Silent per-user install (`/S`), checks `Chrono.exe` and the Explorer menu, starts the backend, then a silent uninstall that must remove both |
+
+The containers are minimal systems, so these jobs also prove that the
+packages' dependency lists are complete: Electron needs `libgbm`, `libasound`
+and `libcups` besides GTK and NSS, and they are listed for `.deb`, `.rpm` and
+`.pacman`.
 
 ## CI on every push / pull request
 
@@ -54,6 +78,8 @@ Dependabot keeps npm, GitHub Actions, Docker and Gradle dependencies current.
 ```bash
 npm run icons        # regenerate build/ and public/rsrc icons (needs Pillow)
 npm run dist:linux   # or dist:win / dist:mac — output in release/
+npm run dist:deb     # only the .deb (Ubuntu/Debian)
+npm run dist:arch    # only the .pacman (Arch Linux; needs bsdtar from libarchive)
 npm run dist:server  # release/chrono-server-<version>.tar.gz
 docker build -t chrono .
 ```

@@ -47,6 +47,17 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           case "$version" in *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;; *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;; esac
 
+  # Windows (NSIS x64/ARM64 + portable), Ubuntu/Debian (.deb), Arch Linux
+  # (.pacman), .rpm, AppImage and .tar.gz, each installed and uninstalled on a
+  # clean system before the release is published.
+  installers:
+    name: Installers
+    needs: verify
+    uses: ./.github/workflows/installers.yml
+    with:
+      ref: ${{ github.event.inputs.tag || github.ref_name }}
+    secrets: inherit
+
   desktop:
     name: Desktop (${{ matrix.name }})
     needs: verify
@@ -54,12 +65,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Linux
-            os: ubuntu-latest
-            args: --linux
-          - name: Windows
-            os: windows-latest
-            args: --win
           - name: macOS
             os: macos-latest
             args: --mac
@@ -73,9 +78,6 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - name: Linux packaging tools
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y rpm libarchive-tools
       - run: npm ci
       - run: npm run build
       - name: Build installers
@@ -83,8 +85,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # electron-builder picks these up when present; unsigned otherwise.
-          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -99,11 +101,6 @@ jobs:
           name: desktop-${{ matrix.name }}
           if-no-files-found: error
           path: |
-            release/*.AppImage
-            release/*.deb
-            release/*.rpm
-            release/*.tar.gz
-            release/*.exe
             release/*.dmg
             release/*.zip
             release/latest*.yml
@@ -220,7 +217,7 @@ jobs:
 
   publish:
     name: Publish GitHub Release
-    needs: [verify, desktop, server, android, docker]
+    needs: [verify, installers, desktop, server, android, docker]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -250,7 +247,10 @@ jobs:
             | Windows installer (x64 / ARM64) | `Chrono-Setup-${{ needs.verify.outputs.version }}-*.exe` — adds the Chrono right-click menu to Explorer |
             | Windows portable | `Chrono-${{ needs.verify.outputs.version }}-portable.exe` |
             | macOS (Intel / Apple silicon) | `Chrono-${{ needs.verify.outputs.version }}-mac-*.dmg` |
-            | Linux | `.AppImage`, `.deb` (Debian/Ubuntu), `.rpm` (Fedora/openSUSE), `.tar.gz` |
+            | Ubuntu / Debian | `sudo apt install ./Chrono-${{ needs.verify.outputs.version }}-linux-amd64.deb` |
+            | Arch Linux | `sudo pacman -U Chrono-${{ needs.verify.outputs.version }}-linux-*.pacman` |
+            | Fedora / openSUSE | `Chrono-${{ needs.verify.outputs.version }}-linux-x86_64.rpm` |
+            | Any Linux | `.AppImage` (`chmod +x` and run), `.tar.gz` |
             | Headless server | `chrono-server-${{ needs.verify.outputs.version }}.tar.gz` or `docker pull ghcr.io/${{ github.repository }}:${{ needs.verify.outputs.version }}` |
             | Android companion | `Chrono-${{ needs.verify.outputs.version }}-android*.apk` |
 

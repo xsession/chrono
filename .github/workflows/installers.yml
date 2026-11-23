@@ -1,0 +1,251 @@
+name: Installers
+
+# Builds the desktop installers for Windows, Ubuntu/Debian and Arch Linux (plus
+# the AppImage, .rpm and .tar.gz), then installs each one on a clean system,
+# checks that the installed app's backend starts, and uninstalls it again.
+#
+# - Run it by hand from the Actions tab ("Run workflow") to get installers for
+#   any branch or tag as build artifacts, without publishing a release.
+# - release.yml calls it for every release; the release publishes the files.
+# - Pull requests that touch the packaging run it too.
+#
+# Windows builds are Authenticode-signed when WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD
+# exist (pass `secrets: inherit` when calling); unsigned otherwise.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to build (empty: the selected branch)"
+        required: false
+        default: ""
+  workflow_call:
+    inputs:
+      ref:
+        description: "Branch, tag or commit to build"
+        required: false
+        type: string
+        default: ""
+  pull_request:
+    paths:
+      - package.json
+      - package-lock.json
+      - build/**
+      - electron/**
+      - .github/workflows/installers.yml
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+  # A smoke-test port, away from the app's own range.
+  TEST_PORT: "14299"
+
+jobs:
+  linux:
+    name: Build Linux (deb, pacman, rpm, AppImage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Packaging tools
+        # rpm for the .rpm, libarchive-tools (bsdtar) and zstd for the Arch package.
+        run: sudo apt-get update && sudo apt-get install -y rpm libarchive-tools zstd
+      - run: npm ci
+      - run: npm run build
+      - name: Build packages
+        run: npx electron-builder --linux --x64 --publish never
+      - name: List packages
+        run: ls -la release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-linux
+          if-no-files-found: error
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.pacman
+            release/*.tar.gz
+            release/latest-linux*.yml
+
+  windows:
+    name: Build Windows (NSIS x64/ARM64, portable)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Build installers
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          if [ -z "${CSC_LINK:-}" ]; then
+            unset CSC_LINK CSC_KEY_PASSWORD
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          npx electron-builder --win --publish never
+      - name: List installers
+        shell: bash
+        run: ls -la release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-windows
+          if-no-files-found: error
+          path: |
+            release/*.exe
+            release/latest*.yml
+
+  test-ubuntu:
+    name: Install on ${{ matrix.image }}
+    needs: linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:22.04", "ubuntu:24.04", "debian:12"]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-linux
+          path: pkg
+      - name: Install the .deb (apt resolves the dependencies)
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y curl
+          apt-get install -y ./pkg/*-amd64.deb
+          dpkg -s chrono-next | grep -E '^(Package|Version|Status):'
+      - name: Installed files are in place
+        run: |
+          test -x /opt/Chrono/chrono
+          test -L /usr/bin/chrono
+          test -x /usr/bin/chrono-open
+          test -f /usr/share/applications/chrono.desktop
+          test -f /usr/share/kio/servicemenus/chrono.desktop
+      - name: Installed backend starts
+        run: |
+          app=/opt/Chrono
+          ELECTRON_RUN_AS_NODE=1 CHRONO_PORT="$TEST_PORT" CHRONO_CONFIG_DIR=/tmp/chrono-config \
+            "$app/chrono" --experimental-strip-types "$app/resources/app.asar.unpacked/server/index.ts" > /tmp/backend.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:$TEST_PORT/api/health"; then echo; exit 0; fi
+            sleep 0.5
+          done
+          cat /tmp/backend.log; echo "the installed backend did not start" >&2; exit 1
+      - name: Uninstall removes it
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get remove -y chrono-next
+          test ! -e /usr/bin/chrono
+          test ! -e /usr/bin/chrono-open
+          test ! -e /opt/Chrono/chrono
+
+  test-arch:
+    name: Install on Arch Linux
+    needs: linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: archlinux:latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-linux
+          path: pkg
+      - name: Install the package (pacman resolves the dependencies)
+        run: |
+          pacman -Syu --noconfirm --needed curl
+          pacman -U --noconfirm pkg/*.pacman
+          pacman -Qi chrono-next | grep -E '^(Name|Version|Depends On)'
+      - name: Installed files are in place
+        run: |
+          test -x /opt/Chrono/chrono
+          test -L /usr/bin/chrono
+          test -x /usr/bin/chrono-open
+          test -f /usr/share/applications/chrono.desktop
+      - name: Installed backend starts
+        run: |
+          app=/opt/Chrono
+          ELECTRON_RUN_AS_NODE=1 CHRONO_PORT="$TEST_PORT" CHRONO_CONFIG_DIR=/tmp/chrono-config \
+            "$app/chrono" --experimental-strip-types "$app/resources/app.asar.unpacked/server/index.ts" > /tmp/backend.log 2>&1 &
+          for _ in $(seq 1 60); do
+            if curl -fsS "http://127.0.0.1:$TEST_PORT/api/health"; then echo; exit 0; fi
+            sleep 0.5
+          done
+          cat /tmp/backend.log; echo "the installed backend did not start" >&2; exit 1
+      - name: Uninstall removes it
+        run: |
+          pacman -R --noconfirm chrono-next
+          test ! -e /usr/bin/chrono
+          test ! -e /usr/bin/chrono-open
+          test ! -e /opt/Chrono/chrono
+
+  test-windows:
+    name: Install on Windows
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-windows
+          path: pkg
+      - name: Silent per-user install
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem pkg -Filter 'Chrono-Setup-*-x64.exe' | Select-Object -First 1
+          if (-not $setup) { throw "no x64 setup in the artifact" }
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "setup exited with $($p.ExitCode)" }
+          $dir = Join-Path $env:LOCALAPPDATA 'Programs\Chrono'
+          if (-not (Test-Path (Join-Path $dir 'Chrono.exe'))) { throw "Chrono.exe is not in $dir" }
+          if (-not (Test-Path 'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\shell\Chrono')) { throw "the Explorer menu was not registered" }
+          "CHRONO_DIR=$dir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Installed backend starts
+        shell: pwsh
+        run: |
+          $env:ELECTRON_RUN_AS_NODE = '1'
+          $env:CHRONO_PORT = $env:TEST_PORT
+          $env:CHRONO_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'chrono-config'
+          $server = Join-Path $env:CHRONO_DIR 'resources\app.asar.unpacked\server\index.ts'
+          $log = Join-Path $env:RUNNER_TEMP 'backend.log'
+          $proc = Start-Process -FilePath (Join-Path $env:CHRONO_DIR 'Chrono.exe') -ArgumentList '--experimental-strip-types', "`"$server`"" -PassThru -NoNewWindow -RedirectStandardOutput $log -RedirectStandardError "$log.err"
+          for ($i = 0; $i -lt 60; $i++) {
+            try { $r = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:$($env:TEST_PORT)/api/health"; if ($r.StatusCode -eq 200) { $r.Content; Stop-Process -Id $proc.Id -Force; exit 0 } } catch { }
+            Start-Sleep -Milliseconds 500
+          }
+          Get-Content $log, "$log.err" -ErrorAction SilentlyContinue
+          throw "the installed backend did not start"
+      - name: Silent uninstall removes it
+        shell: pwsh
+        run: |
+          $uninstaller = Join-Path $env:CHRONO_DIR 'Uninstall Chrono.exe'
+          if (-not (Test-Path $uninstaller)) { throw "no uninstaller at $uninstaller" }
+          $p = Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "uninstall exited with $($p.ExitCode)" }
+          # The NSIS uninstaller finishes in a copy of itself; give it a moment.
+          $exe = Join-Path $env:CHRONO_DIR 'Chrono.exe'
+          $menu = 'Registry::HKEY_CURRENT_USER\Software\Classes\Directory\shell\Chrono'
+          for ($i = 0; $i -lt 60 -and ((Test-Path $exe) -or (Test-Path $menu)); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path $exe) { throw "Chrono.exe is still installed" }
+          if (Test-Path $menu) { throw "the Explorer menu was not removed" }

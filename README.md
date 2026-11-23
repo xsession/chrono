@@ -442,7 +442,7 @@ Like TortoiseGit, Chrono can add a **Chrono** submenu to the operating system's 
 The installer scripts build Chrono from this checkout and install it like a normal app. At the end they print the installed version.
 
 ```bash
-./install-linux.sh                     # build + install (.deb on Debian/Ubuntu, .rpm on Fedora/openSUSE, AppImage elsewhere)
+./install-linux.sh                     # build + install (.deb on Debian/Ubuntu, .rpm on Fedora/openSUSE, .pacman on Arch, AppImage elsewhere)
 ./install-linux.sh --user              # per-user AppImage in ~/.local, no sudo
 ./install-linux.sh --release v1.0.0    # download a GitHub release instead of building (latest if no tag)
 ./install-linux.sh --file Chrono-1.0.0-linux-amd64.deb
@@ -482,6 +482,7 @@ Download from the [GitHub Releases](https://github.com/xsession/chrono/releases)
 | Windows | `Chrono-Setup-<v>-x64.exe` / `-arm64.exe` | Per-user install, no admin needed. Adds the Explorer **Chrono** right-click menu, removed on uninstall. A portable `.exe` is also available. |
 | macOS | `Chrono-<v>-mac-x64.dmg` / `-arm64.dmg` | Unsigned builds: right-click → Open the first time. |
 | Debian / Ubuntu | `sudo apt install ./Chrono-<v>-linux-amd64.deb` | Installs `chrono` and `chrono-open` and the Dolphin and Nemo menus. For Nautilus/Caja run `/opt/Chrono/resources/shell-integration/linux/install.sh`. |
+| Arch Linux | `sudo pacman -U Chrono-<v>-linux-x64.pacman` | Same as `.deb`. |
 | Fedora / openSUSE | `sudo dnf install ./Chrono-<v>-linux-x86_64.rpm` | Same as `.deb`. |
 | Any Linux | `Chrono-<v>-linux-x86_64.AppImage` | `chmod +x` and run. |
 | Server (Docker) | `docker run -d -p 127.0.0.1:1421:1421 -e CHRONO_API_TOKEN=$(openssl rand -hex 24) -v ~/src:/repos ghcr.io/xsession/chrono` | Open http://localhost:1421 and enter the token. Repositories are under `/repos`. `installers/server/docker-compose.yml` has a Compose version. |

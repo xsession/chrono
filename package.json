@@ -51,6 +51,8 @@
     "test:unit": "npm run test:markers && npm run test:graph && npm run test:history-window && npm run test:refs && npm run test:ref-visibility && npm run test:ui-contract && npm run test:sagas",
     "test:all": "npm run test:unit && npm run test:lines && npm run test:submodules && npm run test:trust && npm run test:lanes && npm run test:landscape && npm run test:folders && npm run test:watch && npm run test:roadmap && npm run test:bitbucket && npm run test:git && npm run test:api && npm run test:stash-history && npm run test:nested-commit && npm run test:ai && npm run test:local-llm && npm run test:tui && npm run test:forks",
     "dist:linux": "npm run build && electron-builder --linux --publish never",
+    "dist:deb": "npm run build && electron-builder --linux deb --publish never",
+    "dist:arch": "npm run build && electron-builder --linux pacman --publish never",
     "dist:win": "npm run build && electron-builder --win --publish never",
     "dist:mac": "npm run build && electron-builder --mac --publish never",
     "dist:server": "npm run build && node scripts/package-server.mjs"
@@ -139,6 +141,7 @@
         "AppImage",
         "deb",
         "rpm",
+        "pacman",
         "tar.gz"
       ],
       "category": "Development",
@@ -162,7 +165,10 @@
         "xdg-utils",
         "libatspi2.0-0",
         "libuuid1",
-        "libsecret-1-0"
+        "libsecret-1-0",
+        "libgbm1",
+        "libasound2",
+        "libcups2"
       ],
       "afterInstall": "build/linux/after-install.sh",
       "afterRemove": "build/linux/after-remove.sh"
@@ -174,7 +180,28 @@
         "nss",
         "libXScrnSaver",
         "libXtst",
-        "xdg-utils"
+        "xdg-utils",
+        "mesa-libgbm",
+        "alsa-lib",
+        "cups-libs"
+      ],
+      "afterInstall": "build/linux/after-install.sh",
+      "afterRemove": "build/linux/after-remove.sh"
+    },
+    "pacman": {
+      "depends": [
+        "git",
+        "gtk3",
+        "nss",
+        "libxss",
+        "libxtst",
+        "xdg-utils",
+        "at-spi2-core",
+        "util-linux-libs",
+        "libsecret",
+        "mesa",
+        "alsa-lib",
+        "libcups"
       ],
       "afterInstall": "build/linux/after-install.sh",
       "afterRemove": "build/linux/after-remove.sh"

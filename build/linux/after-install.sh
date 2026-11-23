@@ -1,5 +1,5 @@
 #!/bin/sh
-# Post-install for the Chrono .deb/.rpm: CLI link, chrono:// handler and the
+# Post-install for the Chrono .deb/.rpm/.pacman: CLI link, chrono:// handler and the
 # system-wide file-manager menus (Dolphin service menu, Nemo actions).
 # Nautilus/Caja scripts are per-user: run
 #   /opt/Chrono/resources/shell-integration/linux/install.sh

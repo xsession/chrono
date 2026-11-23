@@ -3,22 +3,23 @@
 #
 #   ./install-linux.sh                    build this checkout and install it
 #   ./install-linux.sh --release [vX.Y.Z] download a GitHub release (latest if no tag)
-#   ./install-linux.sh --file <package>   install a .deb, .rpm or .AppImage you already have
+#   ./install-linux.sh --file <package>   install a .deb, .rpm, .pacman or .AppImage you already have
 #   ./install-linux.sh --user             per-user AppImage install (no sudo), any distro
 #   ./install-linux.sh --uninstall        remove Chrono (settings are kept)
 #
 # How it installs:
 #   Debian/Ubuntu  .deb through apt  -> /opt/Chrono, `chrono` on PATH, file-manager menus
 #   Fedora/SUSE    .rpm through dnf/zypper (same layout)
+#   Arch Linux     .pacman through pacman (same layout)
 #   anything else  AppImage in ~/.local/opt/chrono, `chrono` in ~/.local/bin, menu entry
 #                  (also what --user picks)
-# The deb/rpm route asks for sudo once; the AppImage route never does.
+# The deb/rpm/pacman route asks for sudo once; the AppImage route never does.
 set -euo pipefail
 cd "$(dirname "$0")"
 here="$(pwd -P)"
 
 REPO="xsession/chrono"
-PKG_NAME="chrono-next"   # package name in the .deb/.rpm (package.json "name")
+PKG_NAME="chrono-next"   # package name in the .deb/.rpm/.pacman (package.json "name")
 user_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
 opt_dir="$HOME/.local/opt/chrono"
 bin_dir="$HOME/.local/bin"
@@ -56,6 +57,8 @@ elif have apt-get && have dpkg; then
   kind="deb"
 elif have dnf || have zypper; then
   kind="rpm"
+elif have pacman; then
+  kind="pacman"
 else
   kind="appimage"
 fi
@@ -76,6 +79,7 @@ if [ "$uninstall" -eq 1 ]; then
   elif have rpm && rpm -q "$PKG_NAME" >/dev/null 2>&1; then
     if have dnf; then sudo_cmd dnf remove -y "$PKG_NAME"; else sudo_cmd zypper --non-interactive remove "$PKG_NAME"; fi
     removed=1
+  elif have pacman && pacman -Q "$PKG_NAME" >/dev/null 2>&1; then sudo_cmd pacman -R --noconfirm "$PKG_NAME"; removed=1
   fi
   [ -f "$bin_dir/chrono-tui" ] && rm -f "$bin_dir/chrono-tui"
   [ "$removed" -eq 1 ] || echo "Chrono is not installed."
@@ -91,8 +95,8 @@ case "$source" in
     [ -f "$file" ] || die "no such file: $file"
     pkg="$(cd "$(dirname "$file")" && pwd -P)/$(basename "$file")"
     case "$pkg" in
-      *.deb) kind="deb" ;; *.rpm) kind="rpm" ;; *.AppImage) kind="appimage" ;;
-      *) die "expected a .deb, .rpm or .AppImage file" ;;
+      *.deb) kind="deb" ;; *.rpm) kind="rpm" ;; *.pacman) kind="pacman" ;; *.AppImage) kind="appimage" ;;
+      *) die "expected a .deb, .rpm, .pacman or .AppImage file" ;;
     esac ;;
 
   release)
@@ -102,6 +106,7 @@ case "$source" in
     case "$kind" in
       deb) pattern="linux-$deb_arch\\.deb" ;;
       rpm) pattern="linux-$rpm_arch\\.rpm" ;;
+      pacman) pattern="linux-($rpm_arch|$eb_arch)\\.pacman" ;;
       *) pattern="linux-$app_arch\\.AppImage" ;;
     esac
     url="$(curl -fsSL "$api" | grep -o '"browser_download_url": *"[^"]*"' | sed 's/.*"\(http[^"]*\)"/\1/' | grep -E "$pattern\$" | head -n1 || true)"
@@ -120,7 +125,11 @@ case "$source" in
       echo "rpmbuild is missing, so this machine gets the AppImage (install rpm-build to get an .rpm)."
       kind="appimage"
     fi
-    case "$kind" in deb) target=deb ;; rpm) target=rpm ;; *) target=AppImage ;; esac
+    if [ "$kind" = "pacman" ] && ! have bsdtar; then
+      echo "bsdtar is missing, so this machine gets the AppImage (install libarchive to get a .pacman)."
+      kind="appimage"
+    fi
+    case "$kind" in deb) target=deb ;; rpm) target=rpm ;; pacman) target=pacman ;; *) target=AppImage ;; esac
     version="$(node -p 'require("./package.json").version')"
     step "Installing npm dependencies"
     npm ci
@@ -134,6 +143,7 @@ case "$source" in
     case "$kind" in
       deb) pkg="$here/release/Chrono-$version-linux-$deb_arch.deb" ;;
       rpm) pkg="$here/release/Chrono-$version-linux-$rpm_arch.rpm" ;;
+      pacman) pkg="$(ls -t "$here"/release/Chrono-"$version"-linux-*.pacman 2>/dev/null | head -n1 || true)" ;;
       *) pkg="$here/release/Chrono-$version-linux-$app_arch.AppImage" ;;
     esac
     [ -f "$pkg" ] || die "packaging finished but $pkg is missing (see release/)" ;;
@@ -156,6 +166,12 @@ case "$kind" in
     if have dnf; then sudo_cmd dnf install -y --allowerasing "$pkg"; else sudo_cmd zypper --non-interactive install --allow-unsigned-rpm --oldpackage "$pkg"; fi
     [ -e "$opt_dir" ] && { remove_user_install; echo "removed the older per-user AppImage install"; }
     installed="$(rpm -q --qf '%{VERSION}' "$PKG_NAME" 2>/dev/null || true)"
+    where="/opt/Chrono (run: chrono)" ;;
+  pacman)
+    # pacman resolves the dependencies (git, gtk3, nss, ...) listed in the package.
+    sudo_cmd pacman -U --noconfirm "$pkg"
+    [ -e "$opt_dir" ] && { remove_user_install; echo "removed the older per-user AppImage install"; }
+    installed="$(pacman -Q "$PKG_NAME" 2>/dev/null | awk '{print $2}' || true)"
     where="/opt/Chrono (run: chrono)" ;;
   appimage)
     mkdir -p "$opt_dir" "$bin_dir" "$user_dir/applications" "$user_dir/icons/hicolor/512x512/apps"
