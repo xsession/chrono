@@ -57,6 +57,8 @@ jobs:
         run: npm run test:nested-commit
       - name: AI assistant settings
         run: npm run test:ai
+      - name: Self-hosted and network AI (local mocks)
+        run: npm run test:local-llm
       - name: Roadmap features
         run: npm run test:roadmap
       - name: Git smoke tests

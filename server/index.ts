@@ -24,6 +24,7 @@ import * as explorer from "./src/explorer.ts";
 import * as gk from "./src/gkOps.ts";
 import * as features from "./src/features.ts";
 import * as ai from "./src/ai.ts";
+import * as localLlm from "./src/localLlm.ts";
 import * as lineStaging from "./src/lineStaging.ts";
 import * as submodules from "./src/submodules.ts";
 import { landscapeScan } from "./src/landscape.ts";
@@ -536,8 +537,51 @@ const routes: Record<string, Handler> = {
     ollamaModel: optStr(body.ollamaModel) ?? undefined,
     claudeModel: optStr(body.claudeModel) ?? undefined,
     claudeKey: body.claudeKey === null ? null : optStr(body.claudeKey) ?? undefined,
+    netUrl: typeof body.netUrl === "string" ? body.netUrl : undefined,
+    netModel: typeof body.netModel === "string" ? body.netModel : undefined,
+    netKey: body.netKey === null ? null : optStr(body.netKey) ?? undefined,
+    llamaBinary: typeof body.llamaBinary === "string" ? body.llamaBinary : undefined,
+    modelsDir: optStr(body.modelsDir) ?? undefined,
+    activeModel: typeof body.activeModel === "string" ? body.activeModel : undefined,
+    port: typeof body.port === "number" ? body.port : undefined,
+    contextSize: typeof body.contextSize === "number" ? body.contextSize : undefined,
+    gpuLayers: body.gpuLayers === null ? null : typeof body.gpuLayers === "number" ? body.gpuLayers : undefined,
+    lan: typeof body.lan === "boolean" ? body.lan : undefined,
+    lanKey: body.lanKey === null ? null : optStr(body.lanKey) ?? undefined,
+    autoStart: typeof body.autoStart === "boolean" ? body.autoStart : undefined,
   }),
   ai_test: () => ai.testAi(),
+  ai_network_models: (body) => ai.networkModels(str(body.url, "url"), optStr(body.key)),
+  // Self-hosted llama.cpp: builds, models, downloads and the llama-server process.
+  llm_status: async () => {
+    const settings = await ai.readStored();
+    return {
+      paths: localLlm.llamaPaths(),
+      platform: `${process.platform}-${process.arch}`,
+      engines: await localLlm.listEngines(),
+      binary: await localLlm.resolveBinary(settings),
+      models: await localLlm.listModels(settings.modelsDir),
+      modelsDir: settings.modelsDir,
+      presets: localLlm.MODEL_PRESETS,
+      jobs: localLlm.listJobs(),
+      server: localLlm.serverState(),
+    };
+  },
+  llm_engine_assets: () => localLlm.listEngineAssets(),
+  llm_engine_install: (body) => localLlm.installEngine(str(body.asset, "asset")),
+  llm_engine_remove: (body) => localLlm.removeEngine(str(body.id, "id")),
+  llm_model_download: async (body) => localLlm.downloadModel((await ai.readStored()).modelsDir, str(body.url, "url"), optStr(body.name)),
+  llm_model_delete: async (body) => localLlm.deleteModel((await ai.readStored()).modelsDir, str(body.name, "name")),
+  llm_job_cancel: async (body) => localLlm.cancelJob(str(body.id, "id")),
+  llm_server_start: async () => {
+    try { await localLlm.startLlamaServer(await ai.readStored()); } catch (error) {
+      if (error instanceof localLlm.AiUnavailableError) throw new AppError("invalid", error.message);
+      throw error;
+    }
+    return localLlm.serverState();
+  },
+  llm_server_stop: async () => { await localLlm.stopLlamaServer(); return localLlm.serverState(); },
+  llm_server_log: async () => localLlm.serverLog(),
   profiles_list: (body) => features.listProfiles(optStr(body.path)),
   profile_save: (body) => features.saveProfile({ name: str(body.name, "name"), userName: str(body.userName, "userName"), userEmail: str(body.userEmail, "userEmail"), signingKey: optStr(body.signingKey) ?? undefined, gpgFormat: optStr(body.gpgFormat) ?? undefined }),
   profile_delete: (body) => features.deleteProfile(str(body.name, "name")),

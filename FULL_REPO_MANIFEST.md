@@ -34,8 +34,9 @@ Qt/C++ Chrono repository or any Rust toolchain to build or run.
   and commits through nested submodules (`server/src/nestedCommit.ts`)
 - codebase landscape map with a recent-changes heatmap (`public/landscape/`)
 - identity profiles with a per-commit "Commit as" choice
-- AI assistant: local Ollama, Claude through `@anthropic-ai/sdk`, or offline
-  rules (`server/src/ai.ts`)
+- AI assistant: self-hosted llama.cpp (downloads, models, `llama-server`;
+  `server/src/localLlm.ts`), a network server, Ollama, Claude through
+  `@anthropic-ai/sdk`, or offline rules (`server/src/ai.ts`)
 
 ## Deliberately excluded
 

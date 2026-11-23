@@ -9,6 +9,7 @@ import { pushToast } from "../../toastBus";
 import { withLiveOutput } from "../../liveOutput";
 import { SubmoduleChangeDetails, submoduleSummary } from "../SubmoduleChangeDetails";
 import { isStaged, isUnstaged, nestedCommitPlan, rowStaged, rowUnstaged } from "../../submoduleStaging";
+import { aiSourceLabel } from "../../aiSource";
 
 type Props = {
   repositoryPath: string;
@@ -314,7 +315,7 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
       {explanation && (
         <div className="gk-wip-explain">
           <pre>{explanation.text}</pre>
-          <div><small>{explanation.source === "claude" ? "Claude" : explanation.source === "ollama" ? "local AI" : "offline summary"}</small><button type="button" className="gk-link-button" onClick={() => setExplanation(null)}>Dismiss</button></div>
+          <div><small>{aiSourceLabel(explanation.source)}</small><button type="button" className="gk-link-button" onClick={() => setExplanation(null)}>Dismiss</button></div>
         </div>
       )}
 

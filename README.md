@@ -51,8 +51,11 @@ Browser (React 19)  ──WebSocket /api/rpc──────▶  Node server (
     health, file/line history, blame, contributors, worktrees
   - `server/src/commitWriter.ts` — staged-diff commit drafting through the AI
     assistant, with a deterministic offline fallback
-  - `server/src/ai.ts` — AI assistant: Ollama, Claude (Anthropic SDK) or off;
-    settings and the write-only API key in `CHRONO_CONFIG_DIR/ai.json`
+  - `server/src/ai.ts` — AI assistant providers (self-hosted llama.cpp, a
+    network server, Ollama, Claude through the Anthropic SDK, off) and their
+    settings in `CHRONO_CONFIG_DIR/ai.json`
+  - `server/src/localLlm.ts` — self-hosted llama.cpp: build and model
+    downloads, the `llama-server` process
   - `server/src/nestedCommit.ts` — staging into submodules and committing
     through nested submodules, deepest first
   - `server/src/repoWatch.ts` — file-system watchers behind live changes
@@ -193,6 +196,10 @@ nested several levels deep.
   Chrono warns that the commit is on a detached HEAD. A failing hook stops at
   that submodule, says which one, and offers the usual *Commit anyway*.
 
+| | |
+|---|---|
+| ![Submodule mind map with node details](docs/screenshots/submodule-mind-map.jpg) | ![Submodule list with bulk actions](docs/screenshots/submodule-bulk-actions.jpg) |
+
 ## Several git identities
 
 Save identity profiles (name, email, signing key) in *Repository settings →
@@ -206,23 +213,43 @@ choice into the repository's identity.
 ## AI assistant
 
 *Repository settings → AI assistant* chooses what drafts commit messages and
-explains commits, branches and working changes:
+explains commits, branches and working changes. *Save & test* asks the chosen
+provider for a one-word answer. When a provider can't answer, Chrono falls back
+to offline rules and says why.
 
-- **Local model (Ollama)**, the default: nothing leaves the machine. Set the
-  address and model (default `qwen2.5:3b`, or `CHRONO_LOCAL_AI_MODEL`).
-- **Claude (Anthropic API)**: staged diffs and commit contents are sent to
-  Anthropic. Needs credentials: an API key saved on that page (stored owner-only on the server, never shown
-  again), `ANTHROPIC_API_KEY` in Chrono's environment, or an `ant auth login`
+- **Self-hosted (llama.cpp):** everything runs on this machine and Chrono
+  manages it:
+  1. *llama.cpp:* download a build for your platform from the
+     [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp/releases)
+     releases (CPU, Vulkan, CUDA, ROCm, SYCL, OpenVINO on Linux and Windows,
+     Metal on macOS; on Windows the CUDA runtime comes with the CUDA build),
+     or point to your own `llama-server`. Builds go to
+     `CHRONO_CONFIG_DIR/llama/engines/`, newest first.
+  2. *Model:* choose the models folder, then download a suggested GGUF model
+     (Qwen2.5 Coder 1.5B to 14B, Gemma 3 4B) or any `.gguf` URL. Downloads show
+     progress, check free space first, and resume where they stopped.
+  3. *Server:* port, context size and GPU layers (`-ngl`). Chrono starts
+     `llama-server` when the assistant is first used (or with *Save & start*),
+     waits until the model has loaded, shows its log, and stops it when
+     Chrono exits. *Listen on the local network* makes it usable from other
+     machines, protected by an API key you set.
+- **Server on the network:** any OpenAI-compatible server elsewhere on your
+  network: llama.cpp's `llama-server`, LM Studio, vLLM, LocalAI, or another
+  Chrono's self-hosted llama.cpp. Enter its address (a pasted `/v1` is fine);
+  *Find models* lists what it serves; add its API key if it needs one.
+- **Ollama:** an Ollama server on this machine or another one (default
+  `http://127.0.0.1:11434`, model `qwen2.5:3b` or `CHRONO_LOCAL_AI_MODEL`).
+  This is the default provider.
+- **Claude (Anthropic API):** staged diffs and commit contents are sent to
+  Anthropic. Needs credentials: an API key saved on that page,
+  `ANTHROPIC_API_KEY` in Chrono's environment, or an `ant auth login`
   profile. The default model is Claude Opus 5.5; short tasks run at low effort,
   and if Claude declines a request the API retries it on a fallback model.
-- **Off**: offline rules only.
+- **Off:** offline rules only.
 
-*Test* checks the chosen provider. When it can't answer, Chrono falls back to
-offline rules and says why.
-
-| | |
-|---|---|
-| ![Submodule mind map with node details](docs/screenshots/submodule-mind-map.jpg) | ![Submodule list with bulk actions](docs/screenshots/submodule-bulk-actions.jpg) |
+API keys saved on this page (Claude, network server, the self-hosted server's
+network key) are stored owner-only in `CHRONO_CONFIG_DIR/ai.json` on the
+server and are never sent back to the browser or written to logs.
 
 ## Codebase landscape map
 
@@ -465,6 +492,7 @@ npm run test:folders   # folder picker listing; no browser prompt dialogs
 npm run test:watch     # live changes: edits, commits and branch moves reported within one second
 npm run test:nested-commit # commits through nested submodules, deepest first
 npm run test:ai        # AI assistant settings, fallbacks and the Claude request (local mock, no internet)
+npm run test:local-llm # self-hosted llama.cpp and network AI against local stand-ins (no internet)
 npm run test:stash-history # stash nodes in the graph
 npm run test:lanes     # per-repository git lanes: sharing, isolation, cancelling
 npm run test:landscape # landscape scan and the embedded map page

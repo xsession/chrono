@@ -1015,7 +1015,7 @@ function summarizeStat(stat: string): string {
 
 export type ExplainKind = "commit" | "branch" | "working" | "pr";
 
-export async function explain(inputPath: string, kind: ExplainKind, ref: string | null, base: string | null): Promise<{ text: string; source: "ollama" | "claude" | "local-rules"; title?: string; model?: string }> {
+export async function explain(inputPath: string, kind: ExplainKind, ref: string | null, base: string | null): Promise<{ text: string; source: "ollama" | "network" | "llamacpp" | "claude" | "local-rules"; title?: string; model?: string }> {
   const root = await repositoryRoot(inputPath);
   let stat = "";
   let patch = "";

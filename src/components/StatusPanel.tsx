@@ -7,6 +7,7 @@ import { WorkingDiffView } from "./WorkingDiffView";
 import { SubmoduleChangeDetails, submoduleSummary, type DiffGroup } from "./SubmoduleChangeDetails";
 import { api } from "../api";
 import { rowStaged, rowUnstaged } from "../submoduleStaging";
+import { aiSourceLabel } from "../aiSource";
 
 type Props = {
   changes: FileChange[];
@@ -236,7 +237,7 @@ export function StatusPanel({ changes, repositoryPath, onStage, onStageHunks, on
                 const draft = await onDraftCommit({ style: draftStyle, issueReference: issueReference.trim() || undefined });
                 setMessage(draft.message);
                 setIssueReference(draft.issueReference || issueReference);
-                setDraftNotice(draft.source === "claude" ? `Claude: ${draft.model || "claude"}` : draft.source === "ollama" ? `Local model: ${draft.model || "Ollama"}` : draft.notice ? `Offline draft (${draft.notice})` : "Offline local draft");
+                setDraftNotice(draft.source !== "local-rules" ? `Drafted by ${aiSourceLabel(draft.source, draft.model)}` : draft.notice ? `Offline draft (${draft.notice})` : "Offline local draft");
               } catch (error) {
                 setDraftNotice(String(error));
               } finally {

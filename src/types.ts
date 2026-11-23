@@ -106,7 +106,7 @@ export type CommitDraft = {
   message: string;
   style: CommitDraftStyle;
   issueReference: string | null;
-  source: "ollama" | "claude" | "local-rules";
+  source: "ollama" | "network" | "llamacpp" | "claude" | "local-rules";
   /** Why the AI provider could not be used (missing SDK or credentials). */
   notice?: string;
   model: string | null;
@@ -705,13 +705,40 @@ export type PerfStatus = {
 export type PerfAction = "commit_graph" | "maintenance_register" | "maintenance_unregister" | "maintenance_run" | "fsmonitor_on" | "fsmonitor_off" | "untracked_cache" | "preset" | "gc";
 export type HookInfo = { name: string; path: string; exists: boolean; executable: boolean; size: number; preview: string };
 export type AiSettings = {
-  provider: "ollama" | "claude" | "off";
+  provider: "ollama" | "network" | "llamacpp" | "claude" | "off";
   ollamaUrl: string;
   ollamaModel: string;
   claudeModel: string;
   claudeModels: Array<{ id: string; label: string }>;
   claudeKeySaved: boolean;
   claudeEnvCredentials: boolean;
+  netUrl: string;
+  netModel: string;
+  netKeySaved: boolean;
+  llamaBinary: string;
+  modelsDir: string;
+  activeModel: string;
+  port: number;
+  contextSize: number;
+  gpuLayers: number | null;
+  lan: boolean;
+  lanKeySaved: boolean;
+  autoStart: boolean;
+};
+export type AiSettingsUpdate = Partial<Omit<AiSettings, "claudeModels" | "claudeKeySaved" | "claudeEnvCredentials" | "netKeySaved" | "lanKeySaved">> & { claudeKey?: string | null; netKey?: string | null; lanKey?: string | null };
+export type LlmDownloadJob = { id: string; kind: "engine" | "model"; label: string; received: number; total: number | null; status: "running" | "unpacking" | "done" | "error" | "cancelled"; error?: string; startedAt: string };
+export type LlmEngineAsset = { name: string; variant: string; size: number; url: string; recommended: boolean; note: string };
+export type LlmServerState = { status: "stopped" | "starting" | "ready"; pid: number | null; port: number | null; model: string | null; binary: string | null; startedAt: string | null; lanUrl: string | null; lastExit: { at: string; code: number | null; message: string } | null };
+export type LlmStatus = {
+  paths: { root: string; engines: string; downloads: string; models: string };
+  platform: string;
+  engines: Array<{ id: string; build: string; variant: string; server: string }>;
+  binary: string | null;
+  models: Array<{ name: string; size: number }>;
+  modelsDir: string;
+  presets: Array<{ id: string; label: string; note: string; url: string; size: number }>;
+  jobs: LlmDownloadJob[];
+  server: LlmServerState;
 };
 export type NestedCommit = { path: string; commit: string; detached: boolean; attachedTo: string | null };
 export type HookCommitResult = { ok: boolean; commit: string | null; nested?: NestedCommit[]; output: string; exitCode: number; hookFailed: string | null; activeHooks: string[] };

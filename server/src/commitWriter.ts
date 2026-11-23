@@ -34,7 +34,7 @@ export interface CommitDraft {
   message: string;
   style: CommitDraftStyle;
   issueReference: string | null;
-  source: "ollama" | "claude" | "local-rules";
+  source: "ollama" | "network" | "llamacpp" | "claude" | "local-rules";
   model: string | null;
   /** Why the AI provider could not be used (missing SDK or credentials). */
   notice?: string;

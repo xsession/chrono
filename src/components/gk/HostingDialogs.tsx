@@ -6,6 +6,7 @@ import { pushToast } from "../../toastBus";
 import { ensureToken, forgetToken, getApiBase, getToken, setApiBase as saveApiBase } from "../../providerTokens";
 import { notifyIfHidden } from "../../notify";
 import { plural } from "../../plural";
+import { aiSourceLabel } from "../../aiSource";
 
 const errorText = (error: unknown) => String(error).replace(/^Error: /, "");
 
@@ -66,7 +67,7 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
       const result = await api.explain(repositoryPath, "pr", head, `${remote}/${base}`).catch(() => api.explain(repositoryPath, "pr", head, base));
       setDescription(result.text);
       if (!title && result.title) setTitle(result.title);
-      pushToast(result.source === "claude" ? "Description drafted with Claude" : result.source === "ollama" ? "Description drafted with local AI" : "Offline description drafted (no AI provider answered; see Settings → AI assistant)", "info");
+      pushToast(result.source !== "local-rules" ? `Description drafted by ${aiSourceLabel(result.source)}` : "Offline description drafted (no AI provider answered; see Settings → AI assistant)", "info");
     } catch (error) { pushToast(errorText(error), "error"); }
     finally { setGenerating(false); }
   };

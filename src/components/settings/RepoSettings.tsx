@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api, getDiffOptions, setDiffOptions } from "../../api";
-import type { AiSettings, AutolinkRule, CommitTemplate, CustomCommand, CustomCommandParam, DiffOptions, GitflowConfig, HookInfo, IdentityProfile, PerfAction, PerfStatus, SigningConfig } from "../../types";
+import type { AiSettings, AiSettingsUpdate, AutolinkRule, CommitTemplate, CustomCommand, CustomCommandParam, DiffOptions, GitflowConfig, HookInfo, IdentityProfile, PerfAction, PerfStatus, SigningConfig } from "../../types";
 import { Icon, type IconName } from "../Icon";
 import { askConfirm } from "../DialogHost";
 import { pushToast } from "../../toastBus";
@@ -9,6 +9,7 @@ import { invalidateAutolinks } from "../../autolinks";
 import { getDisplayPrefs, setDisplayPrefs, type DisplayPrefs } from "../../displayPrefs";
 import { notificationsEnabled, setNotificationsEnabled } from "../../notify";
 import { chooseFolder } from "../FolderPicker";
+import { NetworkAiFields, SelfHostedAi } from "./LocalLlmSettings";
 
 type Props = {
   repositoryPath: string;
@@ -246,50 +247,58 @@ function TemplatesTab({ repositoryPath, busy, run }: Props) {
 // ---------------------------------------------------------------- AI assistant
 function AiTab({ busy, run }: Pick<Props, "busy" | "run">) {
   const [settings, setSettings] = useState<AiSettings | null>(null);
-  const [form, setForm] = useState({ provider: "ollama" as AiSettings["provider"], ollamaUrl: "", ollamaModel: "", claudeModel: "" });
+  const [form, setFormState] = useState<AiSettingsUpdate>({});
   const [key, setKey] = useState("");
   const [test, setTest] = useState<{ ok: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const load = useCallback((next: AiSettings) => {
     setSettings(next);
-    setForm({ provider: next.provider, ollamaUrl: next.ollamaUrl, ollamaModel: next.ollamaModel, claudeModel: next.claudeModel });
+    const { claudeModels: _models, claudeKeySaved: _a, claudeEnvCredentials: _b, netKeySaved: _c, lanKeySaved: _d, ...editable } = next;
+    setFormState(editable);
   }, []);
   useEffect(() => { api.aiSettings().then(load).catch((error) => pushToast(errorText(error), "error")); }, [load]);
   if (!settings) return <Section title="AI assistant"><p className="st-note">Loading…</p></Section>;
-  const save = (extra: { claudeKey?: string | null } = {}) => run("Save AI settings", async () => {
+  const setForm = (update: AiSettingsUpdate) => setFormState((current) => ({ ...current, ...update }));
+  const saveNow = async (extra: AiSettingsUpdate = {}) => {
     load(await api.saveAiSettings({ ...form, ...extra }));
-    setKey(""); setTest(null);
-  });
+    setTest(null);
+  };
+  const save = (extra: AiSettingsUpdate = {}) => run("Save AI settings", async () => { await saveNow(extra); setKey(""); });
   const credentials = settings.claudeKeySaved ? "an API key saved here" : settings.claudeEnvCredentials ? "ANTHROPIC_API_KEY from the server's environment" : "none found yet (an `ant auth login` profile also works)";
+  const provider = form.provider ?? settings.provider;
   return (
     <Section title="AI assistant" hint="Drafts commit messages (✨ Draft message) and explains commits and working changes. Without a provider, Chrono uses offline rules." actions={
       <>
-        <button type="button" className="ux-button" disabled={busy || testing} onClick={async () => { setTesting(true); try { setTest(await api.testAi()); } catch (error) { setTest({ ok: false, message: errorText(error) }); } finally { setTesting(false); } }}>{testing ? "Testing…" : "Test"}</button>
+        <button type="button" className="ux-button" disabled={busy || testing} title="Saves, then asks the provider for a one-word answer" onClick={async () => { setTesting(true); try { await saveNow(); setTest(await api.testAi()); } catch (error) { setTest({ ok: false, message: errorText(error) }); } finally { setTesting(false); } }}>{testing ? "Testing…" : "Save & test"}</button>
         <button type="button" className="ux-primary-button" disabled={busy} onClick={() => void save()}>Save</button>
       </>
     }>
       <div className="st-ai-providers" role="radiogroup" aria-label="AI provider">
         {([
-          ["ollama", "Local model (Ollama)", "Runs on this machine; nothing leaves it."],
+          ["llamacpp", "Self-hosted (llama.cpp)", "Chrono downloads llama.cpp and a model and runs them here. Nothing leaves the machine."],
+          ["network", "Server on the network", "llama-server, LM Studio, vLLM… on another machine in your network."],
+          ["ollama", "Ollama", "An Ollama server, on this machine or another one."],
           ["claude", "Claude (Anthropic API)", "Staged diffs and commit contents are sent to Anthropic."],
           ["off", "Off", "Offline rules only."],
         ] as const).map(([value, label, note]) => (
-          <label key={value} className={`st-ai-provider${form.provider === value ? " is-active" : ""}`}>
-            <input type="radio" name="ai-provider" checked={form.provider === value} onChange={() => setForm({ ...form, provider: value })} />
+          <label key={value} className={`st-ai-provider${provider === value ? " is-active" : ""}`}>
+            <input type="radio" name="ai-provider" checked={provider === value} onChange={() => setForm({ provider: value })} />
             <span><strong>{label}</strong><small>{note}</small></span>
           </label>
         ))}
       </div>
-      {form.provider === "ollama" && (
+      {provider === "ollama" && (
         <div className="st-grid">
-          <label>Ollama address<input value={form.ollamaUrl} onChange={(event) => setForm({ ...form, ollamaUrl: event.target.value })} placeholder="http://127.0.0.1:11434" /></label>
-          <label>Model<input value={form.ollamaModel} onChange={(event) => setForm({ ...form, ollamaModel: event.target.value })} placeholder="qwen2.5:3b" /></label>
+          <label>Ollama address<input value={form.ollamaUrl ?? ""} onChange={(event) => setForm({ ollamaUrl: event.target.value })} placeholder="http://127.0.0.1:11434" /></label>
+          <label>Model<input value={form.ollamaModel ?? ""} onChange={(event) => setForm({ ollamaModel: event.target.value })} placeholder="qwen2.5:3b" /></label>
         </div>
       )}
-      {form.provider === "claude" && (
+      {provider === "network" && <NetworkAiFields settings={settings} form={form} setForm={setForm} busy={busy} save={saveNow} />}
+      {provider === "llamacpp" && <SelfHostedAi settings={settings} form={form} setForm={setForm} busy={busy} save={saveNow} />}
+      {provider === "claude" && (
         <>
           <div className="st-grid">
-            <label>Model<select value={form.claudeModel} onChange={(event) => setForm({ ...form, claudeModel: event.target.value })}>
+            <label>Model<select value={form.claudeModel ?? ""} onChange={(event) => setForm({ claudeModel: event.target.value })}>
               {settings.claudeModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.id === "claude-opus-5-5" ? " (default)" : ""}</option>)}
               {!settings.claudeModels.some((model) => model.id === form.claudeModel) && <option value={form.claudeModel}>{form.claudeModel}</option>}
             </select></label>

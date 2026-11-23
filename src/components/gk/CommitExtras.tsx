@@ -3,6 +3,7 @@ import { api } from "../../api";
 import type { SignatureInfo } from "../../types";
 import { CiChecks } from "./HostingDialogs";
 import { pushToast } from "../../toastBus";
+import { aiSourceLabel } from "../../aiSource";
 
 export const SIGNATURE_LABEL: Record<string, { text: string; kind: string; short: string }> = {
   G: { text: "Good signature", kind: "good", short: "Verified" },
@@ -54,7 +55,7 @@ export function CommitExtras({ repositoryPath, sha, signature }: { repositoryPat
           try { setExplanation(await api.explain(repositoryPath, "commit", sha)); } catch (error) { pushToast(String(error), "error"); }
           finally { setExplaining(false); }
         }}>{explaining ? "Thinking…" : "✨ Explain this commit"}</button></div>
-        {explanation && <pre className="ux-commit-body gk-explain">{explanation.text}<small>{explanation.source === "claude" ? `Claude${explanation.model ? ` (${explanation.model})` : ""}` : explanation.source === "ollama" ? "local AI (Ollama)" : "offline summary"}</small></pre>}
+        {explanation && <pre className="ux-commit-body gk-explain">{explanation.text}<small>{aiSourceLabel(explanation.source, explanation.model)}</small></pre>}
       </section>
       <section className="ux-inspector-section">
         <div className="ux-section-title"><strong>Notes</strong>{!editing && <button type="button" className="gk-link-button" onClick={() => { setDraft(note ?? ""); setEditing(true); }}>{note ? "Edit" : "Add note"}</button>}</div>
