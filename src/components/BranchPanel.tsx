@@ -159,7 +159,7 @@ export function BranchPanel({ branches, repositoryPath, headSha, onCheckout, onC
                 </div>
               )
             ))}
-            {!local.length && <div className="ux-empty-state">No local branches match this filter.</div>}
+            {!local.length && <div className="ux-empty-state">{query.trim() ? "No local branches match this filter." : "No local branches yet."}</div>}
           </div>
         </section>
 
@@ -174,7 +174,7 @@ export function BranchPanel({ branches, repositoryPath, headSha, onCheckout, onC
                   <code>{branch.target.slice(0, 8)}</code>
                 </div>
               ))}
-              {!remote.length && <div className="ux-empty-state">No remote branches match this filter.</div>}
+              {!remote.length && <div className="ux-empty-state">{query.trim() ? "No remote branches match this filter." : "No remote branches. Add a remote to see them here."}</div>}
             </div>
           </section>
 

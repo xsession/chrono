@@ -59,6 +59,13 @@ export function RepoBrowser({ repositoryPath, branches, onExport }: Props) {
     }
   };
 
+  // Show HEAD straight away instead of an empty tree with HEAD already filled in.
+  useEffect(() => {
+    setEntries([]); setFile(null); setDir(""); setOpen(new Set([""]));
+    void resolve();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [repositoryPath]);
+
   const toggleDir = async (entry: TreeEntry) => {
     if (entry.type !== "tree") {
       setBusy(true);

@@ -824,7 +824,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                     )}
                   </span>
                   <span className="gk-author-cell" title={`${commit.authorName} <${commit.authorEmail}>`}><Avatar name={commit.authorName} email={commit.authorEmail} /><span>{commit.authorName}</span></span><span>{formatDate(commit.authoredAt)}</span>
-                  {showChanges && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} files, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}
+                  {showChanges && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} file${stat.filesChanged === 1 ? "" : "s"}, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}
                   <code>{commit.id.slice(0, 8)}</code>
                 </div>
               );
@@ -873,7 +873,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
             ], selected.id.slice(0, 8))}>More<Icon name="chevronDown" /></button>
           </div>
           <section className="ux-inspector-section">
-            <div className="ux-section-title"><strong>Changes</strong><span>{details ? `${details.files.length} files · +${details.additions} −${details.deletions}` : "Loading…"}</span></div>
+            <div className="ux-section-title"><strong>Changes</strong><span>{details ? `${details.files.length} file${details.files.length === 1 ? "" : "s"} · +${details.additions} −${details.deletions}` : "Loading…"}</span></div>
             {details ? (
               <>
                 <div className="ux-commit-file-list">{details.files.map((file, index) => {

@@ -130,6 +130,11 @@ The Graph view follows GitKraken's layout:
   so even a repository whose `git status` takes a minute switches instantly.
   Drag a tab to reorder it (or press Ctrl+Shift+←/→). Close it with its ×, a
   middle click, Delete, or the right-click menu, which also has *Close other tabs*.
+- **Local repositories** (the expanded sidebar): clicking one opens it in a
+  tab. Drag entries to reorder them (or Alt+↑/↓), remove one with its ×, a
+  middle click, Delete or the right-click menu, and empty the list with
+  *Clear* (click twice to confirm). Only the list changes; nothing on disk is
+  touched. Every repository you open is added to it.
 - **Live changes:** the server watches each open repository, so edits made in an
   editor, a terminal or another tool show in the Changes list and the graph's
   WIP row within about 0.1–0.2 s. Commits, checkouts, fetches and rebases made

@@ -187,12 +187,32 @@ export async function repositoryHistoryPage(
   ]);
   const parsed = parseCommits(result);
   const hasMore = parsed.length > pageSize;
-  const commits = hasMore ? parsed.slice(0, pageSize) : parsed;
+  const page = hasMore ? parsed.slice(0, pageSize) : parsed;
+  // A stash is a commit with the index (and untracked files) as extra
+  // parents. Those helper commits are not history: hide them and the lines to
+  // them, so the graph shows one node per stash. The cursor still counts them,
+  // because it is git's own --skip offset.
+  const internal = await stashInternals(root);
+  const commits = internal.size
+    ? page.filter((commit) => !internal.has(commit.id)).map((commit) => (commit.parents.some((parent) => internal.has(parent)) ? { ...commit, parents: commit.parents.filter((parent) => !internal.has(parent)) } : commit))
+    : page;
   return {
     commits,
-    nextCursor: hasMore ? String(offset + commits.length) : null,
+    nextCursor: hasMore ? String(offset + page.length) : null,
     hasMore,
   };
+}
+
+/** The index and untracked-files commits behind every stash entry. */
+async function stashInternals(root: string): Promise<Set<string>> {
+  const listed = await runGit(root, ["log", "-g", "--format=%P", "refs/stash", "--"]);
+  const internal = new Set<string>();
+  if (listed.code !== 0) return internal; // no stashes
+  for (const line of listed.stdout.split("\n")) {
+    const parents = line.trim().split(" ").filter(Boolean);
+    for (const parent of parents.slice(1)) internal.add(parent);
+  }
+  return internal;
 }
 
 export async function repositoryStatus(inputPath: string): Promise<FileChange[]> {

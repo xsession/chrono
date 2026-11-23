@@ -144,9 +144,26 @@ export default function App() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const terminalRef = useRef<TerminalPanelHandle | null>(null);
 
+  // The saved repository list. Changes wait until it has loaded and always
+  // start from the latest list: a deep link handled at startup used to save a
+  // list holding only its own repository over the saved one.
+  const workspacesRef = useRef<Workspace[]>([emptyWorkspace]);
+  const workspacesReady = useRef<{ promise: Promise<void>; done: () => void } | null>(null);
+  if (!workspacesReady.current) {
+    let done = () => {};
+    const promise = new Promise<void>((resolve) => { done = resolve; });
+    workspacesReady.current = { promise, done };
+  }
+  const commitWorkspaces = useCallback((next: Workspace[]) => {
+    workspacesRef.current = next;
+    setWorkspaces(next);
+    return api.saveWorkspaces(next);
+  }, []);
+
   useEffect(() => {
     api.loadWorkspaces()
-      .then((loaded) => setWorkspaces(loaded.length ? loaded : [emptyWorkspace]))
+      .then((loaded) => { const list = loaded.length ? loaded : [emptyWorkspace]; workspacesRef.current = list; setWorkspaces(list); })
+      .finally(() => workspacesReady.current?.done())
       .catch((error) => {
         // A server started with CHRONO_API_TOKEN (Docker, remote) needs the
         // token from the browser too — ask for it instead of failing silently.
@@ -206,7 +223,7 @@ export default function App() {
       setPath(repositoryPath);
       setSummary(nextSummary);
       setHistorySegments([{ offset: 0, page: nextHistory }]);
-      setSelectedCommit((current) => nextHistory.commits.find((commit) => commit.id === current?.id) || nextHistory.commits[0] || null);
+      setSelectedCommit((current) => (switching && !snapshot ? null : nextHistory.commits.find((commit) => commit.id === current?.id)) || nextHistory.commits.find((commit) => commit.id === nextSummary.head) || nextHistory.commits[0] || null);
       setChanges(nextChanges);
       setBranches(nextBranches);
       setOperation(nextOperation);
@@ -326,20 +343,48 @@ export default function App() {
     }
   }, [historyHasNewer, historyLoading, historyWindow, path]);
 
+  // Start on HEAD, not on whatever is newest (a stash or another branch). The
+  // history can arrive before HEAD is known, so an automatic pick moves to HEAD
+  // once it is; a commit the user chose stays chosen.
+  const autoPickRef = useRef<string | null>(null);
   useEffect(() => {
-    if (selectedCommit && commits.some((commit) => commit.id === selectedCommit.id)) return;
-    setSelectedCommit(commits[0] ?? null);
-  }, [commits, selectedCommit]);
+    const head = commits.find((commit) => commit.id === summary?.head);
+    const kept = selectedCommit && commits.some((commit) => commit.id === selectedCommit.id);
+    if (kept && !(head && autoPickRef.current === selectedCommit.id && selectedCommit.id !== head.id)) return;
+    const pick = head ?? commits[0] ?? null;
+    autoPickRef.current = pick?.id ?? null;
+    setSelectedCommit(pick);
+  }, [commits, selectedCommit, summary?.head]);
 
   const rememberRepository = async (repositoryPath: string) => {
-    const next = structuredClone(workspaces.length ? workspaces : [emptyWorkspace]);
+    await workspacesReady.current?.promise;
+    const current = workspacesRef.current;
+    const next = structuredClone(current.length ? current : [emptyWorkspace]);
     const workspace = next[0];
     if (!workspace.repositories.some((repository) => repository.path === repositoryPath)) {
       workspace.repositories.push({ path: repositoryPath });
-      setWorkspaces(next);
-      await api.saveWorkspaces(next);
+      await commitWorkspaces(next);
     }
   };
+
+  // The repository list in the sidebar: reorder, remove and clear. Only the
+  // list changes; open tabs and the repositories on disk stay as they are.
+  const updateWorkspace = (workspaceId: string, change: (paths: Workspace["repositories"]) => Workspace["repositories"]) => {
+    const next = structuredClone(workspacesRef.current).map((workspace) => (workspace.id === workspaceId ? { ...workspace, repositories: change(workspace.repositories) } : workspace));
+    void commitWorkspaces(next).catch((error) => pushToast(`Could not save the repository list: ${String(error)}`, "error", 9000));
+  };
+  const removeListedRepository = (workspaceId: string, repositoryPath: string) =>
+    updateWorkspace(workspaceId, (list) => list.filter((repository) => repository.path !== repositoryPath));
+  const moveListedRepository = (workspaceId: string, repositoryPath: string, index: number) =>
+    updateWorkspace(workspaceId, (list) => {
+      const from = list.findIndex((repository) => repository.path === repositoryPath);
+      if (from < 0) return list;
+      const next = [...list];
+      const [moved] = next.splice(from, 1);
+      next.splice(index > from ? index - 1 : index, 0, moved);
+      return next;
+    });
+  const clearListedRepositories = (workspaceId: string) => updateWorkspace(workspaceId, () => []);
 
   const openRepository = async () => {
     const selected = await promptRepositoryPath("Open Git repository");
@@ -866,11 +911,14 @@ export default function App() {
         changeCount={dirtyCount}
         conflictCount={conflictCount}
         collapsed={sidebarCollapsed}
-        onSelect={refresh}
+        onSelect={(target) => { void openRepoTab(target).then((opened) => { if (!opened.ok && opened.error !== "cancelled") pushToast(`Could not open ${target}: ${opened.error}`, "error", 9000); }); }}
         onView={setView}
         onOpen={openRepository}
         onClone={cloneRepository}
         onToggleCollapsed={() => setSidebarCollapsed((value) => !value)}
+        onRemove={removeListedRepository}
+        onMove={moveListedRepository}
+        onClear={clearListedRepositories}
       />
 
       <main className={`ux-main${operationActive ? " has-operation" : ""}`}>

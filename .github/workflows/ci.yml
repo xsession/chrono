@@ -51,6 +51,8 @@ jobs:
         run: npm run test:folders
       - name: Live repository changes
         run: npm run test:watch
+      - name: Stash nodes in the history
+        run: npm run test:stash-history
       - name: Roadmap features
         run: npm run test:roadmap
       - name: Git smoke tests

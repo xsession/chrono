@@ -45,7 +45,7 @@ function validatePlan(items: PlannedCommit[]): string[] {
     }
     if (item.action !== "drop") priorKept = true;
   }
-  if (!priorKept) issues.push("The plan drops every commit.");
+  if (items.length && !priorKept) issues.push("The plan drops every commit.");
   return issues;
 }
 
@@ -54,7 +54,9 @@ export function RebasePlanner({ repositoryPath, branches, operationActive, onSta
   const suggestedTarget = useMemo(() => {
     const current = localBranches.find((branch) => branch.current);
     const preferred = localBranches.find((branch) => ["main", "master", "develop"].includes(branch.name) && !branch.current);
-    return preferred?.name || current?.upstream || "main";
+    // On main itself, with nothing to rebase onto, offer the last few commits
+    // (like `git rebase -i HEAD~3`) instead of main onto main, an empty plan.
+    return preferred?.name || current?.upstream || (current ? "HEAD~3" : "main");
   }, [localBranches]);
 
   const [target, setTarget] = useState(suggestedTarget);
@@ -211,7 +213,7 @@ export function RebasePlanner({ repositoryPath, branches, operationActive, onSta
                 <code>{item.commit.slice(0, 8)}</code><strong>{item.subject}</strong>
               </button>
               <span title={item.authorEmail}>{item.authorName}</span>
-              <span className="ux-diffstat"><b>+{item.additions}</b><i>−{item.deletions}</i><small>{item.filesChanged} files</small></span>
+              <span className="ux-diffstat"><b>+{item.additions}</b><i>−{item.deletions}</i><small>{item.filesChanged} file{item.filesChanged === 1 ? "" : "s"}</small></span>
               <span className="ux-order-controls">
                 <button className="ux-icon-button" disabled={index === 0} onClick={(event) => { event.stopPropagation(); move(item.commit, -1); }} aria-label="Move commit up">↑</button>
                 <button className="ux-icon-button" disabled={index === items.length - 1} onClick={(event) => { event.stopPropagation(); move(item.commit, 1); }} aria-label="Move commit down">↓</button>
@@ -230,7 +232,7 @@ export function RebasePlanner({ repositoryPath, branches, operationActive, onSta
               <dt>Commit</dt><dd><code>{selectedItem.commit}</code></dd>
               <dt>Author</dt><dd>{selectedItem.authorName}<small>{selectedItem.authorEmail}</small></dd>
               <dt>Date</dt><dd>{formatDate(selectedItem.authoredAt)}</dd>
-              <dt>Changes</dt><dd><b>+{selectedItem.additions}</b> / <span>−{selectedItem.deletions}</span> across {selectedItem.filesChanged} files</dd>
+              <dt>Changes</dt><dd><b>+{selectedItem.additions}</b> / <span>−{selectedItem.deletions}</span> across {selectedItem.filesChanged} file{selectedItem.filesChanged === 1 ? "" : "s"}</dd>
             </dl>
             <label className="ux-field-stack"><span>Action</span>
               <select value={selectedItem.action} onChange={(event) => changeAction(selectedItem.commit, event.target.value as RebaseAction)}>
