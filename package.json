@@ -84,7 +84,10 @@
       "!server/**/*.tsbuildinfo",
       "dist/**/*",
       "public/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/node-pty/**/*.pdb",
+      "!node_modules/node-pty/{deps,src,scripts,typings,node-addon-api}/**",
+      "!node_modules/node-pty/binding.gyp"
     ],
     "npmRebuild": false,
     "asarUnpack": [
