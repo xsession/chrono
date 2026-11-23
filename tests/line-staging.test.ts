@@ -20,6 +20,10 @@ const eq = (actual: unknown, expected: unknown, message: string) => { assert.dee
 
 fs.mkdirSync(repo);
 git("init", "-q", "-b", "main");
+// Git for Windows turns core.autocrlf on outside the system config, which
+// would check files out with CRLF; this test compares exact bytes.
+git("config", "core.autocrlf", "false");
+git("config", "core.eol", "lf");
 write("f.txt", "one\ntwo\nthree\nfour\nfive\n");
 git("add", "."); git("commit", "-qm", "init");
 
