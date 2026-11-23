@@ -157,6 +157,14 @@ try {
   await waitFor((s) => s.includes("Cancelled"), "the cancel message");
   ok(fs.readFileSync(path.join(repo, "readme.md"), "utf8") === "stash me\n", "cancelling a discard keeps the change");
 
+  // A terminal that is too small gets a message instead of a broken layout, and recovers.
+  child.resize(40, 10);
+  await waitFor((s) => s.includes("Terminal too small (40×10)"), "the too-small message");
+  ok(exitCode === null, "a tiny terminal does not crash it");
+  child.resize(COLS, ROWS);
+  await waitFor((s) => s.includes("[2] Files"), "the layout after resizing back");
+  ok(true, "resizing back draws the panels again");
+
   // Help overlay.
   await press(["?"]);
   await waitFor((s) => s.includes("Keys") && s.includes("undo / redo"), "the help overlay");

@@ -735,7 +735,7 @@ export type AiSettings = {
   autoStart: boolean;
 };
 export type AiSettingsUpdate = Partial<Omit<AiSettings, "claudeModels" | "claudeKeySaved" | "claudeEnvCredentials" | "netKeySaved" | "lanKeySaved">> & { claudeKey?: string | null; netKey?: string | null; lanKey?: string | null };
-export type LlmDownloadJob = { id: string; kind: "engine" | "model"; label: string; received: number; total: number | null; status: "running" | "unpacking" | "done" | "error" | "cancelled"; error?: string; startedAt: string };
+export type LlmDownloadJob = { id: string; kind: "engine" | "model"; label: string; received: number; total: number | null; speed: number | null; status: "running" | "unpacking" | "done" | "error" | "cancelled"; error?: string; startedAt: string };
 export type LlmEngineAsset = { name: string; variant: string; size: number; url: string; recommended: boolean; note: string };
 export type LlmServerState = { status: "stopped" | "starting" | "ready"; pid: number | null; port: number | null; model: string | null; binary: string | null; startedAt: string | null; lanUrl: string | null; lastExit: { at: string; code: number | null; message: string } | null };
 export type LlmStatus = {

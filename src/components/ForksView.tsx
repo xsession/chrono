@@ -64,7 +64,8 @@ export function ForksView({ repositoryPath, refreshKey, busy, run, onOpenReposit
   };
   const sync = (entry: ForkStatus, withPush: boolean) => run(`Sync ${where(entry)} with upstream`, async () => {
     const result = await api.forkSync(repositoryPath, entry.path, withPush);
-    pushToast(`${where(entry)}: ${result.message}`, result.ok ? "success" : "error", result.ok ? 5000 : 12000);
+    const record = result.ok && entry.path && result.from !== result.to ? ` ${entry.path} moved: commit the parent to record its new commit id.` : "";
+    pushToast(`${where(entry)}: ${result.message}.${record}`, result.ok ? "success" : "error", result.ok ? (record ? 9000 : 5000) : 12000);
     await load();
   });
   const syncAll = () => run("Sync all forks", async () => {
@@ -94,6 +95,7 @@ export function ForksView({ repositoryPath, refreshKey, busy, run, onOpenReposit
       {results && (
         <div className="fk-results" role="status">
           {results.map((result) => <div key={result.path} className={result.ok ? "is-ok" : "is-error"}><strong>{result.path || "this repository"}</strong> {result.message}</div>)}
+          {results.some((result) => result.ok && result.path && result.from !== result.to) && <div>Synced submodules moved: commit in the parent (Changes) to record their new commit ids.</div>}
           {!results.length && <div>No forks to sync.</div>}
           <button type="button" className="gk-link-button" onClick={() => setResults(null)}>Dismiss</button>
         </div>

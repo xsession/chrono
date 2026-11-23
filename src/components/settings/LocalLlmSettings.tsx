@@ -19,6 +19,13 @@ type FormProps = {
 
 const errorText = (error: unknown) => String(error).replace(/^Error: /, "");
 const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`);
+const speedText = (bytesPerSecond: number) => (bytesPerSecond >= 1e6 ? `${(bytesPerSecond / 1e6).toFixed(1)} MB/s` : `${Math.max(1, Math.round(bytesPerSecond / 1e3))} kB/s`);
+function timeLeft(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "";
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))} s left`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min left`;
+  return `${Math.floor(seconds / 3600)} h ${Math.round((seconds % 3600) / 60)} min left`;
+}
 
 // ---------------------------------------------------------------- network server
 export function NetworkAiFields({ settings, form, setForm, busy, save }: FormProps) {
@@ -202,7 +209,7 @@ export function SelfHostedAi({ settings, form, setForm, busy, save }: FormProps)
             return (
               <div key={job.id} className={`st-llm-job is-${job.status}`}>
                 <span><strong>{job.label}</strong>
-                  <small>{job.status === "running" ? `${size(job.received)}${job.total ? ` of ${size(job.total)} · ${percent}%` : ""}` : job.status === "unpacking" ? "unpacking…" : job.status === "done" ? "done" : job.status === "cancelled" ? "cancelled (start it again to resume)" : job.error}</small>
+                  <small>{job.status === "running" ? `${size(job.received)}${job.total ? ` of ${size(job.total)} · ${percent}%` : ""}${job.speed ? ` · ${speedText(job.speed)}${job.total ? ` · ${timeLeft((job.total - job.received) / job.speed)}` : ""}` : ""}` : job.status === "unpacking" ? "unpacking…" : job.status === "done" ? "done" : job.status === "cancelled" ? "cancelled (start it again to resume)" : job.error}</small>
                 </span>
                 {(job.status === "running" || job.status === "unpacking") && <progress max={100} value={percent ?? undefined} />}
                 {job.status === "running" && <button type="button" className="ux-button compact" onClick={() => void act("Cancel", () => api.llmCancelJob(job.id))}>Cancel</button>}

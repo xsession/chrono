@@ -309,6 +309,12 @@ function draw(): void {
   if (state.quitting) return;
   const cols = out.columns || 100;
   const rows = out.rows || 30;
+  if (cols < 60 || rows < 16) {
+    // Too small for the panels: say so instead of drawing a broken layout.
+    const text = `Terminal too small (${cols}×${rows}); Chrono needs at least 60×16. q quits.`;
+    write(`\x1b[H\x1b[2J${fit([[text, { fg: C.yellow, bold: true }]], cols)}`);
+    return;
+  }
   const leftW = Math.max(28, Math.min(70, Math.floor(cols * 0.38)));
   const rightW = cols - leftW;
   const bodyH = rows - 1;
@@ -647,7 +653,8 @@ async function onKey(str: string | undefined, key: { name?: string; ctrl?: boole
       confirm("Sync forks", `Fetch the upstream of ${count} fork${count === 1 ? "" : "s"} (this repository and submodules)\nand fast-forward each default branch? Diverged branches are left alone.`, () => act("Syncing forks", async () => {
         const results = await forks.syncAllForks(state.root);
         const failed = results.filter((result) => !result.ok);
-        say(failed.length ? `Synced ${results.length - failed.length}/${results.length}; ${failed.map((result) => `${result.path || "repo"}: ${result.message}`).join("; ")}` : `Synced ${results.length} fork${results.length === 1 ? "" : "s"}: ${results.map((result) => `${result.path || "repo"} ${result.message}`).join("; ")}`, failed.length > 0);
+        const moved = results.some((result) => result.ok && result.path && result.from !== result.to) ? " — submodules moved: commit here (c) to record them" : "";
+        say((failed.length ? `Synced ${results.length - failed.length}/${results.length}; ${failed.map((result) => `${result.path || "repo"}: ${result.message}`).join("; ")}` : `Synced ${results.length} fork${results.length === 1 ? "" : "s"}: ${results.map((result) => `${result.path || "repo"} ${result.message}`).join("; ")}`) + moved, failed.length > 0);
       }));
       return;
     }

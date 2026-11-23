@@ -67,6 +67,13 @@ const server = http.createServer((req, res) => {
     res.end(model.subarray(from));
     return;
   }
+  if (req.url === "/slow/slow-Q4_K_M.gguf") {
+    // 8 × 50 kB, one every 300 ms: slow enough to measure a speed.
+    res.writeHead(200, { "content-length": 8 * 50_000 });
+    let sent = 0;
+    const timer = setInterval(() => { res.write(Buffer.alloc(50_000, 1)); sent += 1; if (sent === 8) { clearInterval(timer); res.end(); } }, 300);
+    return;
+  }
   if (req.url === "/v1/models") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ data: [{ id: "qwen-lan" }, { id: "gemma-lan" }] })); return; }
   if (req.url === "/v1/chat/completions") {
     networkCalls += 1;
@@ -117,6 +124,12 @@ fs.writeFileSync(path.join(modelsDir, "tiny-Q4_K_M.gguf.part"), model.subarray(0
 const modelJob = await llm.downloadModel(modelsDir, `${base}/models/tiny-Q4_K_M.gguf`);
 const modelDone = await waitJob(modelJob.id);
 ok(modelDone.status === "done" && modelDone.received === model.length && modelDone.total === model.length, "the model download completes");
+const slowJob = await llm.downloadModel(modelsDir, `${base}/slow/slow-Q4_K_M.gguf`);
+let measured: number | null = null;
+for (let i = 0; i < 80 && measured === null; i++) { await sleep(50); measured = llm.listJobs().find((job) => job.id === slowJob.id)?.speed ?? null; }
+ok(measured !== null && measured > 50_000 && measured < 1_000_000, `a running download reports its speed (${measured} B/s, about 166 kB/s expected)`);
+ok((await waitJob(slowJob.id)).status === "done", "the slow download completes");
+await llm.deleteModel(modelsDir, "slow-Q4_K_M.gguf");
 ok(fs.readFileSync(path.join(modelsDir, "tiny-Q4_K_M.gguf")).equals(model) && !fs.existsSync(path.join(modelsDir, "tiny-Q4_K_M.gguf.part")), "a partial download is resumed byte-exact");
 ok((await llm.listModels(modelsDir)).map((entry) => entry.name).join() === "tiny-Q4_K_M.gguf", "the models folder lists it");
 await assert.rejects(() => llm.downloadModel(modelsDir, "http://example.com/model.gguf"), /https/); checks += 1;

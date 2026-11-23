@@ -89,6 +89,8 @@ export interface DownloadJob {
   label: string;
   received: number;
   total: number | null;
+  /** Bytes per second, averaged over the last seconds (null until measured). */
+  speed: number | null;
   status: "running" | "unpacking" | "done" | "error" | "cancelled";
   error?: string;
   startedAt: string;
@@ -109,7 +111,7 @@ export function cancelJob(id: string): void {
 function newJob(kind: DownloadJob["kind"], label: string) {
   // Finished jobs stay listed for a while so the page can show the result.
   for (const [id, job] of jobs) if (job.status !== "running" && job.status !== "unpacking" && jobs.size > 12) jobs.delete(id);
-  const job = { id: `dl${++jobSeq}`, kind, label, received: 0, total: null, status: "running" as DownloadJob["status"], startedAt: new Date().toISOString(), controller: new AbortController() };
+  const job = { id: `dl${++jobSeq}`, kind, label, received: 0, total: null, speed: null as number | null, status: "running" as DownloadJob["status"], startedAt: new Date().toISOString(), controller: new AbortController() };
   jobs.set(job.id, job);
   return job;
 }
@@ -135,7 +137,20 @@ async function fetchTo(job: DownloadJob & { controller: AbortController }, url: 
   if (free !== null && job.total !== null && free < job.total - offset + 64 * 1024 * 1024) {
     throw new Error(`not enough disk space in ${path.dirname(dest)}: ${Math.round((job.total - offset) / 1048576)} MB needed, ${Math.round(free / 1048576)} MB free`);
   }
-  const counter = new Transform({ transform(chunk: Buffer, _encoding, done) { job.received += chunk.length; done(null, chunk); } });
+  // Speed: an exponential moving average of one-second samples (about the last 10 s).
+  let sampleAt = Date.now();
+  let sampleBytes = job.received;
+  const counter = new Transform({ transform(chunk: Buffer, _encoding, done) {
+    job.received += chunk.length;
+    const now = Date.now();
+    if (now - sampleAt >= 1000) {
+      const rate = ((job.received - sampleBytes) * 1000) / (now - sampleAt);
+      job.speed = job.speed === null ? rate : job.speed * 0.8 + rate * 0.2;
+      sampleAt = now;
+      sampleBytes = job.received;
+    }
+    done(null, chunk);
+  } });
   await pipeline(Readable.fromWeb(response.body as import("node:stream/web").ReadableStream), counter, createWriteStream(part, { flags: resumed ? "a" : "w" }), { signal: job.controller.signal });
   if (job.total !== null && job.received !== job.total) throw new Error(`download incomplete (${job.received} of ${job.total} bytes); start it again to resume`);
   await fs.rename(part, dest);
