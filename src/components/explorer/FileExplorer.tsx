@@ -316,19 +316,19 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
 
     const tortoise: MenuItem[] = [
       { id: "pull", label: "Pull…", icon: "download", disabled: busy, onSelect: () => exec("Pull", () => api.pull(repositoryPath, "ff-only")) },
-      { id: "fetch", label: "Fetch…", disabled: busy, onSelect: () => exec("Fetch", () => api.pull(repositoryPath, "fetch")) },
+      { id: "fetch", icon: "fetch", label: "Fetch…", disabled: busy, onSelect: () => exec("Fetch", () => api.pull(repositoryPath, "fetch")) },
       { id: "push", label: "Push…", icon: "upload", disabled: busy, onSelect: () => exec("Push", () => api.push(repositoryPath)) },
       { kind: "separator", id: "s1" },
       { id: "diff", label: "Diff", icon: "diff", disabled: !isFile || !hasModified, onSelect: () => setDialog({ kind: "diff", file: single!.path, mode: "working" }) },
-      { id: "diffprev", label: "Diff with previous version", disabled: !isFile || !single?.tracked, onSelect: () => setDialog({ kind: "diff", file: single!.path, mode: "previous" }) },
-      { id: "diffwith", label: targets.length === 2 ? "Diff the two selected files" : diffLater ? `Diff with "${diffLater.split("/").pop()}"` : "Diff later", disabled: !(targets.length === 2 && targets.every((entry) => entry.type === "file")) && !isFile, onSelect: () => {
+      { id: "diffprev", icon: "compare", label: "Diff with previous version", disabled: !isFile || !single?.tracked, onSelect: () => setDialog({ kind: "diff", file: single!.path, mode: "previous" }) },
+      { id: "diffwith", icon: "compare", label: targets.length === 2 ? "Diff the two selected files" : diffLater ? `Diff with "${diffLater.split("/").pop()}"` : "Diff later", disabled: !(targets.length === 2 && targets.every((entry) => entry.type === "file")) && !isFile, onSelect: () => {
         if (targets.length === 2) { setDialog({ kind: "diff-files", left: targets[0].path, right: targets[1].path }); return; }
         if (diffLater && single && diffLater !== single.path) { setDialog({ kind: "diff-files", left: diffLater, right: single.path }); setDiffLater(null); return; }
         if (single) { setDiffLater(single.path); pushToast(`Marked ${single.name} — choose “Diff with…” on another file`, "info"); }
       } },
       { kind: "separator", id: "s2" },
       { id: "log", label: "Show log", icon: "history", disabled: !background && !single, onSelect: () => setDialog({ kind: "log", file: singlePath }) },
-      { id: "reflog", label: "Show Reflog", onSelect: async () => { try { const result = await api.workflow(repositoryPath, { operation: "reflog", args: [] }); setDialog({ kind: "output", title: "Reflog", text: result.stdout }); } catch (reason) { pushToast(String(reason), "error"); } } },
+      { id: "reflog", icon: "activity", label: "Show Reflog", onSelect: async () => { try { const result = await api.workflow(repositoryPath, { operation: "reflog", args: [] }); setDialog({ kind: "output", title: "Reflog", text: result.stdout }); } catch (reason) { pushToast(String(reason), "error"); } } },
       { id: "refs", label: "Browse References", icon: "list", onSelect: () => onNavigate("refs") },
       { id: "graph", label: "Revision graph", icon: "branch", onSelect: () => onNavigate("history") },
       { id: "repobrowser", label: "Repo-browser", icon: "repository", onSelect: () => onNavigate("repo") },
@@ -336,9 +336,9 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
       { id: "blame", label: "Blame", icon: "users", disabled: !isFile || !single?.tracked, onSelect: () => setDialog({ kind: "blame", file: single!.path }) },
       { kind: "separator", id: "s3" },
       { id: "resolve", label: "Resolve…", icon: "check", disabled: !hasConflict, onSelect: () => exec("Resolve", () => api.explorerAction(repositoryPath, { action: "resolve", files })) },
-      { id: "resolve-side", label: "Resolve conflict using", disabled: !hasConflict, submenu: [
-        { id: "mine", label: "Mine (ours)", onSelect: () => exec("Resolve using mine", () => api.explorerAction(repositoryPath, { action: "resolve_ours", files })) },
-        { id: "theirs", label: "Theirs", onSelect: () => exec("Resolve using theirs", () => api.explorerAction(repositoryPath, { action: "resolve_theirs", files })) },
+      { id: "resolve-side", icon: "warning", label: "Resolve conflict using", disabled: !hasConflict, submenu: [
+        { id: "mine", icon: "chevronLeft", label: "Mine (ours)", onSelect: () => exec("Resolve using mine", () => api.explorerAction(repositoryPath, { action: "resolve_ours", files })) },
+        { id: "theirs", icon: "chevronRight", label: "Theirs", onSelect: () => exec("Resolve using theirs", () => api.explorerAction(repositoryPath, { action: "resolve_theirs", files })) },
         { kind: "separator", id: "x" },
         { id: "center", label: "Edit conflicts (Conflict Center)…", icon: "warning", onSelect: () => onNavigate("conflicts") },
       ] },
@@ -346,11 +346,11 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
       { id: "cleanup", label: "Clean up…", icon: "trash", onSelect: () => setDialog({ kind: "cleanup", files }) },
       { kind: "separator", id: "s4" },
       { id: "switch", label: "Switch/Checkout…", icon: "branch", disabled: busy, submenu: [
-        ...localBranches.map<MenuItem>((branch) => ({ id: `sw-${branch.name}`, label: branch.name, checked: branch.current, disabled: branch.current, onSelect: () => exec(`Checkout ${branch.name}`, () => api.switchBranch(repositoryPath, branch.name)) })),
+        ...localBranches.map<MenuItem>((branch) => ({ id: `sw-${branch.name}`, icon: "branch", label: branch.name, checked: branch.current, disabled: branch.current, onSelect: () => exec(`Checkout ${branch.name}`, () => api.switchBranch(repositoryPath, branch.name)) })),
         { kind: "separator", id: "x" },
-        { id: "sw-other", label: "Other revision…", onSelect: async () => { const rev = await askText("Switch/Checkout", "Branch, tag or commit"); if (rev?.trim()) await exec(`Checkout ${rev.trim()}`, () => api.workflow(repositoryPath, { operation: "checkout_tag", args: [rev.trim()] })); } },
+        { id: "sw-other", icon: "commit", label: "Other revision…", onSelect: async () => { const rev = await askText("Switch/Checkout", "Branch, tag or commit"); if (rev?.trim()) await exec(`Checkout ${rev.trim()}`, () => api.workflow(repositoryPath, { operation: "checkout_tag", args: [rev.trim()] })); } },
       ] },
-      { id: "merge", label: "Merge…", disabled: busy || otherBranches.length === 0, submenu: otherBranches.slice(0, 40).map<MenuItem>((branch) => ({ id: `m-${branch.name}`, label: `${branch.name} → ${branchName}`, onSelect: async () => {
+      { id: "merge", icon: "merge", label: "Merge…", disabled: busy || otherBranches.length === 0, submenu: otherBranches.slice(0, 40).map<MenuItem>((branch) => ({ id: `m-${branch.name}`, icon: "branch", label: `${branch.name} → ${branchName}`, onSelect: async () => {
         const strategy = await askChoice(`Merge ${branch.name} into ${branchName}`, [
           { value: "no-ff", label: "Create merge commit (--no-ff)" },
           { value: "ff-only", label: "Fast-forward only" },
@@ -381,40 +381,40 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
         if (message !== null) await exec("Stash save", () => api.explorerAction(repositoryPath, { action: "stash_save", files, message }));
       } },
       { id: "stashpop", label: "Stash Pop", icon: "pop", disabled: busy, onSelect: () => exec("Stash pop", () => api.workflow(repositoryPath, { operation: "stash_pop", args: [] })) },
-      { id: "stashlist", label: "Stash List", onSelect: () => setDialog({ kind: "stashes" }) },
-      { id: "bisect", label: "Bisect start", onSelect: () => onNavigate("recovery") },
+      { id: "stashlist", icon: "list", label: "Stash List", onSelect: () => setDialog({ kind: "stashes" }) },
+      { id: "bisect", icon: "search", label: "Bisect start", onSelect: () => onNavigate("recovery") },
       { kind: "separator", id: "s6" },
       { id: "add", label: "Add…", icon: "plus", disabled: !hasUntracked, onSelect: () => setDialog({ kind: "add", files }) },
       { id: "ignore", label: "Add to ignore list", icon: "ignore", disabled: background || targets.length === 0, submenu: [
-        { id: "ig-name", label: single ? single.name : "Selected names", hint: "Adds an entry to .gitignore in the item's folder", onSelect: () => exec("Add to ignore list", () => api.explorerAction(repositoryPath, { action: "ignore_name", files, scope: "local" })) },
-        { id: "ig-name-root", label: `${single ? single.name : "Selected names"} (recursively, root .gitignore)`, onSelect: () => exec("Add to ignore list", () => api.explorerAction(repositoryPath, { action: "ignore_name", files, scope: "root" })) },
-        ...(ext ? [{ id: "ig-ext", label: `*${ext}`, onSelect: () => exec("Add to ignore list", () => api.explorerAction(repositoryPath, { action: "ignore_ext", files, scope: "local" })) }, { id: "ig-ext-root", label: `*${ext} (root .gitignore)`, onSelect: () => exec("Add to ignore list", () => api.explorerAction(repositoryPath, { action: "ignore_ext", files, scope: "root" })) }] as MenuItem[] : []),
+        { id: "ig-name", icon: "file", label: single ? single.name : "Selected names", hint: "Adds an entry to .gitignore in the item's folder", onSelect: () => exec("Add to ignore list", () => api.explorerAction(repositoryPath, { action: "ignore_name", files, scope: "local" })) },
+        { id: "ig-name-root", icon: "file", label: `${single ? single.name : "Selected names"} (recursively, root .gitignore)`, onSelect: () => exec("Add to ignore list", () => api.explorerAction(repositoryPath, { action: "ignore_name", files, scope: "root" })) },
+        ...(ext ? [{ id: "ig-ext", icon: "filter", label: `*${ext}`, onSelect: () => exec("Add to ignore list", () => api.explorerAction(repositoryPath, { action: "ignore_ext", files, scope: "local" })) }, { id: "ig-ext-root", icon: "filter", label: `*${ext} (root .gitignore)`, onSelect: () => exec("Add to ignore list", () => api.explorerAction(repositoryPath, { action: "ignore_ext", files, scope: "root" })) }] as MenuItem[] : []),
       ] },
-      { id: "delignore", label: "Delete and add to ignore list", disabled: background || !tracked, hint: "Removes from the index (keeps the file) and ignores it", onSelect: () => exec("Delete and ignore", () => api.explorerAction(repositoryPath, { action: "ignore_and_remove", files, scope: "local" })) },
-      { id: "rmkeep", label: "Delete (keep local)", disabled: background || !allTracked, onSelect: () => exec("Remove from version control", () => api.explorerAction(repositoryPath, { action: "remove_keep_local", files })) },
-      { id: "rename", label: "Rename…", disabled: !single || busy, shortcut: "F2", onSelect: () => renameEntry(single!) },
+      { id: "delignore", icon: "ignore", label: "Delete and add to ignore list", disabled: background || !tracked, hint: "Removes from the index (keeps the file) and ignores it", onSelect: () => exec("Delete and ignore", () => api.explorerAction(repositoryPath, { action: "ignore_and_remove", files, scope: "local" })) },
+      { id: "rmkeep", icon: "minus", label: "Delete (keep local)", disabled: background || !allTracked, onSelect: () => exec("Remove from version control", () => api.explorerAction(repositoryPath, { action: "remove_keep_local", files })) },
+      { id: "rename", icon: "edit", label: "Rename…", disabled: !single || busy, shortcut: "F2", onSelect: () => renameEntry(single!) },
       { id: "delete", label: "Delete", icon: "trash", danger: true, disabled: background || targets.length === 0, shortcut: "Del", onSelect: () => deleteEntries(targets) },
-      { id: "revrev", label: "Revert to revision…", disabled: background || !allTracked, onSelect: async () => {
+      { id: "revrev", icon: "history", label: "Revert to revision…", disabled: background || !allTracked, onSelect: async () => {
         const rev = await askText("Revert to revision", "Commit, branch or tag to restore the selection from", "HEAD~1");
         if (rev?.trim()) await exec(`Revert to ${rev.trim()}`, () => api.explorerAction(repositoryPath, { action: "checkout_revision", files, revision: rev.trim() }));
       } },
       { kind: "separator", id: "s7" },
-      { id: "flags", label: "Index flags", disabled: background || !allTracked, submenu: [
+      { id: "flags", icon: "flag", label: "Index flags", disabled: background || !allTracked, submenu: [
         { id: "au", label: "Assume unchanged", checked: targets.every((entry) => entry.assumeUnchanged), onSelect: () => exec("Assume unchanged", () => api.explorerAction(repositoryPath, { action: targets.every((entry) => entry.assumeUnchanged) ? "no_assume_unchanged" : "assume_unchanged", files })) },
         { id: "sw", label: "Skip worktree", checked: targets.every((entry) => entry.skipWorktree), onSelect: () => exec("Skip worktree", () => api.explorerAction(repositoryPath, { action: targets.every((entry) => entry.skipWorktree) ? "no_skip_worktree" : "skip_worktree", files })) },
       ] },
       { id: "lfs", label: "LFS", icon: "lock", submenu: [
-        { id: "lock", label: "Lock", disabled: !isFile, onSelect: () => exec("LFS lock", () => api.explorerAction(repositoryPath, { action: "lfs_lock", files })) },
-        { id: "unlock", label: "Unlock", disabled: !isFile, onSelect: () => exec("LFS unlock", () => api.explorerAction(repositoryPath, { action: "lfs_unlock", files })) },
-        { id: "track", label: ext ? `Track *${ext} with LFS` : "Track with LFS", disabled: background, onSelect: () => exec("LFS track", () => api.explorerAction(repositoryPath, { action: "lfs_track", files })) },
+        { id: "lock", icon: "lock", label: "Lock", disabled: !isFile, onSelect: () => exec("LFS lock", () => api.explorerAction(repositoryPath, { action: "lfs_lock", files })) },
+        { id: "unlock", icon: "unlock", label: "Unlock", disabled: !isFile, onSelect: () => exec("LFS unlock", () => api.explorerAction(repositoryPath, { action: "lfs_unlock", files })) },
+        { id: "track", icon: "eye", label: ext ? `Track *${ext} with LFS` : "Track with LFS", disabled: background, onSelect: () => exec("LFS track", () => api.explorerAction(repositoryPath, { action: "lfs_track", files })) },
         { kind: "separator", id: "x" },
-        { id: "locks", label: "Show locks", onSelect: async () => { try { const result = await api.workflow(repositoryPath, { operation: "lfs_locks", args: [] }); setDialog({ kind: "output", title: "LFS locks", text: result.stdout }); } catch (reason) { pushToast(String(reason), "error"); } } },
-        { id: "lfspull", label: "LFS pull", onSelect: () => exec("LFS pull", () => api.workflow(repositoryPath, { operation: "lfs_pull", args: [] })) },
+        { id: "locks", icon: "list", label: "Show locks", onSelect: async () => { try { const result = await api.workflow(repositoryPath, { operation: "lfs_locks", args: [] }); setDialog({ kind: "output", title: "LFS locks", text: result.stdout }); } catch (reason) { pushToast(String(reason), "error"); } } },
+        { id: "lfspull", icon: "download", label: "LFS pull", onSelect: () => exec("LFS pull", () => api.workflow(repositoryPath, { operation: "lfs_pull", args: [] })) },
       ] },
       { id: "submodule", label: "Submodule Update…", icon: "submodule", disabled: busy, onSelect: () => exec("Submodule update", () => (single?.type === "submodule" ? api.explorerAction(repositoryPath, { action: "submodule_update", files }) : api.workflow(repositoryPath, { operation: "submodule_update", args: [] }))) },
       { kind: "separator", id: "s8" },
       { id: "patch", label: "Create Patch…", icon: "patch", disabled: !hasModified, onSelect: () => setDialog({ kind: "patch", files }) },
-      { id: "applypatch", label: "Apply Patch…", onSelect: () => setDialog({ kind: "apply-patch", dir: background ? dir : single?.type === "dir" ? single.path : parentOf(singlePath) }) },
+      { id: "applypatch", icon: "patch", label: "Apply Patch…", onSelect: () => setDialog({ kind: "apply-patch", dir: background ? dir : single?.type === "dir" ? single.path : parentOf(singlePath) }) },
       { kind: "separator", id: "s9" },
       { id: "settings", label: "Settings", icon: "settings", submenu: [
         { id: "show-ignored", label: "Show ignored items", checked: settings.showIgnored, onSelect: () => updateSettings({ showIgnored: !settings.showIgnored }) },
@@ -425,7 +425,7 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
     ];
 
     return [
-      ...(single?.type === "dir" && !background ? [{ id: "open", label: "Open", bold: true, onSelect: () => navigate(single.path) } as MenuItem] : []),
+      ...(single?.type === "dir" && !background ? [{ id: "open", label: "Open", bold: true, icon: "folderOpen", onSelect: () => navigate(single.path) } as MenuItem] : []),
       ...(isFile ? [{ id: "open", label: "Open", bold: true, icon: "external" as const, onSelect: () => openEntry(single!) }] as MenuItem[] : []),
       { id: "open-folder", label: "Open containing folder", icon: "folderOpen", onSelect: async () => { try { await api.explorerOpen(repositoryPath, singlePath, "reveal"); } catch (reason) { pushToast(String(reason), "error"); } } },
       { id: "terminal", label: "Open Git terminal here", icon: "terminal", onSelect: () => onOpenTerminal(single?.type === "dir" ? single.path : background ? dir : parentOf(singlePath)) },
@@ -438,9 +438,9 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
       { id: "tgit", label: "TortoiseGit", icon: "repository", submenu: tortoise },
       { kind: "separator", id: "t1" },
       { id: "copy", label: "Copy path", icon: "copy", submenu: [
-        { id: "rel", label: "Relative path", onSelect: () => copyText(files.join("\n")) },
-        { id: "abs", label: "Full path", onSelect: () => copyText(files.map((file) => `${listing?.root ?? repositoryPath}/${file === "." ? "" : file}`.replace(/\/$/, "")).join("\n")) },
-        { id: "name", label: "Name only", onSelect: () => copyText((background ? [dir || "."] : targets.map((entry) => entry.name)).join("\n")) },
+        { id: "rel", icon: "copy", label: "Relative path", onSelect: () => copyText(files.join("\n")) },
+        { id: "abs", icon: "folder", label: "Full path", onSelect: () => copyText(files.map((file) => `${listing?.root ?? repositoryPath}/${file === "." ? "" : file}`.replace(/\/$/, "")).join("\n")) },
+        { id: "name", icon: "file", label: "Name only", onSelect: () => copyText((background ? [dir || "."] : targets.map((entry) => entry.name)).join("\n")) },
       ] },
       ...(background ? [
         { kind: "separator", id: "t2" } as MenuItem,

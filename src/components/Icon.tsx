@@ -1,6 +1,11 @@
 import type { ReactNode, SVGProps } from "react";
 
 export type IconName =
+  | "merge"
+  | "edit"
+  | "unlock"
+  | "flag"
+  | "fetch"
   | "activity"
   | "branch"
   | "changes"
@@ -99,6 +104,11 @@ const paths: Record<IconName, ReactNode> = {
   ignore: <><circle cx="12" cy="12" r="8"/><path d="m6.5 6.5 11 11"/></>,
   patch: <><rect x="4" y="8" width="16" height="8" rx="4" transform="rotate(-45 12 12)"/><path d="M11 11h.01M13 13h.01M11 13h.01M13 11h.01"/></>,
   info: <><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5h.01"/></>,
+  merge: <><circle cx="6" cy="5" r="2.5"/><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 7.5v9M6 7.5c0 3 3.5 4.5 9.5 4.5"/></>,
+  edit: <><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></>,
+  unlock: <><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 7.6-1.7"/></>,
+  flag: <><path d="M5 21V4"/><path d="M5 4h12l-2.5 4 2.5 4H5"/></>,
+  fetch: <><path d="M7 16a4 4 0 0 1-.6-8A6 6 0 0 1 18 8.5 3.5 3.5 0 0 1 17.5 15.5"/><path d="M12 11v9M9 17l3 3 3-3"/></>,
   worktree: <><path d="M4 5h6v6H4zM14 13h6v6h-6z"/><path d="M10 8h4a3 3 0 0 1 3 3v2M7 11v3a3 3 0 0 0 3 3h4"/></>
 };
 
