@@ -82,6 +82,12 @@
     "vite": "^7.0.0",
     "xterm": "^5.3.0"
   },
+  "allowScripts": {
+    "electron": true,
+    "esbuild": true,
+    "node-pty": false,
+    "electron-winstaller": false
+  },
   "build": {
     "appId": "hu.codelayer.chrono",
     "productName": "Chrono",

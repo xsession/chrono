@@ -3,7 +3,7 @@
 #
 # Checks/installs prerequisites, then builds and launches the Electron
 # desktop app. The Electron main process spawns the Chrono backend itself
-# (random port in 14210-14310), so nothing else needs to be running.
+# (random port from 14210 upwards), so nothing else needs to be running.
 #
 #   ./starter-electron.sh            build + launch
 #   ./starter-electron.sh --check    build only, do not launch
@@ -79,6 +79,15 @@ fi
 step "Installing npm dependencies (includes Electron)"
 npm install
 
+# Electron's own install script fetches the binary for this OS. npm 11.19+
+# skips dependency install scripts that package.json does not allow, and no npm
+# re-runs it for a package that is already installed, so a checkout shared
+# with Windows would keep the Windows electron.exe. The script does nothing
+# when the binary already matches this system.
+step "Checking the Electron binary for $(uname -s)"
+node node_modules/electron/install.js
+node -e 'const p=require("electron"); require("fs").accessSync(p); console.log("electron:", p)'
+
 step "Building frontend"
 npm run build
 
@@ -97,5 +106,5 @@ fi
 
 step "Launching Chrono desktop (Electron)"
 echo
-echo "The backend starts inside the app on a port in 14210-14310."
+echo "The backend starts inside the app on a random port from 14210 upwards."
 npm run desktop:dev

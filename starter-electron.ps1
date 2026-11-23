@@ -2,7 +2,7 @@
 #
 # Checks/installs prerequisites, then builds and launches the Electron
 # desktop app. The Electron main process spawns the Chrono backend itself
-# (random port in 14210-14310), so nothing else needs to be running.
+# (random port from 14210 upwards), so nothing else needs to be running.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File starter-electron.ps1            # build + launch
 #   powershell -NoProfile -ExecutionPolicy Bypass -File starter-electron.ps1 --check    # build only, do not launch
@@ -60,6 +60,14 @@ Step 'Installing npm dependencies (includes Electron)'
 npm install
 if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit code $LASTEXITCODE)" }
 
+# Electron's own install script fetches the binary for this OS. npm 11.19+
+# skips dependency install scripts that package.json does not allow, and no npm
+# re-runs it for a package that is already installed, so a checkout shared
+# with Linux would keep the Linux binary. It does nothing when the binary matches.
+Step 'Checking the Electron binary for Windows'
+node node_modules/electron/install.js
+if ($LASTEXITCODE -ne 0) { throw "downloading the Electron binary failed (exit code $LASTEXITCODE)" }
+
 Step 'Building frontend'
 npm run build
 if ($LASTEXITCODE -ne 0) { throw "npm run build failed (exit code $LASTEXITCODE)" }
@@ -79,6 +87,6 @@ if ($mode -eq 'packager') {
 
 Step 'Launching Chrono desktop (Electron)'
 Write-Host ''
-Write-Host 'The backend starts inside the app on a port in 14210-14310.'
+Write-Host 'The backend starts inside the app on a random port from 14210 upwards.'
 npm run desktop:dev
 exit $LASTEXITCODE
