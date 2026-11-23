@@ -35,7 +35,9 @@ major="$("$node_bin" -p 'process.versions.node.split(".")[0]')"
 [ "$major" -ge 22 ] || { echo "Node.js 22+ is required (found $("$node_bin" --version))" >&2; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "git is required" >&2; exit 1; }
 [ -f "$app_dir/dist/index.html" ] || { echo "$app_dir/dist is missing — run 'npm run build' first" >&2; exit 1; }
-if [ ! -d "$app_dir/node_modules/ws" ]; then
+# Install the runtime dependencies when any is missing (not just ws: an update
+# can add one, e.g. the AI SDK, to a folder that already has node_modules).
+if ! (cd "$app_dir" && "$node_bin" -e 'const fs = require("fs"); const deps = Object.keys(require("./package.json").dependencies || {}); process.exit(deps.every((d) => fs.existsSync(`node_modules/${d}/package.json`)) ? 0 : 1)'); then
   echo "Installing runtime dependencies…"
   (cd "$app_dir" && npm ci --omit=dev)
 fi

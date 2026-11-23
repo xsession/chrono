@@ -79,7 +79,8 @@ if [ "$uninstall" -eq 1 ]; then
   fi
   [ -f "$bin_dir/chrono-tui" ] && rm -f "$bin_dir/chrono-tui"
   [ "$removed" -eq 1 ] || echo "Chrono is not installed."
-  echo "Settings are kept in ${XDG_CONFIG_HOME:-$HOME/.config}/Chrono."
+  # Electron's userData follows the package name (chrono-next), not the product name.
+  echo "Settings are kept in ${XDG_CONFIG_HOME:-$HOME/.config}/chrono-next."
   exit 0
 fi
 

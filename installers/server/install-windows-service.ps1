@@ -20,7 +20,15 @@ $node = (Get-Command node -ErrorAction Stop).Source
 $major = [int](& $node -p "process.versions.node.split('.')[0]")
 if ($major -lt 22) { throw "Node.js 22+ is required" }
 if (-not (Test-Path (Join-Path $appDir "dist\index.html"))) { throw "$appDir\dist is missing - run 'npm run build' first" }
-if (-not (Test-Path (Join-Path $appDir "node_modules\ws"))) { Push-Location $appDir; npm ci --omit=dev; Pop-Location }
+# Install the runtime dependencies when any is missing (not just ws: an update
+# can add one, e.g. the AI SDK, to a folder that already has node_modules).
+$pkg = Get-Content -LiteralPath (Join-Path $appDir "package.json") -Raw | ConvertFrom-Json
+$missing = @($pkg.dependencies.PSObject.Properties.Name | Where-Object { -not (Test-Path -LiteralPath (Join-Path $appDir "node_modules\$_\package.json")) })
+if ($missing.Count) {
+  Write-Host "Installing runtime dependencies ($($missing -join ', ') missing)..."
+  Push-Location $appDir
+  try { npm ci --omit=dev; if ($LASTEXITCODE -ne 0) { throw "npm ci failed (exit code $LASTEXITCODE)" } } finally { Pop-Location }
+}
 $action = New-ScheduledTaskAction -Execute $node -Argument "--experimental-strip-types `"$appDir\server\index.ts`"" -WorkingDirectory $appDir
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit 0

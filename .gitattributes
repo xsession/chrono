@@ -1,0 +1,18 @@
+# Line endings for scripts, whatever core.autocrlf says on the machine that
+# checks out or packages the repository. Shell scripts and shebang launchers
+# with CRLF fail on Linux ("set: pipefail: invalid option name",
+# "env: 'node\r': No such file"), including the ones electron-builder copies
+# into the .deb/.rpm when packaging from a Windows checkout.
+*.sh       text eol=lf
+bin/*      text eol=lf
+# Shipped in the Linux packages: a shell script without an extension and
+# the menu table that after-install.sh reads line by line.
+shell-integration/chrono-open  text eol=lf
+shell-integration/actions.tsv  text eol=lf
+# Gradle's Unix wrapper, run by starter-android.sh.
+android/gradlew  text eol=lf
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+*.ps1      text eol=crlf
+# Gradle's generated wrapper is stored as-is (CRLF in the repository).
+android/gradlew.bat -text

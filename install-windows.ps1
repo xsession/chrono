@@ -106,7 +106,8 @@ if ($uninstall) {
     $proc = Start-Process -FilePath $parts[0] -ArgumentList $argsLine -Wait -PassThru
     if ($proc.ExitCode -ne 0) { throw "uninstall of $($entry.DisplayName) failed (exit code $($proc.ExitCode))" }
   }
-  Write-Host "Settings are kept in $env:APPDATA\Chrono."
+  # Electron's userData follows the package name (chrono-next), not the product name.
+  Write-Host "Settings are kept in $env:APPDATA\chrono-next."
   exit 0
 }
 
@@ -203,15 +204,21 @@ $exe = Join-Path $target 'Chrono.exe'
 if ($installed -and $installed.PSObject.Properties['InstallLocation'] -and $installed.InstallLocation) { $exe = Join-Path $installed.InstallLocation 'Chrono.exe' }
 $shownVersion = '?'
 if ($installed -and $installed.PSObject.Properties['DisplayVersion']) { $shownVersion = $installed.DisplayVersion }
-# chrono-tui.cmd: the terminal UI, run by Chrono.exe as Node (no window), like
-# VS Code's `code` command.
+# chrono-tui.cmd: the terminal UI from the installed app's files. Chrono.exe is
+# a windowed (GUI-subsystem) program, so run as Node it gets no console and the
+# TUI sees no terminal ("chrono-tui needs an interactive terminal"); a console
+# Node.js 22.6+ (the first with --experimental-strip-types) runs it instead.
 $tuiCmd = Join-Path (Split-Path -Parent $exe) 'chrono-tui.cmd'
 if (Test-Path -LiteralPath $exe) {
   $lines = @(
     '@echo off',
     'setlocal',
-    'set ELECTRON_RUN_AS_NODE=1',
-    '"%~dp0Chrono.exe" --experimental-strip-types --no-warnings "%~dp0resources\app.asar.unpacked\tui\main.ts" %*'
+    'node -e "const [a, b] = process.versions.node.split(''.'').map(Number); process.exit(a > 22 || (a === 22 && b >= 6) ? 0 : 1)" >nul 2>nul',
+    'if errorlevel 1 (',
+    '  echo chrono-tui needs Node.js 22.6 or newer on PATH ^(https://nodejs.org^): Chrono.exe is a windowed program and cannot drive a terminal. 1>&2',
+    '  exit /b 1',
+    ')',
+    'node --experimental-strip-types --no-warnings "%~dp0resources\app.asar.unpacked\tui\main.ts" %*'
   )
   Set-Content -LiteralPath $tuiCmd -Value $lines -Encoding ASCII
 }
@@ -219,4 +226,4 @@ if (Test-Path -LiteralPath $exe) {
 Write-Host ''
 Write-Host "Chrono $shownVersion installed: $exe"
 Write-Host 'Start it from the Start menu or the desktop shortcut.'
-if (Test-Path -LiteralPath $tuiCmd) { Write-Host "Terminal UI: $tuiCmd [repository]  (add its folder to PATH to run chrono-tui anywhere)" }
+if (Test-Path -LiteralPath $tuiCmd) { Write-Host "Terminal UI: $tuiCmd [repository]  (needs Node.js 22.6+ on PATH; add its folder to PATH to run chrono-tui anywhere)" }
