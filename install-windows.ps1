@@ -4,6 +4,7 @@
 #   install-windows.bat --release [vX.Y.Z]   download a GitHub release (latest if no tag)
 #   install-windows.bat --file <setup.exe>   install a Chrono-Setup-*.exe you already have
 #   install-windows.bat --uninstall          remove Chrono (settings are kept)
+#   install-windows.bat --dir D:\Apps\Chrono  install somewhere else (e.g. when C: is full)
 #
 # Installs to %LOCALAPPDATA%\Programs\Chrono with Start menu and desktop
 # shortcuts, the chrono:// link handler and the Explorer "Chrono" right-click
@@ -18,6 +19,7 @@ $source = 'build'   # build | release | file
 $tag = ''
 $file = ''
 $uninstall = $false
+$installDir = ''
 for ($i = 0; $i -lt $args.Count; $i++) {
   switch ($args[$i]) {
     '--release' {
@@ -29,8 +31,12 @@ for ($i = 0; $i -lt $args.Count; $i++) {
       $source = 'file'; $i++; $file = "$($args[$i])"
     }
     '--uninstall' { $uninstall = $true }
+    '--dir' {
+      if ($i + 1 -ge $args.Count) { throw '--dir needs a folder, e.g. --dir D:\Apps\Chrono' }
+      $i++; $installDir = [IO.Path]::GetFullPath("$($args[$i])")
+    }
     { $_ -in '-h', '--help' } {
-      Get-Content -LiteralPath $PSCommandPath -TotalCount 12 | ForEach-Object { $_ -replace '^# ?', '' }
+      Get-Content -LiteralPath $PSCommandPath -TotalCount 13 | ForEach-Object { $_ -replace '^# ?', '' }
       exit 0
     }
     default { throw "unknown option: $($args[$i]) (see --help)" }
@@ -104,6 +110,17 @@ if ($uninstall) {
   exit 0
 }
 
+# The setup needs about 350 MB in the target folder and fails with exit code
+# 2 (no message when silent) if the drive is too full, so check up front.
+$target = $installDir
+if (-not $target) { $target = Join-Path $env:LOCALAPPDATA 'Programs\Chrono' }
+$needMB = 400
+$drive = [IO.Path]::GetPathRoot($target)
+$freeMB = [math]::Floor((New-Object IO.DriveInfo $drive).AvailableFreeSpace / 1MB)
+if ($freeMB -lt $needMB) {
+  throw "not enough space on $drive for $target ($freeMB MB free, about $needMB MB needed). Free some space, or install elsewhere: install-windows.bat --dir D:\Apps\Chrono"
+}
+
 # --- 1. Get the setup program -----------------------------------------------
 $setup = ''
 $tempDir = $null
@@ -161,12 +178,18 @@ try {
     $names = ($machine | ForEach-Object { "$($_.DisplayName) in $($_.InstallLocation)" }) -join '; '
     throw "Chrono is installed for all users ($names). Remove it first from Settings > Apps (needs administrator rights), then run this again."
   }
-  Step "Installing $(Split-Path -Leaf $setup)"
-  # /S = silent, /currentuser = per-user install under %LOCALAPPDATA%\Programs.
-  $proc = Start-Process -FilePath $setup -ArgumentList '/S', '/currentuser' -Wait -PassThru
+  Step "Installing $(Split-Path -Leaf $setup) to $target"
+  # /S = silent, /currentuser = per-user install. /D= sets the folder; NSIS
+  # wants it last and unquoted, even with spaces, so pass one argument string
+  # (Start-Process would quote an array element that contains spaces).
+  $setupArgs = '/S /currentuser'
+  if ($installDir) { $setupArgs += " /D=$installDir" }
+  $proc = Start-Process -FilePath $setup -ArgumentList $setupArgs -Wait -PassThru
   if ($proc.ExitCode -eq 2) {
     $found = (@(Get-ChronoInstalls) | ForEach-Object { "$($_.DisplayName) $($_.DisplayVersion) at $($_.InstallLocation)" }) -join '; '
-    if (-not $found) { $found = 'none found' }
+    if (-not $found) {
+      throw "setup stopped (exit code 2) and, run silently, gives no reason. Run it normally to see the message: & '$setup' /currentuser"
+    }
     throw "setup could not remove the installed Chrono (exit code 2). Installed: $found. Close every Chrono window (also in the tray) or uninstall it from Settings > Apps, then run this again."
   }
   if ($proc.ExitCode -ne 0) { throw "setup failed (exit code $($proc.ExitCode))" }
@@ -176,7 +199,7 @@ finally {
 }
 
 $installed = @(Get-ChronoInstalls) | Select-Object -First 1
-$exe = Join-Path $env:LOCALAPPDATA 'Programs\Chrono\Chrono.exe'
+$exe = Join-Path $target 'Chrono.exe'
 if ($installed -and $installed.PSObject.Properties['InstallLocation'] -and $installed.InstallLocation) { $exe = Join-Path $installed.InstallLocation 'Chrono.exe' }
 $shownVersion = '?'
 if ($installed -and $installed.PSObject.Properties['DisplayVersion']) { $shownVersion = $installed.DisplayVersion }

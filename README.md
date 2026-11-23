@@ -287,6 +287,7 @@ The installer scripts build Chrono from this checkout and install it like a norm
 install-windows.bat                    :: build + install per user (%LOCALAPPDATA%\Programs\Chrono), no admin
 install-windows.bat --release v1.0.0   :: download a GitHub release instead of building
 install-windows.bat --file Chrono-Setup-1.0.0-x64.exe
+install-windows.bat --dir D:\Apps\Chrono :: install on another drive (needs about 400 MB free)
 install-windows.bat --uninstall
 ```
 
