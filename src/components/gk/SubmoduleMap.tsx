@@ -8,6 +8,8 @@ import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askConfirm, askText } from "../DialogHost";
 import { pushToast } from "../../toastBus";
 import { plural } from "../../plural";
+import type { ForkStatus } from "../../types";
+import { forkBadge } from "../ForksView";
 
 type Filter = "all" | "attention" | "dirty" | "drift" | "uninitialized" | "outdated";
 type Mode = "list" | "mindmap";
@@ -27,6 +29,8 @@ const MODE_KEY = "chrono.submodules.mode";
 
 type Props = {
   repositoryPath: string;
+  /** Fork status of every submodule (forks.ts), by path. */
+  forks?: ForkStatus[];
   refreshKey: number;
   busy: boolean;
   run: (label: string, action: () => Promise<unknown>) => Promise<void>;
@@ -54,7 +58,8 @@ export function submoduleStatus(node: SubmoduleNode): { label: string; tone: "ok
 /** Project map: the whole (nested) submodule hierarchy of a superproject
  *  at a glance — status per node, problems bubbled up to collapsed parents,
  *  filters for "what needs my attention", and per-node actions. */
-export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepository, onOpenTerminal }: Props) {
+export function SubmoduleMap({ repositoryPath, forks, refreshKey, busy, run, onOpenRepository, onOpenTerminal }: Props) {
+  const forkByPath = new Map((forks ?? []).map((entry) => [entry.path, entry]));
   const [tree, setTree] = useState<SubmoduleTree | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -305,6 +310,7 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
               onSelect={pick}
               onOpen={(node) => node.state !== "uninitialized" && onOpenRepository(join(tree.root, node.path))}
               onContextMenu={nodeMenu}
+              forks={forkByPath}
             />
           )
           : (
@@ -352,6 +358,7 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
                       {node.state === "uninitialized" ? <small>—</small> : <>
                         {node.branch ? <><Icon name="branch" />{node.branch}</> : <code>{node.commit.slice(0, 8)}</code>}
                         {(node.ahead > 0 || node.behind > 0) && <small className="sm-ab">{node.ahead ? `↑${node.ahead}` : ""}{node.behind ? `↓${node.behind}` : ""}</small>}
+                        {(() => { const badge = forkBadge(forkByPath.get(node.path)); return badge ? <small className={`sm-fork${badge.stale ? " is-behind" : ""}`} title={badge.title}>⑂ {badge.text.replace(/^fork /, "")}</small> : null; })()}
                         {(node.tracking?.behind ?? 0) > 0 && <small className="sm-outdated" title={`The checked-out commit is ${plural(node.tracking!.behind, "commit")} behind origin/${node.tracking!.branch} (as of the last fetch). Update to remote moves it there.`}>{node.tracking!.behind} behind {node.tracking!.branch}</small>}
                       </>}
                     </span>
@@ -377,6 +384,7 @@ export function SubmoduleMap({ repositoryPath, refreshKey, busy, run, onOpenRepo
               {node.recorded && <><dt>Parent records</dt><dd><code>{node.recorded.slice(0, 10)}</code></dd></>}
               {node.children > 0 && <><dt>Nested</dt><dd>{node.children} direct{node.attentionBelow ? `, ${node.attentionBelow} need attention` : ""}</dd></>}
               {node.url && <><dt>Remote</dt><dd className="sm-detail-url">{node.url}</dd></>}
+              {forkByPath.get(node.path)?.kind === "fork" && <><dt>Fork of</dt><dd>{forkByPath.get(node.path)!.upstream?.url}{(() => { const badge = forkBadge(forkByPath.get(node.path)); return badge ? ` · ${badge.text.replace(/^fork /, "")}` : ""; })()}</dd></>}
             </dl>
             <footer>
               <button type="button" className="ux-primary-button" disabled={node.state === "uninitialized"} onClick={() => onOpenRepository(join(tree.root, node.path))}>Open</button>

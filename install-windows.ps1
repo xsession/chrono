@@ -203,6 +203,20 @@ $exe = Join-Path $target 'Chrono.exe'
 if ($installed -and $installed.PSObject.Properties['InstallLocation'] -and $installed.InstallLocation) { $exe = Join-Path $installed.InstallLocation 'Chrono.exe' }
 $shownVersion = '?'
 if ($installed -and $installed.PSObject.Properties['DisplayVersion']) { $shownVersion = $installed.DisplayVersion }
+# chrono-tui.cmd: the terminal UI, run by Chrono.exe as Node (no window), like
+# VS Code's `code` command.
+$tuiCmd = Join-Path (Split-Path -Parent $exe) 'chrono-tui.cmd'
+if (Test-Path -LiteralPath $exe) {
+  $lines = @(
+    '@echo off',
+    'setlocal',
+    'set ELECTRON_RUN_AS_NODE=1',
+    '"%~dp0Chrono.exe" --experimental-strip-types --no-warnings "%~dp0resources\app.asar.unpacked\tui\main.ts" %*'
+  )
+  Set-Content -LiteralPath $tuiCmd -Value $lines -Encoding ASCII
+}
+
 Write-Host ''
 Write-Host "Chrono $shownVersion installed: $exe"
 Write-Host 'Start it from the Start menu or the desktop shortcut.'
+if (Test-Path -LiteralPath $tuiCmd) { Write-Host "Terminal UI: $tuiCmd [repository]  (add its folder to PATH to run chrono-tui anywhere)" }

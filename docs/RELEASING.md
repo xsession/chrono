@@ -38,7 +38,7 @@ To rebuild an existing tag, run the workflow manually ("Run workflow") and enter
 ## CI on every push / pull request
 
 `.github/workflows/ci.yml` runs:
-- **Linux:** typecheck, build and the full test suite: `test:unit`, `test:lines`, `test:submodules`, `test:trust`, `test:lanes`, `test:landscape`, `test:folders`, `test:watch`, `test:stash-history`, `test:nested-commit`, `test:ai`, `test:local-llm`, `test:roadmap`, `test:git` and `test:api` (the same set as `npm run test:all`).
+- **Linux:** typecheck, build and the full test suite: `test:unit`, `test:lines`, `test:submodules`, `test:trust`, `test:lanes`, `test:landscape`, `test:folders`, `test:watch`, `test:stash-history`, `test:nested-commit`, `test:ai`, `test:local-llm`, `test:tui`, `test:forks`, `test:roadmap`, `test:git` and `test:api` (the same set as `npm run test:all`).
 - **Windows and macOS:** typecheck, build, unit tests and line staging.
 - **Linting:** shellcheck and actionlint.
 - **Packaging checks:**

@@ -59,6 +59,10 @@ jobs:
         run: npm run test:ai
       - name: Self-hosted and network AI (local mocks)
         run: npm run test:local-llm
+      - name: Terminal UI (real pseudo-terminal)
+        run: npm run test:tui
+      - name: Forks and upstreams
+        run: npm run test:forks
       - name: Roadmap features
         run: npm run test:roadmap
       - name: Git smoke tests

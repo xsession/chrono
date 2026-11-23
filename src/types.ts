@@ -704,6 +704,15 @@ export type PerfStatus = {
 };
 export type PerfAction = "commit_graph" | "maintenance_register" | "maintenance_unregister" | "maintenance_run" | "fsmonitor_on" | "fsmonitor_off" | "untracked_cache" | "preset" | "gc";
 export type HookInfo = { name: string; path: string; exists: boolean; executable: boolean; size: number; preview: string };
+/** Forks and upstreams (server/src/forks.ts). */
+export type ForkRemote = { name: string; url: string; web: string | null; owner: string | null; repository: string | null };
+export type ForkStatus = {
+  path: string; absolute: string; name: string; kind: "fork" | "plain" | "local";
+  origin: ForkRemote | null; upstream: ForkRemote | null; defaultBranch: string | null; currentBranch: string | null;
+  behind: number | null; ahead: number | null; originBehind: number | null; branchBehind: number | null;
+  fetchedAt: string | null; compareUrl: string | null; depth: number;
+};
+export type ForkSyncResult = { path: string; ok: boolean; message: string; from: string | null; to: string | null; pushed: boolean };
 export type AiSettings = {
   provider: "ollama" | "network" | "llamacpp" | "claude" | "off";
   ollamaUrl: string;

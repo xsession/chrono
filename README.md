@@ -59,12 +59,14 @@ Browser (React 19)  ──WebSocket /api/rpc──────▶  Node server (
   - `server/src/nestedCommit.ts` — staging into submodules and committing
     through nested submodules, deepest first
   - `server/src/repoWatch.ts` — file-system watchers behind live changes
+  - `server/src/forks.ts` — forks and upstreams for the repository and every submodule
   - `server/src/provider.ts` — pull requests (GitHub/GitLab/Gitea/Forgejo)
     with the Git Intelligence pull-request triage tab and remote auto-detection
   - `server/src/workspaces.ts` — workspace persistence (`~/.chrono-next/workspaces.json`)
   - `server/src/submodules.ts` — recursive submodule tree, bulk actions, foreach, manifest
   - `server/src/landscape.ts` — source scan behind the landscape map (parsers in `landscapeParse.ts`; recent changes for the heatmap in `landscapeRecent.ts`)
   - `server/src/folders.ts`, `server/src/trust.ts` — in-app folder picker, `safe.directory` trust
+- `tui/` — the terminal UI (`tui/main.ts`), launcher `bin/chrono-tui.mjs`.
 - `src/` — the React UI.
   - `src/graph.ts` — commit-graph layout engine (topological depth + lane
     assignment), unit-tested in `tests/graph-layout.test.ts`.
@@ -200,6 +202,32 @@ nested several levels deep.
 |---|---|
 | ![Submodule mind map with node details](docs/screenshots/submodule-mind-map.jpg) | ![Submodule list with bulk actions](docs/screenshots/submodule-bulk-actions.jpg) |
 
+## Forks and upstreams
+
+Chrono treats a checkout as a fork when its copy is `origin` and the original
+is another remote: `upstream`, or any other remote holding a repository of the
+same name. That works for the repository and for every submodule (patched
+dependencies are often forks), at any depth.
+
+- **Forks & upstreams** view (sidebar, or the command palette): every
+  repository in the tree with your copy, its upstream, and how far the default
+  branch, your fork on the server and the current branch are behind. Actions:
+  *Find / add upstream…* (looks up the parent on GitHub, GitLab or Gitea),
+  *Sync* (fetch upstream, fast-forward the default branch, even when it is not
+  checked out), *Sync & push* (also update your fork on the server), *Sync all
+  forks*, *Merge upstream* into the current branch, and *PR to upstream*.
+  Sync never rewrites history: a default branch with its own commits is left
+  alone and says so.
+- **Everywhere else:** a ⑂ pill in the toolbar (⑂ ↓n when behind, opens the
+  view), `⑂ your fork` / `⑂ upstream ↓n` on the remotes in the left panel, and
+  ⑂ badges on submodules in the left panel, the Submodules list, its details
+  and the mind map.
+- **Terminal UI:** ⑂ in the status panel, a forks table in the status view,
+  and `F` syncs every fork in the tree.
+
+Syncing a submodule moves its checkout, so the parent then shows it as
+changed: commit that to record the new commit id.
+
 ## Several git identities
 
 Save identity profiles (name, email, signing key) in *Repository settings →
@@ -209,6 +237,29 @@ too. For a one-off, **Commit as** in the commit box picks a profile for this
 commit (and the next ones in this repository while it stays chosen), for the
 repository and every submodule committed with it. *Always use here* turns the
 choice into the repository's identity.
+
+## Terminal UI (chrono-tui)
+
+For people who work in the terminal, or only have one (SSH, servers): a
+keyboard-driven interface in the style of lazygit, running the same backend as
+the desktop app, so nested submodule commits, the undo journal, hooks, AI
+commit drafts and live refresh all work there too. No extra dependencies.
+
+```bash
+npm run tui -- /path/to/repo     # from a checkout (or: npm link, then chrono-tui)
+chrono-tui [repository]          # after install-linux.sh (~/.local/bin) or install-windows (chrono-tui.cmd)
+```
+
+Panels: **1** status, **2** files, **3** branches, **4** commits (graph), **5**
+stash, with the diff, commit or log of the selection on the right. Move with
+`j`/`k` or the arrows, switch panels with `1`-`5`, `Tab` or `h`/`l`, press
+`Enter` to scroll the diff, `?` for every key. Files: `space` stage/unstage (a
+submodule: everything inside it), `a` all, `c` commit, `C` commit with an AI
+draft, `A` amend, `d` discard, `s` stash, `e` edit. Branches: `space` checkout,
+`n` new, `d` delete, `M` merge, `R` rebase. Stash: `space` apply, `g` pop, `d`
+drop. Everywhere: `p` pull, `P` push, `f` fetch, `z`/`Z` undo/redo, `q` quit.
+The installed command runs Chrono's own binary in Node mode, so it needs no
+display.
 
 ## AI assistant
 
@@ -493,6 +544,8 @@ npm run test:watch     # live changes: edits, commits and branch moves reported 
 npm run test:nested-commit # commits through nested submodules, deepest first
 npm run test:ai        # AI assistant settings, fallbacks and the Claude request (local mock, no internet)
 npm run test:local-llm # self-hosted llama.cpp and network AI against local stand-ins (no internet)
+npm run test:tui       # the terminal UI in a real pseudo-terminal: stage, commit through a submodule, branches, stash
+npm run test:forks     # forks and upstreams: detection, behind counts, sync, push, merge, submodule forks
 npm run test:stash-history # stash nodes in the graph
 npm run test:lanes     # per-repository git lanes: sharing, isolation, cancelling
 npm run test:landscape # landscape scan and the embedded map page

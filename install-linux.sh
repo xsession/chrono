@@ -77,6 +77,7 @@ if [ "$uninstall" -eq 1 ]; then
     if have dnf; then sudo_cmd dnf remove -y "$PKG_NAME"; else sudo_cmd zypper --non-interactive remove "$PKG_NAME"; fi
     removed=1
   fi
+  [ -f "$bin_dir/chrono-tui" ] && rm -f "$bin_dir/chrono-tui"
   [ "$removed" -eq 1 ] || echo "Chrono is not installed."
   echo "Settings are kept in ${XDG_CONFIG_HOME:-$HOME/.config}/Chrono."
   exit 0
@@ -184,7 +185,18 @@ DESKTOP
     where="$opt_dir/Chrono.AppImage (run: chrono)" ;;
 esac
 
+# `chrono-tui`: the terminal UI, run by the installed app's own Node (no window,
+# works over SSH). Per user, so no sudo.
+mkdir -p "$bin_dir"
+if [ "$kind" = appimage ]; then
+  printf '#!/bin/sh\nexec "%s" --tui "$@"\n' "$opt_dir/Chrono.AppImage" > "$bin_dir/chrono-tui"
+else
+  printf '#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec /opt/Chrono/chrono --experimental-strip-types --no-warnings /opt/Chrono/resources/app.asar.unpacked/tui/main.ts "$@"\n' > "$bin_dir/chrono-tui"
+fi
+chmod 0755 "$bin_dir/chrono-tui"
+
 echo
 echo "Chrono ${installed:-?} installed: $where"
 menus="$here/shell-integration/linux/install.sh"; [ -f "$menus" ] || menus="/opt/Chrono/resources/shell-integration/linux/install.sh"
 echo "Right-click menus for Nautilus/Caja (per user): sh $menus"
+echo "Terminal UI: chrono-tui [repository]   ($bin_dir/chrono-tui)"

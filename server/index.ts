@@ -25,6 +25,7 @@ import * as gk from "./src/gkOps.ts";
 import * as features from "./src/features.ts";
 import * as ai from "./src/ai.ts";
 import * as localLlm from "./src/localLlm.ts";
+import * as forks from "./src/forks.ts";
 import * as lineStaging from "./src/lineStaging.ts";
 import * as submodules from "./src/submodules.ts";
 import { landscapeScan } from "./src/landscape.ts";
@@ -91,7 +92,7 @@ const READ_ROUTES = new Set([
   "submodule_tree", "repository_trust", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
   "fork_point", "predict_conflicts", "cleanup_candidates", "file_blob", "sparse_status", "notes_get",
   "explorer_list", "explorer_properties", "explorer_diff_files", "explorer_diff_previous",
-  "landscape_recent",
+  "landscape_recent", "fork_tree",
 ]);
 
 const DIFF_VIEW_ROUTES = new Set(["working_tree_diff", "commit_file_diff", "diff_revisions", "explorer_diff_files", "explorer_diff_previous"]);
@@ -551,6 +552,19 @@ const routes: Record<string, Handler> = {
     autoStart: typeof body.autoStart === "boolean" ? body.autoStart : undefined,
   }),
   ai_test: () => ai.testAi(),
+  // Forks and upstreams, for the repository and every submodule (path: "" or a submodule path).
+  fork_tree: (body) => forks.forkTree(bodyPath(body)),
+  fork_detect_parent: (body) => forks.detectParent(bodyPath(body), typeof body.sub === "string" ? body.sub : ""),
+  fork_add_upstream: (body) => forks.addUpstream(bodyPath(body), typeof body.sub === "string" ? body.sub : "", str(body.url, "url"), optStr(body.name) ?? "upstream"),
+  fork_sync: async (body) => {
+    const sub = typeof body.sub === "string" ? body.sub : "";
+    return gk.journaled(sub ? path.join(bodyPath(body), sub) : bodyPath(body), "Sync fork with upstream", "keep", () => forks.syncFork(bodyPath(body), sub, { push: body.push === true }));
+  },
+  fork_sync_all: (body) => forks.syncAllForks(bodyPath(body), { push: body.push === true }),
+  fork_merge_upstream: async (body) => {
+    const sub = typeof body.sub === "string" ? body.sub : "";
+    return gk.journaled(sub ? path.join(bodyPath(body), sub) : bodyPath(body), "Merge upstream", "keep", () => forks.mergeUpstream(bodyPath(body), sub));
+  },
   ai_network_models: (body) => ai.networkModels(str(body.url, "url"), optStr(body.key)),
   // Self-hosted llama.cpp: builds, models, downloads and the llama-server process.
   llm_status: async () => {

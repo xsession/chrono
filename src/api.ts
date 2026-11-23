@@ -91,6 +91,8 @@ import type {
   SubmoduleManifest,
   SubmoduleTree,
   AiSettings,
+  ForkStatus,
+  ForkSyncResult,
   AiSettingsUpdate,
   LlmDownloadJob,
   LlmEngineAsset,
@@ -145,7 +147,7 @@ const READ_ROUTES = new Set([
   "repository_operation_state", "undo_state", "last_commit_message", "commit_offset", "diff_commit_files",
   "submodule_tree", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
   "fork_point", "predict_conflicts", "cleanup_candidates", "file_blob", "sparse_status", "notes_get",
-  "landscape_recent",
+  "landscape_recent", "fork_tree",
 ]);
 const repoReads = new Map<string, AbortController>();
 
@@ -429,6 +431,12 @@ export const api = {
   setStackParent: (path: string, branch: string, parent: string | null) => invoke<void>("stack_set_parent", { path, branch, parent }),
   createStackedBranch: (path: string, parent: string, name: string) => invoke<void>("stack_create", { path, parent, name }),
   restack: (path: string, branch: string) => invoke<CommandResult>("stack_restack", { path, branch }),
+  forkTree: (path: string) => invoke<ForkStatus[]>("fork_tree", { path }),
+  forkDetectParent: (path: string, sub = "") => invoke<{ url: string; web: string; defaultBranch: string | null } | null>("fork_detect_parent", { path, sub }),
+  forkAddUpstream: (path: string, sub: string, url: string, name = "upstream") => invoke<ForkStatus>("fork_add_upstream", { path, sub, url, name }),
+  forkSync: (path: string, sub = "", push = false) => invoke<ForkSyncResult>("fork_sync", { path, sub, push }),
+  forkSyncAll: (path: string, push = false) => invoke<ForkSyncResult[]>("fork_sync_all", { path, push }),
+  forkMergeUpstream: (path: string, sub = "") => invoke<string>("fork_merge_upstream", { path, sub }),
   aiSettings: () => invoke<AiSettings>("ai_settings", {}),
   saveAiSettings: (update: AiSettingsUpdate) => invoke<AiSettings>("ai_settings_save", update),
   aiNetworkModels: (url: string, key?: string | null) => invoke<string[]>("ai_network_models", { url, key: key || null }),

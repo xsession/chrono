@@ -15,6 +15,15 @@ const PROTOCOL = "chrono";
 // node_modules next to it.
 const root = () => (app.isPackaged ? path.join(process.resourcesPath, "app.asar.unpacked") : path.resolve(__dirname, ".."));
 
+// `chrono --tui [repository]`: the terminal UI instead of a window (used by the
+// AppImage's `chrono-tui`). It runs this same binary as Node; no window opens.
+if (process.argv.includes("--tui")) {
+  const { spawnSync } = require("node:child_process");
+  const args = process.argv.slice(process.argv.indexOf("--tui") + 1);
+  const result = spawnSync(process.execPath, ["--experimental-strip-types", "--no-warnings", path.join(root(), "tui", "main.ts"), ...args], { stdio: "inherit", env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+  app.exit(result.status ?? 1);
+}
+
 // --- GitKraken RE §11.2: chrono:// deep-link protocol -----------------------
 if (process.defaultApp) {
   if (process.argv.length >= 2) app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);

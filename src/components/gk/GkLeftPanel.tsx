@@ -10,9 +10,13 @@ import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askChoice, askConfirm, askFields, askText } from "../DialogHost";
 import { pushToast } from "../../toastBus";
 import { plural } from "../../plural";
+import type { ForkStatus } from "../../types";
+import { forkBadge } from "../ForksView";
 
 type Props = {
   repositoryPath: string;
+  /** Fork status of the repository and its submodules (forks.ts). */
+  forks?: ForkStatus[];
   refreshKey: number;
   busy: boolean;
   /** run a mutating action, then refresh the repository */
@@ -61,7 +65,7 @@ const copy = async (text: string) => {
 /** GitKraken-style left panel: LOCAL / REMOTE / WORKTREES / STASHES / TAGS /
  *  SUBMODULES / PULL REQUESTS with folder-grouped branch trees, ahead/behind
  *  counters, filter, context menus and drag-and-drop merge/rebase. */
-export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRevision, onOpenRepository, onStartRebase, onOpenPullRequests, onStashCount, onOpenSettings, onNewAgentSession, onOpenSubmoduleMap }: Props) {
+export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run, onSelectRevision, onOpenRepository, onStartRebase, onOpenPullRequests, onStashCount, onOpenSettings, onNewAgentSession, onOpenSubmoduleMap }: Props) {
   const [parents, setParents] = useState<Record<string, string>>({});
   const [flow, setFlow] = useState<GitflowConfig | null>(null);
   const [prFor, setPrFor] = useState<{ head: string; base: string } | null>(null);
@@ -128,6 +132,8 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
   const stashes = (refs?.stashes ?? []).filter((stash) => matches(stash.message));
   const worktrees = (refs?.worktrees ?? []).filter((worktree) => matches(`${worktree.branch ?? ""} ${worktree.path}`));
   const subNodes = subTree?.nodes ?? [];
+  const rootFork = forks.find((entry) => entry.path === "") ?? null;
+  const forkByPath = new Map(forks.map((entry) => [entry.path, entry]));
   const subVisible = useMemo(() => {
     const byPath = new Map(subNodes.map((node) => [node.path, node]));
     if (needle) {
@@ -468,6 +474,7 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
                 <i className={`sm-dot sm-tone-${status.tone}`} aria-hidden="true" />
                 <span className="gk-ref-name">{node.name}</span>
                 {status.tone !== "ok" && <span className={`gk-sub-badge sm-tone-${status.tone}`}>{status.tone === "dirty" ? `✎${node.changes + node.untracked}` : status.tone === "drift" ? "moved" : status.tone === "off" ? "off" : "!"}</span>}
+                {(() => { const badge = forkBadge(forkByPath.get(node.path)); return badge ? <span className={`gk-sub-badge gk-fork-badge${badge.stale ? " is-behind" : ""}`} title={badge.title}>⑂{badge.stale ? badge.text.replace(/^fork /, "") : ""}</span> : null; })()}
                 {node.children > 0 && !isOpen && node.attentionBelow > 0 && <span className="gk-sub-badge sm-tone-attention" title={`${node.attentionBelow} nested submodule(s) need attention`}>{node.attentionBelow}↓</span>}
               </div>
             );
@@ -480,7 +487,10 @@ export function GkLeftPanel({ repositoryPath, refreshKey, busy, run, onSelectRev
               return (
                 <div key={remoteName}>
                   <button type="button" className="gk-ref-folder gk-remote-folder" onClick={() => setClosedFolders((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; })} onContextMenu={(event) => menu.open(event, remoteHeaderMenu(remote), remoteName)} title={remote?.fetchUrl}>
-                    <Icon name={open ? "chevronDown" : "chevronRight"} /><Icon name="cloud" /><span>{remoteName}</span><em>{list.length}</em>
+                    <Icon name={open ? "chevronDown" : "chevronRight"} /><Icon name="cloud" /><span>{remoteName}</span>
+                    {rootFork?.upstream?.name === remoteName && <small className="gk-fork-tag" title={`The repository this fork comes from${rootFork.behind ? `; ${rootFork.defaultBranch} is ${rootFork.behind} behind it` : ""}`}>⑂ upstream{rootFork.behind ? ` ↓${rootFork.behind}` : ""}</small>}
+                    {rootFork?.kind === "fork" && rootFork.origin?.name === remoteName && <small className="gk-fork-tag" title="Your fork">⑂ your fork</small>}
+                    <em>{list.length}</em>
                   </button>
                   {open && renderTree(buildTree(list), 1, key)}
                 </div>

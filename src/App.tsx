@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abandonRepositoryReads, api, getApiConnection, isAbandoned, saveApiConnection } from "./api";
 import { Capacitor } from "@capacitor/core";
-import type { BranchRecord, CommitRecord, FileChange, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
+import type { BranchRecord, CommitRecord, FileChange, ForkStatus, RepositoryOperationAction, RepositoryOperationState, RepositorySummary, Workspace } from "./types";
 import { HISTORY_PAGE_SIZE, addHistoryPage, summarizeHistoryWindow, type HistorySegment } from "./historyWindow";
 import { RepositorySidebar, type RepositoryView } from "./components/RepositorySidebar";
 import { CommitGraph } from "./components/CommitGraph";
@@ -48,6 +48,7 @@ import type { ExplorerFocus } from "./components/explorer/FileExplorer";
 import { askFields } from "./components/DialogHost";
 import { chooseFolder, FolderPickerHost } from "./components/FolderPicker";
 import { LandscapeView } from "./components/gk/LandscapeView";
+import { ForksView } from "./components/ForksView";
 import { plural } from "./plural";
 
 type RepositorySnapshot = {
@@ -343,6 +344,16 @@ export default function App() {
       if (requestId === historyRequestRef.current) setHistoryLoadingDirection(null);
     }
   }, [historyHasNewer, historyLoading, historyWindow, path]);
+
+  // Forks: the repository and its submodules vs their upstreams (badges in the
+  // toolbar, left panel and submodule views; the Forks view has the actions).
+  const [forkTreeState, setForkTreeState] = useState<ForkStatus[]>([]);
+  useEffect(() => {
+    if (!path) { setForkTreeState([]); return; }
+    let cancelled = false;
+    api.forkTree(path).then((tree) => { if (!cancelled) setForkTreeState(tree); }).catch(() => { if (!cancelled) setForkTreeState([]); });
+    return () => { cancelled = true; };
+  }, [path, refreshKey]);
 
   // Whether the repository has any remote: without one, Pull and Push can
   // only fail with git's "no tracking information", so they are disabled.
@@ -881,6 +892,7 @@ export default function App() {
     { id: "intelligence", title: "Open Git Intelligence", category: "Explore", keywords: ["search", "compare", "blame", "file history", "contributors"], disabled: !path, run: () => setView("insights") },
     { id: "worktrees", title: "Manage worktrees", category: "Repository", keywords: ["parallel", "checkout"], disabled: !path, run: () => setView("worktrees") },
     { id: "submodules", title: "Manage submodules", category: "Repository", disabled: !path, run: () => setView("submodules") },
+    { id: "forks", title: "Forks & upstreams (sync forks, also in submodules)", category: "Repository", disabled: !path, run: () => setView("forks") },
     { id: "landscape", title: "Open codebase landscape map", category: "Explore", keywords: ["map", "islands", "imports", "dependencies", "architecture", "terrain"], disabled: !path, run: () => setView("landscape") },
     { id: "refs", title: "Open references browser", category: "Repository", keywords: ["branches", "remotes", "tags", "worktrees", "stashes", "submodules"], disabled: !path, run: () => setView("refs") },
     { id: "stashes", title: "Manage stashes", category: "Repository", disabled: !path, run: () => setView("stashes") },
@@ -944,6 +956,8 @@ export default function App() {
         <GkToolbar
           path={path}
           remoteCount={remoteCount}
+          fork={forkTreeState.find((entry) => entry.path === "") ?? null}
+          onForks={() => setView("forks")}
           summary={summary}
           branches={branches}
           busy={busy}
@@ -1059,6 +1073,7 @@ export default function App() {
               {leftPanelOpen && (
                 <GkLeftPanel
                   repositoryPath={path}
+                  forks={forkTreeState}
                   refreshKey={refreshKey}
                   busy={busy}
                   run={runRepositoryAction}
@@ -1171,9 +1186,19 @@ export default function App() {
               }}
             />
           )}
+          {path && view === "forks" && (
+            <ForksView
+              repositoryPath={path}
+              refreshKey={refreshKey}
+              busy={busy}
+              run={runRepositoryAction}
+              onOpenRepository={(target) => void openRepoTab(target).then(() => setView("history"))}
+            />
+          )}
           {path && view === "submodules" && (
             <SubmoduleMap
               repositoryPath={path}
+              forks={forkTreeState}
               refreshKey={refreshKey}
               busy={busy}
               run={runRepositoryAction}

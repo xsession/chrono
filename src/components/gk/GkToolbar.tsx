@@ -3,6 +3,8 @@ import type { BranchRecord, PullMode, PushOptions, RepositorySummary, UndoState,
 import { Icon, type IconName } from "../Icon";
 import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { plural } from "../../plural";
+import type { ForkStatus } from "../../types";
+import { forkBadge } from "../ForksView";
 
 type Props = {
   path: string;
@@ -26,6 +28,9 @@ type Props = {
   onTerminal: () => void;
   /** Remotes configured (null: not known yet). With none, Pull/Push are off. */
   remoteCount?: number | null;
+  /** Fork status of this repository (forks.ts), for the fork pill. */
+  fork?: ForkStatus | null;
+  onForks?: () => void;
   onExplorer: () => void;
   onSearch: () => void;
   onSwitchBranch: (branch: BranchRecord) => void;
@@ -69,6 +74,7 @@ export function GkToolbar(props: Props) {
   const menu = useContextMenu();
   const disabled = !path || busy;
   const noRemote = props.remoteCount === 0;
+  const forkPill = forkBadge(props.fork ?? undefined);
   const current = branches.find((branch) => branch.current) ?? null;
   const anchor = (event: ReactMouseEvent<HTMLElement>) => {
     const rect = (event.currentTarget.closest(".gk-tool, .gk-picker") ?? event.currentTarget).getBoundingClientRect();
@@ -157,6 +163,9 @@ export function GkToolbar(props: Props) {
             {summary?.ahead ? <span className="is-ahead"><Icon name="upload" />{summary.ahead}</span> : null}
             {!summary?.ahead && !summary?.behind ? <span><Icon name="check" />in sync</span> : null}
           </span>
+        )}
+        {path && forkPill && (
+          <button type="button" className={`gk-fork-pill${forkPill.stale ? " is-behind" : ""}`} title={`${forkPill.title}\nOpen Forks & upstreams`} onClick={props.onForks}>⑂ {forkPill.text.replace(/^fork /, "")}</button>
         )}
       </div>
 

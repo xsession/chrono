@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from "react";
 import type { SubmoduleNode, SubmoduleTree } from "../../types";
 import { submoduleStatus } from "./SubmoduleMap";
+import type { ForkStatus } from "../../types";
 
 // Mind-map view of a nested submodule hierarchy. The superproject sits in the
 // middle; top-level submodules are split left/right by subtree size so the
@@ -19,6 +20,8 @@ type Props = {
   onSelect: (path: string | null, additive: boolean) => void;
   onOpen: (node: SubmoduleNode) => void;
   onContextMenu: (event: ReactMouseEvent, node: SubmoduleNode) => void;
+  /** Fork status by submodule path (forks.ts): a ⑂ mark and the upstream in the tooltip. */
+  forks?: Map<string, ForkStatus>;
 };
 
 const NODE_W = 188;
@@ -32,7 +35,7 @@ type Placed = { node: SubmoduleNode; x: number; y: number; side: 1 | -1; parentX
 
 const truncate = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 
-export function SubmoduleMindMap({ tree, rootName, selected, picked, passes, filtering, onSelect, onOpen, onContextMenu }: Props) {
+export function SubmoduleMindMap({ tree, rootName, selected, picked, passes, filtering, onSelect, onOpen, onContextMenu, forks }: Props) {
   const children = useMemo(() => {
     const map = new Map<string | null, SubmoduleNode[]>();
     for (const node of tree.nodes) map.set(node.parent, [...(map.get(node.parent) ?? []), node]);
@@ -249,10 +252,10 @@ export function SubmoduleMindMap({ tree, rootName, selected, picked, passes, fil
                       if (event.key === " " && node.children) { event.preventDefault(); toggle(node.path); }
                     }}
                   >
-                    <title>{`${node.path}\n${status.title}${node.branch ? `\nbranch ${node.branch}` : `\n${node.commit.slice(0, 10)}`}${node.tracking ? `\ntracks origin/${node.tracking.branch}${node.tracking.behind ? ` — ${node.tracking.behind} commits behind` : ""}` : ""}${node.url ? `\n${node.url}` : ""}`}</title>
+                    <title>{`${node.path}\n${status.title}${node.branch ? `\nbranch ${node.branch}` : `\n${node.commit.slice(0, 10)}`}${node.tracking ? `\ntracks origin/${node.tracking.branch}${node.tracking.behind ? ` — ${node.tracking.behind} commits behind` : ""}` : ""}${node.url ? `\n${node.url}` : ""}${forks?.get(node.path)?.kind === "fork" ? `\nfork of ${forks.get(node.path)!.upstream?.url}${forks.get(node.path)!.behind ? ` — ${forks.get(node.path)!.behind} commits behind upstream` : ""}` : ""}`}</title>
                     <rect width={NODE_W} height={NODE_H} rx={7} />
                     <circle cx={13} cy={NODE_H / 2} r={4.5} className="mm-dot" />
-                    <text x={24} y={NODE_H / 2 + 4} className="mm-name">{truncate(node.name, status.tone === "ok" ? 22 : 15)}</text>
+                    <text x={24} y={NODE_H / 2 + 4} className="mm-name">{forks?.get(node.path)?.kind === "fork" ? "⑂ " : ""}{truncate(node.name, status.tone === "ok" ? 22 : 15)}</text>
                     {status.tone !== "ok"
                       ? <text x={NODE_W - 8} y={NODE_H / 2 + 4} textAnchor="end" className="mm-state">{truncate(status.label.split(" · ")[0], 12)}</text>
                       : (node.tracking?.behind ?? 0) > 0 && <text x={NODE_W - 8} y={NODE_H / 2 + 4} textAnchor="end" className="mm-behind">⇣{node.tracking!.behind}</text>}
