@@ -4,6 +4,13 @@ A Git client with a web build, an Electron desktop build, and an Android
 companion, all driven by one TypeScript codebase (Node HTTP server + React UI).
 Rewritten from the original Tauri/Rust stack to pure TypeScript.
 
+| | |
+|---|---|
+| ![Graph view with two repository tabs](docs/screenshots/multi-repo-tabs.jpg) | ![Codebase landscape map of Renode](docs/screenshots/landscape-map.jpg) |
+| Graph, with one tab per open repository | [Landscape map](#codebase-landscape-map): the code as terrain |
+| ![Submodule mind map](docs/screenshots/submodule-mind-map.jpg) | ![TortoiseGit-style explorer](docs/screenshots/linux-desktop-explorer.png) |
+| [Submodule mind map](#large-multi-repo-trees-submodules) | [TortoiseGit explorer](#tortoisegit-explorer) |
+
 ## Stack
 
 - Node.js 22+ (runs the TypeScript backend directly via native type-stripping — no build step for the server)
@@ -16,10 +23,20 @@ Rewritten from the original Tauri/Rust stack to pure TypeScript.
 ## Architecture
 
 ```
-Browser (React 19)  ──fetch /api/<command>──▶  Node HTTP server (TypeScript)
-   dev: Vite :1420 proxies /api :1421            └──▶ git CLI
+Browser (React 19)  ──WebSocket /api/rpc──────▶  Node server (TypeScript)
+                    (fallback: POST /api/<command>)   └──▶ git CLI, one lane per repository
+   dev: Vite :1420 proxies /api :1421
    prod: server :1421 serves dist/ directly
 ```
+
+- API calls share one WebSocket (`server/src/rpc.ts`). Browsers allow only six
+  HTTP connections per host, so a slow repository could otherwise stall every
+  other tab. Each request has an id and can be cancelled. Plain HTTP POST is
+  the fallback when the socket is unavailable.
+- Every repository gets its own git lane (`server/src/lib/git.ts`): a bounded
+  pool of git processes, so one repository never queues behind another.
+  Identical reads that run at the same time share one process, but never
+  across a write. Reads for a tab you have left are killed; writes never are.
 
 - `server/` — the full TypeScript backend. Every former Tauri command is now a
   `POST /api/<command>` route (see `server/index.ts` for the route table).
@@ -37,6 +54,9 @@ Browser (React 19)  ──fetch /api/<command>──▶  Node HTTP server (TypeS
   - `server/src/provider.ts` — pull requests (GitHub/GitLab/Gitea/Forgejo)
     with the Git Intelligence pull-request triage tab and remote auto-detection
   - `server/src/workspaces.ts` — workspace persistence (`~/.chrono-next/workspaces.json`)
+  - `server/src/submodules.ts` — recursive submodule tree, bulk actions, foreach, manifest
+  - `server/src/landscape.ts` — source scan behind the landscape map (parsers in `landscapeParse.ts`)
+  - `server/src/folders.ts`, `server/src/trust.ts` — in-app folder picker, `safe.directory` trust
 - `src/` — the React UI.
   - `src/graph.ts` — commit-graph layout engine (topological depth + lane
     assignment), unit-tested in `tests/graph-layout.test.ts`.
@@ -92,6 +112,88 @@ The Graph view follows GitKraken's layout:
 - **Undo / Redo** (Ctrl+Z / Ctrl+Y): the server records the effect of each Chrono action on branches and HEAD (commit, checkout, branch create/delete, reset, merge, pull, cherry-pick, revert). Undo restores the previous state, using `reset --soft` for commits and `reset --keep` otherwise. Redo re-applies it. Both refuse to run if the repository was changed outside Chrono in the meantime. The journal is saved to `undo-journal.json` in the config directory, so it survives server restarts.
 - **Compare two commits:** select a commit, then Ctrl+click (⌘+click) another. The right panel lists the files that differ between them and clicking a file shows its diff over the graph.
 - **Author avatars:** each graph row shows the author's initials on a colour derived from their email.
+
+## Opening repositories and tabs
+
+- **Folder picker:** Open, Open in new tab, Clone → Browse… and Settings → Apply to folder use
+  Chrono's own picker. It lists folders through the server, so it works in the
+  web build and on a remote server too. Folders that are Git repositories carry
+  a `git` badge. You can type a path or `~`, filter by typing, use the arrow
+  keys and Backspace, show hidden folders, and jump to Home, Computer and
+  mounted drives. The desktop app also offers the system dialog.
+- **Repositories owned by another user:** git refuses these ("dubious
+  ownership"), which is common on shared or NTFS drives. Chrono shows a banner
+  that explains why. *Trust this folder* adds it to `safe.directory` in your
+  global git config; submodules may need trusting separately.
+- **Tabs:** each open repository is a tab. Switching shows the tab's last state
+  at once and refreshes it in the background ("Updating…" in the status bar),
+  so even a repository whose `git status` takes a minute switches instantly.
+
+| | |
+|---|---|
+| ![In-app folder picker](docs/screenshots/folder-picker.jpg) | ![Trust banner for a repository owned by another user](docs/screenshots/trust-banner.jpg) |
+
+## Large multi-repo trees (submodules)
+
+The **Submodules** view is built for trees like Renode: dozens of submodules,
+nested several levels deep.
+
+- **List or mind map.** The list shows every submodule with its status,
+  checked-out commit, tracking branch and remote. The mind map puts the
+  superproject in the middle and balances top-level submodules left and right
+  by size; edges and nodes are coloured by state. Branches can be collapsed,
+  and a badge shows how many nested submodules need attention. Big trees start
+  folded below level 1. Click a node for its details: status, checkout,
+  tracking branch, nesting and remote.
+- **Filters:** all, needs attention, changed, moved, not initialised and
+  *behind branch*: submodules whose tracking branch (`branch` in `.gitmodules`,
+  else `origin/HEAD`) has commits the pinned commit lacks.
+- **Bulk actions on a selection** (checkboxes, Ctrl/Shift+click, *Select with
+  nested*, *Select needing attention*): Fetch, Update, Update to remote, Pull,
+  Attach to branch (moves a detached HEAD onto the matching branch),
+  Record pointer, and *Run command…*, a `foreach` that runs a shell command in
+  each submodule with `$sm_path`, `$sha1` and `$toplevel` set. They run one
+  nesting level at a time, several at once. Results list per submodule, with
+  *Select the ones not done* to retry.
+- **Manifest:** export every submodule's path, URL, commit and branch as JSON
+  (copy or download), to record or reproduce a tree's exact state.
+
+| | |
+|---|---|
+| ![Submodule mind map with node details](docs/screenshots/submodule-mind-map.jpg) | ![Submodule list with bulk actions](docs/screenshots/submodule-bulk-actions.jpg) |
+
+## Codebase landscape map
+
+**Landscape map** in the sidebar (or *Open codebase landscape map* in the
+command palette) draws the repository as terrain, so you can find your way
+around it the way you find your way around a place:
+
+- Top-level folders are islands and the sea is the boundary between them.
+  Files are hills: height is the amount of code, or how many files depend on
+  it. Imports are roads, and highways join regions.
+- Submodules are territories with a purple border; nested ones are tinted
+  deeper. Towers mark the most-imported files, and stars mark where the
+  program starts.
+- **Explore** a file to see its roads in and out. **Route** gives directions
+  between two files along import roads. **Walk** visits the landmarks in a
+  fixed order, like a memory palace. **Runtime** overlays a profiler trace
+  (Speedscope, `.cpuprofile` or folded stacks) as heat and moving traffic.
+  Fog of war shows only where you have been. Your trail is saved per
+  repository.
+- On a selected file, *Show in Explorer*, *History* and *Blame* open it in
+  Chrono. A file inside a submodule opens in that submodule's own tab.
+
+The server reads tracked files only, submodules included, so ignored build
+output stays off the map. It detects imports in about 15 languages, plus
+Renode `.repl`/`.resc`/`.robot` files. Up to 12,000 files are mapped. The scan
+is cached per commit in memory and under `CHRONO_CONFIG_DIR/landscape/`;
+*Rescan* reads the working tree again. Renode (8,700 files, 19 submodules)
+takes about half a minute the first time on a slow drive, then opens
+instantly.
+
+The map is a self-contained page (`public/landscape/index.html`) shown in a
+sandboxed frame: it cannot reach Chrono or the network, loads nothing from the
+internet, and only exchanges messages with the view around it.
 
 ## TortoiseGit explorer
 
@@ -249,15 +351,21 @@ npm run test:api       # boots the API server and exercises every /api route
 npm run test:ui-contract # verifies every visible view/control remains wired
 npm run test:lines     # line-level stage/unstage/discard edge cases
 npm run test:roadmap   # signing/hooks/stacks/cleanup/git-flow/custom-command smoke test
+npm run test:submodules # submodule tree, bulk actions, foreach and manifest
+npm run test:trust     # dubious-ownership detection and safe.directory trust
+npm run test:folders   # folder picker listing; no browser prompt dialogs
+npm run test:lanes     # per-repository git lanes: sharing, isolation, cancelling
+npm run test:landscape # landscape scan and the embedded map page
+npm run test:all       # everything above
 ```
 
 The shell smoke tests create temporary Git repositories and do not modify your own repositories.
 
 ## Notes
 
-- The browser UI cannot pick directories natively; "Open repository" and the
-  clone destination use a path prompt (the path must exist on the server host).
-  The Electron build adds a real native directory picker.
+- Folders are picked with Chrono's own picker, which lists folders on the
+  server host (where the repositories are). The Electron build also offers the
+  system dialog.
 - Clone/fetch/push accept optional username+token in the request for HTTPS
   credentials (embedded in the clone URL); otherwise the server's git
   credential helpers are used.
