@@ -804,3 +804,18 @@ button.sm-twisty:hover { background: var(--gk-bg-3); color: #fff; }
 .ux-repo-tab.drop-after::after { right: -2px; }
 .ux-repo-tab-close { width: 18px; height: 18px; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font-size: 14px; line-height: 1; opacity: .55; cursor: pointer; }
 .ux-repo-tab-close:hover, .ux-repo-tab-close:focus-visible { background: rgba(255, 255, 255, .14); opacity: 1; outline: none; }
+
+/* What changed inside a submodule (SubmoduleChangeDetails). */
+.gk-file-badge.is-submodule { background: var(--gk-purple, #a77bff); }
+.gk-sub-summary { color: #b9a4ff; font-size: 10.5px; cursor: pointer; }
+.gk-sub-staged { color: var(--gk-green, #6fd08c); font-size: 10px; }
+.gk-sub-details { margin: 0 0 4px 22px; padding-left: 6px; border-left: 2px solid #4b3d73; }
+.gk-sub-details .gk-wip-file { padding-left: 4px; }
+.gk-sub-commits { display: grid; gap: 1px; padding: 3px 4px 4px; }
+.gk-sub-commit { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: center; font-size: 11px; color: #d4d8e0; }
+.gk-sub-commit code { color: #b9a4ff; font-size: 10.5px; }
+.gk-sub-commit span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.gk-sub-note { color: var(--gk-grey, #8a93a0); font-size: 10.5px; }
+.gk-sub-open { margin: 2px 4px 2px; font-size: 10.5px; }
+.ux-change-sub { padding: 0 8px 4px 34px; }
+.ux-change-sub .gk-wip-file-action { visibility: visible; }

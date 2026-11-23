@@ -7,6 +7,7 @@ import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askConfirm, askText } from "../DialogHost";
 import { pushToast } from "../../toastBus";
 import { withLiveOutput } from "../../liveOutput";
+import { SubmoduleChangeDetails, submoduleSummary } from "../SubmoduleChangeDetails";
 
 type Props = {
   repositoryPath: string;
@@ -15,8 +16,12 @@ type Props = {
   busy: boolean;
   operationActive: boolean;
   run: (label: string, action: () => Promise<unknown>) => Promise<void>;
-  onOpenDiff: (file: string, group: Group) => void;
+  /** `repository` is set for files inside a submodule (its absolute path). */
+  onOpenDiff: (file: string, group: Group, repository?: string) => void;
   openDiff: string | null;
+  /** Repository of the open diff when it is inside a submodule. */
+  openDiffRepository?: string | null;
+  onOpenRepository?: (repository: string) => void;
   onResolveConflicts: () => void;
   onShowInExplorer: (file: string) => void;
   onFileHistory: (file: string) => void;
@@ -44,7 +49,7 @@ const isUnstaged = (change: FileChange) => change.conflicted || change.worktreeS
 /** GitKraken's right-hand WIP panel: Unstaged / Staged file lists with
  *  stage-all / unstage-all, path ⇄ tree view, per-file context menus, and the
  *  summary + description commit box with amend, sign-off and AI draft. */
-export function GkWipPanel({ repositoryPath, branch, changes, busy, operationActive, run, onOpenDiff, openDiff, onResolveConflicts, onShowInExplorer, onFileHistory }: Props) {
+export function GkWipPanel({ repositoryPath, branch, changes, busy, operationActive, run, onOpenDiff, openDiff, openDiffRepository, onOpenRepository, onResolveConflicts, onShowInExplorer, onFileHistory }: Props) {
   const [summary, setSummary] = useState("");
   const [description, setDescription] = useState("");
   const [amend, setAmend] = useState(false);
@@ -52,6 +57,7 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
   const [drafting, setDrafting] = useState(false);
   const [view, setView] = useState<"path" | "tree">(() => (localStorage.getItem(VIEW_KEY) === "tree" ? "tree" : "path"));
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [collapsedSubs, setCollapsedSubs] = useState<Set<string>>(new Set());
   const menu = useContextMenu();
   const [templates, setTemplates] = useState<CommitTemplate[]>([]);
   const [coAuthors, setCoAuthors] = useState<string[]>([]);
@@ -192,13 +198,18 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
       const slash = change.path.lastIndexOf("/");
       const folder = slash >= 0 ? change.path.slice(0, slash) : "";
       const name = slash >= 0 ? change.path.slice(slash + 1) : change.path;
+      // A changed submodule lists what changed inside it, under the row of the
+      // group its own changes belong to.
+      const sub = change.submodule && group === (isUnstaged(change) ? "unstaged" : "staged") ? change.submodule : null;
+      const subOpen = sub ? !collapsedSubs.has(change.path) : false;
+      const toggleSub = () => setCollapsedSubs((current) => { const next = new Set(current); if (next.has(change.path)) next.delete(change.path); else next.add(change.path); return next; });
       const header = view === "tree" && folder !== lastFolder ? <div key={`${group}-dir-${folder}`} className="gk-wip-folder"><Icon name="folder" />{folder || "/"}</div> : null;
       lastFolder = folder;
       return [
         header,
         <div
           key={`${group}-${change.path}`}
-          className={`gk-wip-file${openDiff === change.path ? " is-open" : ""}${selected.has(change.path) ? " is-selected" : ""}`}
+          className={`gk-wip-file${openDiff === change.path && !openDiffRepository ? " is-open" : ""}${selected.has(change.path) ? " is-selected" : ""}`}
           role="button"
           tabIndex={0}
           title={`${meta.label}: ${change.path}`}
@@ -206,10 +217,19 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
           onKeyDown={(event) => { if (event.key === "Enter") onOpenDiff(change.path, group); }}
           onContextMenu={(event) => { if (!selected.has(change.path)) setSelected(new Set([change.path])); menu.open(event, fileMenu(change, group), change.path); }}
         >
-          <span className={`gk-file-badge is-${meta.kind}`} aria-label={meta.label}>{meta.mark}</span>
+          <span className={`gk-file-badge is-${change.submodule ? "submodule" : meta.kind}`} aria-label={change.submodule ? "Submodule" : meta.label}>{change.submodule ? "S" : meta.mark}</span>
           <span className="gk-wip-path" style={view === "tree" ? { paddingLeft: 14 } : undefined}>
             {view === "path" && folder && <small>{folder}/</small>}
             <span>{name}</span>
+            {change.submodule && (
+              <small
+                className="gk-sub-summary"
+                role="button"
+                tabIndex={-1}
+                title={subOpen ? "Hide what changed in the submodule" : "Show what changed in the submodule"}
+                onClick={(event) => { event.stopPropagation(); toggleSub(); }}
+              > {sub ? (subOpen ? "▾ " : "▸ ") : ""}{submoduleSummary(change.submodule)}</small>
+            )}
           </span>
           <button
             type="button"
@@ -223,6 +243,17 @@ export function GkWipPanel({ repositoryPath, branch, changes, busy, operationAct
             }}
           >{group === "staged" ? "Unstage" : change.conflicted ? "Resolve" : "Stage"}</button>
         </div>,
+        sub && subOpen ? (
+          <SubmoduleChangeDetails
+            key={`${group}-${change.path}-sub`}
+            info={sub}
+            busy={busy}
+            run={run}
+            onOpenDiff={(file, side, repository) => onOpenDiff(file, side, repository)}
+            openDiffKey={openDiffRepository && openDiff ? `${openDiffRepository}\u0000${openDiff}` : null}
+            onOpenRepository={onOpenRepository}
+          />
+        ) : null,
       ];
     });
   };

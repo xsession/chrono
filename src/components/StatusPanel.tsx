@@ -4,6 +4,8 @@ import type { CommitDraft, CommitDraftOptions, FileChange } from "../types";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
 import { WorkingDiffView } from "./WorkingDiffView";
+import { SubmoduleChangeDetails, submoduleSummary, type DiffGroup } from "./SubmoduleChangeDetails";
+import { api } from "../api";
 
 type Props = {
   changes: FileChange[];
@@ -15,6 +17,16 @@ type Props = {
   onDraftCommit: (options: CommitDraftOptions) => Promise<CommitDraft>;
   operationActive?: boolean;
   onResolveConflicts?: () => void;
+  /** Reload after staging or unstaging inside a submodule. */
+  onRefresh?: () => Promise<void>;
+  onOpenRepository?: (repository: string) => void;
+};
+
+type SubmoduleProps = {
+  run: (label: string, action: () => Promise<unknown>) => Promise<void>;
+  onOpenSubmoduleDiff: (file: string, group: DiffGroup, repository: string) => void;
+  openDiffKey: string | null;
+  onOpenRepository?: (repository: string) => void;
 };
 
 type GroupProps = {
@@ -27,9 +39,13 @@ type GroupProps = {
   onDiff: (path: string) => void;
   tone?: "danger" | "normal";
   selectable?: boolean;
+  /** Show what changed inside submodules listed in this group. */
+  submodules?: SubmoduleProps;
+  /** Submodules whose details another group already shows. */
+  skipSubmodules?: Set<string>;
 };
 
-function ChangeGroup({ title, hint, items, selected, onToggle, diffPath, onDiff, tone = "normal", selectable = true }: GroupProps) {
+function ChangeGroup({ title, hint, items, selected, onToggle, diffPath, onDiff, tone = "normal", selectable = true, submodules, skipSubmodules }: GroupProps) {
   if (!items.length) return null;
   return (
     <section className={`ux-change-group ${tone === "danger" ? "is-danger" : ""}`}>
@@ -38,12 +54,12 @@ function ChangeGroup({ title, hint, items, selected, onToggle, diffPath, onDiff,
         <span className="ux-count-pill">{items.length}</span>
       </header>
       <div className="ux-change-list">
-        {items.map((change) => (
+        {items.map((change) => [
           <div key={`${title}-${change.path}`} className={`ux-change-row${diffPath === change.path ? " is-diffing" : ""}`}>
             <label className="ux-change-row-label" title={`Toggle ${change.path}`}>
               <input type="checkbox" checked={selected.has(change.path)} disabled={!selectable} onChange={() => onToggle(change.path)} />
               <span className="ux-status-code" aria-label={`Git status ${change.indexStatus}${change.worktreeStatus}`}>{change.indexStatus}{change.worktreeStatus}</span>
-              <span className="ux-change-path" title={change.path}>{change.path}</span>
+              <span className="ux-change-path" title={change.path}>{change.path}{change.submodule && <small className="gk-sub-summary"> submodule · {submoduleSummary(change.submodule)}</small>}</span>
             </label>
             {change.conflicted && <span className="ux-critical-label">Conflict</span>}
             <button
@@ -55,20 +71,38 @@ function ChangeGroup({ title, hint, items, selected, onToggle, diffPath, onDiff,
             >
               <Icon name="compare" />{diffPath === change.path ? "Hide" : "Diff"}
             </button>
-          </div>
-        ))}
+          </div>,
+          change.submodule && submodules && !skipSubmodules?.has(change.path) ? (
+            <div key={`${title}-${change.path}-sub`} className="ux-change-sub">
+              <SubmoduleChangeDetails info={change.submodule} busy={false} run={submodules.run} onOpenDiff={submodules.onOpenSubmoduleDiff} openDiffKey={submodules.openDiffKey} onOpenRepository={submodules.onOpenRepository} />
+            </div>
+          ) : null,
+        ])}
       </div>
     </section>
   );
 }
 
-export function StatusPanel({ changes, repositoryPath, onStage, onStageHunks, onUnstage, onCommit, onDraftCommit, operationActive = false, onResolveConflicts }: Props) {
+export function StatusPanel({ changes, repositoryPath, onStage, onStageHunks, onUnstage, onCommit, onDraftCommit, operationActive = false, onResolveConflicts, onRefresh, onOpenRepository }: Props) {
   const [selectedStageable, setSelectedStageable] = useState<Set<string>>(new Set());
   const [selectedStaged, setSelectedStaged] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<"stage" | "unstage" | "commit" | "draft" | null>(null);
   const [commitWidth, setCommitWidth] = useState(350);
-  const [diffFile, setDiffFile] = useState<string | null>(null);
+  const [diffFile, setDiffFileState] = useState<string | null>(null);
+  // Set when the open diff is a file inside a submodule (its checkout).
+  const [diffRepo, setDiffRepo] = useState<string | null>(null);
+  const setDiffFile = (file: string | null) => { setDiffRepo(null); setDiffFileState((current) => (current === file ? null : file)); };
+  const submodules: SubmoduleProps = {
+    run: async (_label, action) => { try { await action(); } finally { await onRefresh?.(); } },
+    onOpenSubmoduleDiff: (file, _group, repository) => {
+      const same = diffRepo === repository && diffFile === file;
+      setDiffRepo(same ? null : repository);
+      setDiffFileState(same ? null : file);
+    },
+    openDiffKey: diffRepo && diffFile ? `${diffRepo}\u0000${diffFile}` : null,
+    onOpenRepository,
+  };
   const [draftNotice, setDraftNotice] = useState("");
   const [draftStyle, setDraftStyle] = useState<CommitDraftOptions["style"]>("conventional");
   const [issueReference, setIssueReference] = useState("");
@@ -151,8 +185,8 @@ export function StatusPanel({ changes, repositoryPath, onStage, onStageHunks, on
 
         <div className="ux-change-groups">
           <ChangeGroup title="Conflicts" hint="Resolve before continuing the Git operation" items={grouped.conflicts} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} diffPath={diffFile} onDiff={setDiffFile} tone="danger" selectable={false} />
-          <ChangeGroup title="Staged" hint="Included in the next commit" items={grouped.staged} selected={selectedStaged} onToggle={(path) => toggleIn(setSelectedStaged, path)} diffPath={diffFile} onDiff={setDiffFile} />
-          <ChangeGroup title="Unstaged" hint="Working directory changes" items={grouped.unstaged} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} diffPath={diffFile} onDiff={setDiffFile} />
+          <ChangeGroup title="Staged" hint="Included in the next commit" items={grouped.staged} selected={selectedStaged} onToggle={(path) => toggleIn(setSelectedStaged, path)} diffPath={diffRepo ? null : diffFile} onDiff={setDiffFile} submodules={submodules} skipSubmodules={new Set(grouped.unstaged.map((change) => change.path))} />
+          <ChangeGroup title="Unstaged" hint="Working directory changes" items={grouped.unstaged} selected={selectedStageable} onToggle={(path) => toggleIn(setSelectedStageable, path)} diffPath={diffRepo ? null : diffFile} onDiff={setDiffFile} submodules={submodules} />
           {!changes.length && (
             <div className="ux-empty-state large">
               <Icon name="changes" />
@@ -162,7 +196,15 @@ export function StatusPanel({ changes, repositoryPath, onStage, onStageHunks, on
           )}
         </div>
 
-        {diffFile && <WorkingDiffView repositoryPath={repositoryPath} file={diffFile} onClose={() => setDiffFile(null)} onStageHunks={onStageHunks} />}
+        {diffFile && (
+          <WorkingDiffView
+            key={`${diffRepo ?? ""}\u0000${diffFile}`}
+            repositoryPath={diffRepo ?? repositoryPath}
+            file={diffFile}
+            onClose={() => setDiffFile(null)}
+            onStageHunks={diffRepo ? async (file, hunks) => { try { await api.stageHunks(diffRepo, file, hunks); } finally { await onRefresh?.(); } } : onStageHunks}
+          />
+        )}
       </section>
 
       <SplitHandle

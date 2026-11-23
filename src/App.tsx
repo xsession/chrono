@@ -120,6 +120,8 @@ export default function App() {
   const [wipSelected, setWipSelected] = useState(false);
   const [wipDiff, setWipDiff] = useState<string | null>(null);
   const [wipDiffSide, setWipDiffSide] = useState<"unstaged" | "staged">("unstaged");
+  // Set when the open WIP diff is a file inside a submodule (its checkout).
+  const [wipDiffRepo, setWipDiffRepo] = useState<string | null>(null);
   const [scrollTo, setScrollTo] = useState<{ id: string; nonce: number } | null>(null);
   const [explorerFocus, setExplorerFocus] = useState<ExplorerFocus | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | undefined>(undefined);
@@ -970,6 +972,8 @@ export default function App() {
               onDraftCommit={(options) => api.draftCommit(path, "auto", undefined, options)}
               operationActive={operationActive}
               onResolveConflicts={() => setView("conflicts")}
+              onRefresh={() => refresh()}
+              onOpenRepository={(target) => void openRepoTab(target)}
             />
           )}
           {path && view === "conflicts" && conflictCount > 0 && (
@@ -1007,7 +1011,7 @@ export default function App() {
                 onRestoreFile={(revision, file) => runRepositoryAction(`Restore ${file} from ${revision.slice(0, 8)}`, () => api.explorerAction(path, { action: "checkout_revision", files: [file], revision }))}
                 overlay={wipSelected && wipDiff ? (
                   <div className="gk-center-overlay">
-                    <LineStagingDiff repositoryPath={path} file={wipDiff} initialSide={wipDiffSide} liveKey={liveTick} onClose={() => setWipDiff(null)} onChanged={() => refresh()} />
+                    <LineStagingDiff repositoryPath={wipDiffRepo ?? path} file={wipDiff} initialSide={wipDiffSide} liveKey={liveTick} onClose={() => setWipDiff(null)} onChanged={() => refresh()} />
                   </div>
                 ) : undefined}
                 inspector={wipSelected && dirtyCount > 0 ? (
@@ -1019,7 +1023,14 @@ export default function App() {
                     operationActive={operationActive}
                     run={runRepositoryAction}
                     openDiff={wipDiff}
-                    onOpenDiff={(file, group) => { setWipDiffSide(group); setWipDiff((current) => (current === file && wipDiffSide === group ? null : file)); }}
+                    openDiffRepository={wipDiffRepo}
+                    onOpenDiff={(file, group, repository) => {
+                      const same = wipDiff === file && wipDiffSide === group && wipDiffRepo === (repository ?? null);
+                      setWipDiffSide(group);
+                      setWipDiffRepo(same ? null : repository ?? null);
+                      setWipDiff(same ? null : file);
+                    }}
+                    onOpenRepository={(target) => void openRepoTab(target)}
                     onResolveConflicts={() => setView("conflicts")}
                     onShowInExplorer={(file) => { setExplorerFocus({ path: file, nonce: Date.now() }); setView("explorer"); }}
                     onFileHistory={() => setView("insights")}

@@ -28,6 +28,22 @@ export type FileChange = {
   indexStatus: string;
   worktreeStatus: string;
   conflicted: boolean;
+  /** Set when `path` is a submodule: what changed inside it. */
+  submodule?: SubmoduleChange;
+};
+
+/** What changed inside a submodule (server/src/backend.ts). */
+export type SubmoduleChange = {
+  /** Absolute path of the submodule checkout. */
+  root: string;
+  recorded: string | null;
+  head: string | null;
+  newCommits: boolean;
+  commits: Array<{ sha: string; subject: string }>;
+  moreCommits: boolean;
+  movedBack: boolean;
+  /** Changed files inside the submodule, relative to it. */
+  changes: FileChange[];
 };
 
 export type BranchRecord = {

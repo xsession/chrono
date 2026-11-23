@@ -31,7 +31,30 @@ export interface FileChange {
   indexStatus: string;
   worktreeStatus: string;
   conflicted: boolean;
+  /** Set when `path` is a submodule: what changed inside it. */
+  submodule?: SubmoduleChange;
 }
+
+/** What changed in a submodule, so the UI can show more than "modified". */
+export interface SubmoduleChange {
+  /** Absolute path of the submodule checkout (run git there for its files). */
+  root: string;
+  /** Commit the superproject's HEAD records, and the submodule's checked-out commit. */
+  recorded: string | null;
+  head: string | null;
+  /** The checked-out commit differs from the recorded one. */
+  newCommits: boolean;
+  /** Commits on top of the recorded one (newest first, at most SUBMODULE_COMMITS). */
+  commits: Array<{ sha: string; subject: string }>;
+  /** More commits than listed, or the submodule moved backwards / sideways. */
+  moreCommits: boolean;
+  movedBack: boolean;
+  /** Changed files inside the submodule, relative to it (nested submodules included). */
+  changes: FileChange[];
+}
+
+const SUBMODULE_COMMITS = 20;
+const SUBMODULE_DEPTH = 4;
 
 export interface BranchRecord {
   name: string;
@@ -174,6 +197,10 @@ export async function repositoryHistoryPage(
 
 export async function repositoryStatus(inputPath: string): Promise<FileChange[]> {
   const root = await repositoryRoot(inputPath);
+  return statusAt(root, SUBMODULE_DEPTH);
+}
+
+async function statusAt(root: string, depth: number): Promise<FileChange[]> {
   if (!(await hasHead(root))) return []; // unborn HEAD: nothing to compare against
   const result = await checkedStdout(root, ["status", "--porcelain=v1", "-z"]);
   const entries = result.split("\0").filter((entry) => entry.length > 0);
@@ -195,7 +222,42 @@ export async function repositoryStatus(inputPath: string): Promise<FileChange[]>
     });
     if (renamedOrCopied) i += 1; // skip the paired "original path" entry
   }
+  if (depth > 0) await describeSubmodules(root, changes, depth);
   return changes;
+}
+
+/** Fill in `submodule` for the changed entries that are submodules (gitlinks). */
+async function describeSubmodules(root: string, changes: FileChange[], depth: number): Promise<void> {
+  const candidates = changes.filter((change) => !change.conflicted && change.indexStatus !== "?" && change.indexStatus !== "D" && change.worktreeStatus !== "D");
+  if (!candidates.length) return;
+  // Gitlinks have mode 160000 in the index; one call for all candidates.
+  const staged = await runGit(root, ["ls-files", "-s", "-z", "--", ...candidates.map((change) => `:(literal)${change.path}`)]);
+  const gitlinks = new Map<string, string>(); // path → sha in the index
+  for (const entry of staged.stdout.split("\0")) {
+    const match = /^160000 ([0-9a-f]+) \d\t(.+)$/.exec(entry);
+    if (match) gitlinks.set(match[2], match[1]);
+  }
+  if (!gitlinks.size) return;
+  await Promise.all(candidates.filter((change) => gitlinks.has(change.path)).map(async (change) => {
+    const subRoot = path.join(root, change.path);
+    const [recordedOut, headOut, nested] = await Promise.all([
+      runGit(root, ["rev-parse", "--verify", "--quiet", `HEAD:${change.path}`]),
+      runGit(subRoot, ["rev-parse", "--verify", "--quiet", "HEAD"]),
+      statusAt(subRoot, depth - 1).catch(() => [] as FileChange[]),
+    ]);
+    const recorded = recordedOut.stdout.trim() || null;
+    const head = headOut.stdout.trim() || null;
+    const info: SubmoduleChange = { root: subRoot, recorded, head, newCommits: Boolean(head && recorded !== head), commits: [], moreCommits: false, movedBack: false, changes: nested };
+    if (head && recorded && recorded !== head) {
+      const log = await runGit(subRoot, ["log", "--format=%H%x1f%s", "-n", String(SUBMODULE_COMMITS + 1), `${recorded}..${head}`]);
+      const rows = log.code === 0 ? log.stdout.split("\n").filter(Boolean).map((line) => { const [sha, subject] = line.split("\x1f"); return { sha, subject: subject ?? "" }; }) : [];
+      info.moreCommits = rows.length > SUBMODULE_COMMITS;
+      info.commits = rows.slice(0, SUBMODULE_COMMITS);
+      // Nothing on top of the recorded commit: the checkout went back or sideways.
+      info.movedBack = log.code === 0 && rows.length === 0;
+    }
+    change.submodule = info;
+  }));
 }
 
 export async function repositoryBranches(inputPath: string): Promise<BranchRecord[]> {

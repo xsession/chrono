@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { submoduleAction, submoduleBulk, submoduleForeach, submoduleManifest, submoduleTree, superprojectChain } from "../server/src/submodules.ts";
-import { repositoryHistoryPage } from "../server/src/backend.ts";
+import { repositoryHistoryPage, repositoryStatus } from "../server/src/backend.ts";
 
 const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "chrono-subs-")));
 const env = { ...process.env, GIT_AUTHOR_NAME: "T", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "T", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: temp, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "protocol.file.allow", GIT_CONFIG_VALUE_0: "always" };
@@ -106,6 +106,29 @@ eq([manifest.submodules.length, manifest.root, manifest.submodules.find((entry) 
 git(root, "notes", "add", "-m", "a note", "HEAD");
 const page = await repositoryHistoryPage(root, 50, null);
 eq(page.commits.some((commit) => commit.subject.startsWith("Notes added by")), false, "notes ref excluded from history");
+
+// Status says what changed inside each submodule, not just "modified".
+// (lib/a was moved to a newer upstream commit by the bulk update above.)
+fs.appendFileSync(path.join(root, "lib/a/f2.txt"), "dirty\n");
+git(root, "submodule", "update", "-q", "--", "lib/b");
+git(path.join(root, "lib/b"), "checkout", "-q", "HEAD~1");
+const status = await repositoryStatus(root);
+const statusByPath = new Map(status.map((change) => [change.path, change]));
+const subA = statusByPath.get("lib/a")?.submodule;
+eq([subA?.newCommits, subA?.changes.map((change) => `${change.indexStatus}${change.worktreeStatus} ${change.path}`)], [true, [" M f2.txt"]], "a dirty submodule lists its changed files and its new commits");
+eq(subA?.root, path.join(root, "lib/a"), "submodule changes carry the submodule's checkout path");
+const subB = statusByPath.get("lib/b")?.submodule;
+eq([subB?.newCommits, subB?.movedBack, subB?.commits.length], [true, true, 0], "a submodule checked out at an older commit is reported as moved back");
+const infra = statusByPath.get("src/infra")?.submodule;
+const mid = infra?.changes.find((change) => change.path === "lib/mid")?.submodule;
+const leaf = mid?.changes.find((change) => change.path === "lib/leaf")?.submodule;
+eq(leaf?.changes.map((change) => change.path), ["new.txt"], "nested submodules expand down to the changed file");
+fs.writeFileSync(path.join(root, "lib/a/f3.txt"), "three\n");
+git(path.join(root, "lib/a"), "add", "f3.txt");
+git(path.join(root, "lib/a"), "commit", "-qm", "a: add f3");
+const afterCommit = (await repositoryStatus(root)).find((change) => change.path === "lib/a")?.submodule;
+eq([afterCommit?.newCommits, afterCommit?.commits[0]?.subject, afterCommit?.changes.map((change) => change.path)], [true, "a: add f3", ["f2.txt"]], "new submodule commits are listed with their subjects");
+eq(statusByPath.has("lib/c") ? statusByPath.get("lib/c")?.submodule : undefined, undefined, "an uninitialised submodule has no details");
 
 fs.rmSync(temp, { recursive: true, force: true });
 console.log(`submodules: ${checks} assertions passed`);
