@@ -57,9 +57,21 @@ function Get-ChronoInstalls {
   }
 }
 
+# Chrono, or anything started from an installed copy's folder (its server and
+# terminals), keeps files open and makes the setup fail.
 function Assert-NotRunning {
-  $running = Get-Process -Name 'Chrono' -ErrorAction SilentlyContinue
-  if ($running) { throw 'Chrono is running. Close it and run the installer again.' }
+  $dirs = @(Get-ChronoInstalls | Where-Object { $_.PSObject.Properties['InstallLocation'] -and $_.InstallLocation } | ForEach-Object { $_.InstallLocation.TrimEnd('\') + '\' })
+  $running = @(foreach ($proc in Get-Process -ErrorAction SilentlyContinue) {
+    $exePath = $null
+    try { $exePath = $proc.Path } catch { }
+    $fromInstall = $false
+    if ($exePath) { foreach ($dir in $dirs) { if ($exePath.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase)) { $fromInstall = $true } } }
+    if ($proc.ProcessName -eq 'Chrono' -or $fromInstall) { $proc }
+  })
+  if ($running.Count) {
+    $list = ($running | ForEach-Object { "$($_.ProcessName) ($($_.Id))" } | Select-Object -Unique) -join ', '
+    throw "Chrono is running: $list. Close it (also in the tray) and run the installer again."
+  }
 }
 
 # Split an uninstall command line into the program and its arguments.
@@ -141,9 +153,22 @@ else {
 # --- 2. Install it ------------------------------------------------------------
 try {
   Assert-NotRunning
+  # The setup removes the installed version first. A per-machine copy (from
+  # running a setup as administrator) cannot be removed by this per-user,
+  # silent install, and the setup then gives up with exit code 2.
+  $machine = @(Get-ChronoInstalls | Where-Object { $_.PSPath -like '*HKEY_LOCAL_MACHINE*' })
+  if ($machine.Count) {
+    $names = ($machine | ForEach-Object { "$($_.DisplayName) in $($_.InstallLocation)" }) -join '; '
+    throw "Chrono is installed for all users ($names). Remove it first from Settings > Apps (needs administrator rights), then run this again."
+  }
   Step "Installing $(Split-Path -Leaf $setup)"
   # /S = silent, /currentuser = per-user install under %LOCALAPPDATA%\Programs.
   $proc = Start-Process -FilePath $setup -ArgumentList '/S', '/currentuser' -Wait -PassThru
+  if ($proc.ExitCode -eq 2) {
+    $found = (@(Get-ChronoInstalls) | ForEach-Object { "$($_.DisplayName) $($_.DisplayVersion) at $($_.InstallLocation)" }) -join '; '
+    if (-not $found) { $found = 'none found' }
+    throw "setup could not remove the installed Chrono (exit code 2). Installed: $found. Close every Chrono window (also in the tray) or uninstall it from Settings > Apps, then run this again."
+  }
   if ($proc.ExitCode -ne 0) { throw "setup failed (exit code $($proc.ExitCode))" }
 }
 finally {
