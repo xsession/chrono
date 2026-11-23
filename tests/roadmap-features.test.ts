@@ -117,6 +117,13 @@ const explorer = await import("../server/src/explorer.ts");
 const resolved = await explorer.resolveShellPaths([path.join(repo, "a.txt"), repo]);
 ok(resolved.root === fs.realpathSync(repo) && resolved.paths[0] === "a.txt" && resolved.paths[1] === "." && resolved.isDir[1], "shell paths resolve to the repository");
 await assert.rejects(explorer.resolveShellPaths([os.tmpdir()]), /not inside a git working tree/); checks += 1;
+// Listing works even though git reports the root as C:/repo on Windows
+// (forward slashes) while Node builds C:\repo\dir paths.
+fs.mkdirSync(path.join(repo, "nested"), { recursive: true });
+write("nested/inner.txt", "inner\n");
+ok((await explorer.listDirectory(repo, "")).entries.some((entry) => entry.name === "a.txt"), "explorer lists the repository root");
+ok((await explorer.listDirectory(repo, "nested")).entries.some((entry) => entry.name === "inner.txt"), "explorer lists a subfolder");
+await assert.rejects(explorer.listDirectory(repo, "../"), /invalid repository-relative path|escapes the repository/); checks += 1;
 const { parseDeepLink } = await import("../src/deeplinkParse.ts");
 const link = parseDeepLink("chrono://tgit?action=commit&path=%2Fa%2Fb+c.txt&paths=%2Fx%0A%2Fy");
 ok(link?.command === "tgit" && link.params.action === "commit" && link.paths.join("|") === "/a/b c.txt|/x|/y", "tgit deep link collects every path");

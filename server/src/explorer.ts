@@ -85,8 +85,13 @@ function cleanFiles(files: string[]): string[] {
 }
 
 function absolute(root: string, rel: string): string {
-  const resolved = path.resolve(root, rel);
-  if (resolved !== root && !resolved.startsWith(root + path.sep)) throw invalidError("path escapes the repository");
+  // git reports the root with forward slashes on Windows (C:/repo) while
+  // path.resolve gives backslashes, so normalise both before comparing;
+  // Windows paths are also case-insensitive.
+  const base = path.resolve(root);
+  const resolved = path.resolve(base, rel);
+  const fold = (value: string) => (process.platform === "win32" ? value.toLowerCase() : value);
+  if (fold(resolved) !== fold(base) && !fold(resolved).startsWith(fold(base + path.sep))) throw invalidError("path escapes the repository");
   return resolved;
 }
 
