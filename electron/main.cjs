@@ -69,7 +69,10 @@ async function wait(url) { for (let i = 0; i < 80; i++) { try { if ((await fetch
 
 async function launch() {
   backendPort = String(14210 + Math.floor(Math.random() * 1000));
-  backend = spawn(process.execPath, ["--experimental-strip-types", path.join(root(), "server", "index.ts")], { cwd: root(), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", CHRONO_PORT: backendPort, CHRONO_HOST: "127.0.0.1" }, stdio: ["ignore", "pipe", "pipe"] });
+  backend = spawn(process.execPath, ["--experimental-strip-types", path.join(root(), "server", "index.ts")], { cwd: root(), env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", CHRONO_PORT: backendPort, CHRONO_HOST: "127.0.0.1", CHRONO_PARENT_PIPE: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+  // stdin is a lifeline: closing it asks the backend to shut down (and unload
+  // the local AI model). It also closes if this app crashes.
+  backend.stdin.on("error", () => {});
   let backendLog = "";
   // Keep the backend's output on disk too (<userData>/logs/backend.log), so a
   // crash can be investigated after the app has closed.
@@ -133,4 +136,16 @@ if (process.platform === "linux") {
 }
 app.whenReady().then(launch).catch((e) => { dialog.showErrorBox("Chrono failed to start", String(e)); app.quit(); });
 app.on("window-all-closed", () => { if (process.platform !== "darwin") app.quit(); });
-app.on("before-quit", () => { quitting = true; backend?.kill(); });
+// Ask the backend to stop instead of killing it: on Windows kill() ends it at
+// once, with no chance to unload the local AI model. Quit once it has exited,
+// or after 4 s at the latest.
+let backendStopped = false;
+app.on("before-quit", (event) => {
+  quitting = true;
+  if (backendStopped || !backend || backend.exitCode !== null || backend.signalCode !== null) return;
+  event.preventDefault();
+  const done = () => { if (backendStopped) return; backendStopped = true; app.quit(); };
+  backend.once("exit", done);
+  setTimeout(() => { backend.kill(); done(); }, 4000);
+  backend.stdin.end();
+});

@@ -733,6 +733,7 @@ export type AiSettings = {
   lan: boolean;
   lanKeySaved: boolean;
   autoStart: boolean;
+  lockInRam: boolean;
 };
 export type AiSettingsUpdate = Partial<Omit<AiSettings, "claudeModels" | "claudeKeySaved" | "claudeEnvCredentials" | "netKeySaved" | "lanKeySaved">> & { claudeKey?: string | null; netKey?: string | null; lanKey?: string | null };
 export type LlmDownloadJob = { id: string; kind: "engine" | "model"; label: string; received: number; total: number | null; speed: number | null; status: "running" | "unpacking" | "done" | "error" | "cancelled"; error?: string; startedAt: string };

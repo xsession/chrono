@@ -31,6 +31,8 @@ export interface LlamaSettings {
   lan: boolean;
   lanKey?: string;
   autoStart: boolean;
+  /** --mlock: keep the whole model in RAM, so the OS never pages it out between answers. */
+  lockInRam: boolean;
 }
 
 const RELEASES_API = process.env.CHRONO_LLAMA_RELEASES_API || "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=8";
@@ -333,6 +335,8 @@ export async function resolveBinary(settings: Pick<LlamaSettings, "llamaBinary">
 
 interface Running {
   child: ChildProcess;
+  /** Stops llama-server if this backend dies without cleaning up (crash, hard kill). */
+  watchdog: ChildProcess | null;
   binary: string;
   modelPath: string;
   port: number;
@@ -368,6 +372,27 @@ export function serverState() {
     : { status: "stopped" as const, pid: null, port: null, model: null, binary: null, startedAt: null, lanUrl: null, lastExit };
 }
 
+/** Options listed by `llama-server --help`, per binary (asked once). */
+const helpCache = new Map<string, Promise<string>>();
+async function supportsOption(binary: string, option: string): Promise<boolean> {
+  let help = helpCache.get(binary);
+  if (!help) {
+    help = new Promise<string>((resolve) => {
+      let text = "";
+      const libVar = process.platform === "darwin" ? "DYLD_LIBRARY_PATH" : process.platform === "win32" ? "PATH" : "LD_LIBRARY_PATH";
+      const dir = path.dirname(binary);
+      const probe = spawn(binary, ["--help"], { cwd: dir, env: { ...process.env, [libVar]: [dir, process.env[libVar]].filter(Boolean).join(path.delimiter) }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+      const timer = setTimeout(() => probe.kill(), 15_000);
+      probe.stdout?.on("data", (chunk) => { text += chunk; });
+      probe.stderr?.on("data", (chunk) => { text += chunk; });
+      probe.on("error", () => { clearTimeout(timer); resolve(""); });
+      probe.on("close", () => { clearTimeout(timer); resolve(text); });
+    });
+    helpCache.set(binary, help);
+  }
+  return new RegExp(`(^|[\\s,])${option.replace(/[-]/g, "\\-")}([\\s,=]|$)`, "m").test(await help);
+}
+
 async function healthy(port: number): Promise<boolean> {
   try { return (await fetch(`http://127.0.0.1:${port}/health`, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; }
 }
@@ -387,6 +412,14 @@ export async function startLlamaServer(settings: LlamaSettings, timeoutMs = 180_
   const args = ["-m", modelPath, "--host", host, "--port", String(settings.port), "-c", String(settings.contextSize)];
   if (settings.gpuLayers !== null) args.push("-ngl", String(settings.gpuLayers));
   if (settings.lan && settings.lanKey) args.push("--api-key", settings.lanKey);
+  // Lock the model in RAM. Newer builds take --load-mode mmap+mlock and refuse
+  // the old --mlock outright, so ask the build which it knows; without the
+  // right to lock memory llama.cpp only warns.
+  if (settings.lockInRam) {
+    if (await supportsOption(binary, "--load-mode")) args.push("--load-mode", "mmap+mlock");
+    else if (await supportsOption(binary, "--mlock")) args.push("--mlock");
+    else addLog("this llama-server cannot lock the model in RAM; running without it");
+  }
   const dir = path.dirname(binary);
   const libVar = process.platform === "darwin" ? "DYLD_LIBRARY_PATH" : process.platform === "win32" ? "PATH" : "LD_LIBRARY_PATH";
   const env = { ...process.env, [libVar]: [dir, process.env[libVar]].filter(Boolean).join(path.delimiter) };
@@ -394,7 +427,7 @@ export async function startLlamaServer(settings: LlamaSettings, timeoutMs = 180_
   const child = spawn(binary, args, { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   child.stdout?.on("data", (chunk) => addLog(String(chunk)));
   child.stderr?.on("data", (chunk) => addLog(String(chunk)));
-  const state: Running = { child, binary, modelPath, port: settings.port, host, status: "starting", startedAt: new Date().toISOString(), ready: Promise.resolve() };
+  const state: Running = { child, watchdog: child.pid ? startWatchdog(child.pid) : null, binary, modelPath, port: settings.port, host, status: "starting", startedAt: new Date().toISOString(), ready: Promise.resolve() };
   running = state;
   const exited = new Promise<number | null>((resolve) => {
     child.on("error", (error) => { addLog(`could not start ${binary}: ${error.message}`); resolve(-1); });
@@ -402,6 +435,7 @@ export async function startLlamaServer(settings: LlamaSettings, timeoutMs = 180_
   });
   void exited.then((code) => {
     lastExit = { at: new Date().toISOString(), code, message: log.slice(-3).join(" ") };
+    state.watchdog?.kill();
     if (running === state) running = null;
   });
   state.ready = (async () => {
@@ -421,6 +455,7 @@ export async function stopLlamaServer(): Promise<void> {
   const state = running;
   if (!state) return;
   running = null;
+  state.watchdog?.kill();
   const done = new Promise<void>((resolve) => { if (state.child.exitCode !== null) resolve(); else state.child.once("exit", () => resolve()); });
   state.child.kill();
   const timer = setTimeout(() => state.child.kill("SIGKILL"), 5000);
@@ -442,8 +477,43 @@ export async function ensureLlamaServer(settings: LlamaSettings): Promise<string
   return `http://127.0.0.1:${settings.port}`;
 }
 
-// Never leave llama-server behind when Chrono exits.
-process.once("exit", () => { running?.child.kill(); });
-for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  process.once(signal, () => { running?.child.kill(); process.exit(0); });
+// ----------------------------------------------------------------- unloading
+//
+// The model must leave memory when Chrono closes or crashes:
+// - a normal shutdown (server/index.ts) calls stopLlamaServer();
+// - "exit" covers any other orderly exit of this process;
+// - the watchdog covers the rest: a crash, a hard kill (Windows ends the
+//   backend with TerminateProcess, which runs no handlers) or a killed
+//   desktop app. It is a separate tiny Node process that checks every
+//   second whether this backend still exists and stops llama-server when it
+//   does not; it quits by itself once llama-server is gone.
+
+const WATCHDOG = `
+const [backend, server] = process.argv.slice(1).map(Number);
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
+setInterval(() => {
+  if (!alive(server)) process.exit(0);
+  if (!alive(backend)) { try { process.kill(server); } catch {} process.exit(0); }
+}, 1000);
+`;
+
+/** Stop serverPid when watchedPid (this backend) is gone; exported for tests. */
+export function startWatchdog(serverPid: number, watchedPid = process.pid): ChildProcess | null {
+  try {
+    // process.execPath is node, or Chrono's own binary with ELECTRON_RUN_AS_NODE=1 (inherited).
+    const watchdog = spawn(process.execPath, ["-e", WATCHDOG, String(watchedPid), String(serverPid)], { stdio: "ignore", detached: true, windowsHide: true });
+    watchdog.on("error", (error) => addLog(`llama-server watchdog did not start: ${error.message}`));
+    watchdog.unref(); // must not keep this process alive
+    return watchdog;
+  } catch (error) {
+    addLog(`llama-server watchdog did not start: ${(error as Error).message}`);
+    return null;
+  }
 }
+
+/** Running llama-server's pid and its watchdog's (tests). */
+export function serverPids(): { server: number | null; watchdog: number | null } {
+  return { server: running?.child.pid ?? null, watchdog: running?.watchdog?.pid ?? null };
+}
+
+process.once("exit", () => { running?.watchdog?.kill(); running?.child.kill(); });

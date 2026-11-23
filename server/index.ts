@@ -542,7 +542,8 @@ const routes: Record<string, Handler> = {
   stack_restack: (body) => gk.journaled(bodyPath(body), `Restack ${String(body.branch)}`, "keep", () => features.restack(bodyPath(body), str(body.branch, "branch"))),
   // AI assistant: provider (Ollama / Claude / off), models, Claude API key (write-only).
   ai_settings: () => ai.getAiSettings(),
-  ai_settings_save: (body) => ai.saveAiSettings({
+  ai_settings_save: async (body) => {
+    const saved = await ai.saveAiSettings({
     provider: optStr(body.provider) ?? undefined,
     ollamaUrl: optStr(body.ollamaUrl) ?? undefined,
     ollamaModel: optStr(body.ollamaModel) ?? undefined,
@@ -560,7 +561,12 @@ const routes: Record<string, Handler> = {
     lan: typeof body.lan === "boolean" ? body.lan : undefined,
     lanKey: body.lanKey === null ? null : optStr(body.lanKey) ?? undefined,
     autoStart: typeof body.autoStart === "boolean" ? body.autoStart : undefined,
-  }),
+    lockInRam: typeof body.lockInRam === "boolean" ? body.lockInRam : undefined,
+    });
+    // Load the newly chosen model ahead of the first question (and unload the old one).
+    void ai.warmUpAi();
+    return saved;
+  },
   ai_test: () => ai.testAi(),
   // Forks and upstreams, for the repository and every submodule (path: "" or a submodule path).
   fork_tree: (body) => forks.forkTree(bodyPath(body)),
@@ -831,6 +837,30 @@ if (!isLoopbackHost() && !API_TOKEN && process.env.CHRONO_ALLOW_INSECURE_REMOTE 
 
 server.listen(PORT, HOST, () => {
   console.log(`Chrono Next API listening on http://${HOST}:${PORT}`);
+  // Load the local AI model now, so the first question does not wait for it.
+  if (process.env.CHRONO_NO_AI_PRELOAD !== "1") void ai.warmUpAi();
 });
+
+// Orderly shutdown: unload the local AI model (stop llama-server, tell Ollama
+// to drop it), then exit. Crashes are covered by localLlm.ts's watchdog and
+// Ollama's keep-alive lease.
+let shuttingDown = false;
+async function shutdown(reason: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`Shutting down (${reason})`);
+  setTimeout(() => process.exit(0), 5000).unref(); // never hang on the way out
+  server.close();
+  await ai.shutdownAi().catch(() => undefined);
+  process.exit(0);
+}
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, () => void shutdown(signal));
+// The desktop app keeps a pipe on our stdin and closes it to ask us to stop.
+// It also closes when the app itself crashes, so that unloads the model too.
+if (process.env.CHRONO_PARENT_PIPE === "1") {
+  process.stdin.on("end", () => void shutdown("desktop app closed"));
+  process.stdin.on("error", () => void shutdown("desktop app gone"));
+  process.stdin.resume();
+}
 
 export default server;

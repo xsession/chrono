@@ -19,7 +19,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { invalidError } from "./lib/errors.ts";
-import { AiUnavailableError, ensureLlamaServer, llamaPaths } from "./localLlm.ts";
+import { AiUnavailableError, ensureLlamaServer, llamaPaths, startLlamaServer, stopLlamaServer } from "./localLlm.ts";
 
 export { AiUnavailableError };
 import { workspacesFile } from "./workspaces.ts";
@@ -58,8 +58,10 @@ export interface StoredSettings {
   /** Listen on the local network (0.0.0.0) instead of this machine only. */
   lan: boolean;
   lanKey?: string;
-  /** Start llama-server when the assistant is first used. */
+  /** Start llama-server when Chrono starts (model loaded ahead) and when the assistant is used. */
   autoStart: boolean;
+  /** --mlock: keep the model in RAM so the OS never pages it out. */
+  lockInRam: boolean;
 }
 
 export interface AiSettings {
@@ -84,6 +86,7 @@ export interface AiSettings {
   lan: boolean;
   lanKeySaved: boolean;
   autoStart: boolean;
+  lockInRam: boolean;
 }
 
 export interface AiResult { text: string; source: "ollama" | "network" | "llamacpp" | "claude"; model: string }
@@ -110,6 +113,7 @@ export async function readStored(): Promise<StoredSettings> {
     lan: stored.lan === true,
     lanKey: str(stored.lanKey, "") || undefined,
     autoStart: stored.autoStart !== false,
+    lockInRam: stored.lockInRam !== false,
     provider,
     ollamaUrl: typeof stored.ollamaUrl === "string" && stored.ollamaUrl ? stored.ollamaUrl : DEFAULT_OLLAMA_URL,
     ollamaModel: typeof stored.ollamaModel === "string" && stored.ollamaModel ? stored.ollamaModel : DEFAULT_OLLAMA_MODEL,
@@ -141,6 +145,7 @@ export async function getAiSettings(): Promise<AiSettings> {
     lan: stored.lan,
     lanKeySaved: Boolean(stored.lanKey),
     autoStart: stored.autoStart,
+    lockInRam: stored.lockInRam,
   };
 }
 
@@ -148,7 +153,7 @@ export interface AiSettingsUpdate {
   provider?: string; ollamaUrl?: string; ollamaModel?: string; claudeModel?: string; claudeKey?: string | null;
   netUrl?: string; netModel?: string; netKey?: string | null;
   llamaBinary?: string; modelsDir?: string; activeModel?: string; port?: number; contextSize?: number; gpuLayers?: number | null;
-  lan?: boolean; lanKey?: string | null; autoStart?: boolean;
+  lan?: boolean; lanKey?: string | null; autoStart?: boolean; lockInRam?: boolean;
 }
 
 function httpUrl(value: string, label: string): string {
@@ -207,6 +212,7 @@ export async function saveAiSettings(update: AiSettingsUpdate): Promise<AiSettin
   if (update.lanKey === null) delete stored.lanKey;
   else if (typeof update.lanKey === "string" && update.lanKey.trim()) stored.lanKey = secret(update.lanKey, "network API key");
   if (update.autoStart !== undefined) stored.autoStart = update.autoStart;
+  if (update.lockInRam !== undefined) stored.lockInRam = update.lockInRam;
   if (update.ollamaUrl !== undefined) {
     let url: URL;
     try { url = new URL(update.ollamaUrl); } catch { throw invalidError("Ollama URL is not a valid URL"); }
@@ -277,14 +283,97 @@ export async function networkModels(base: string, key?: string | null): Promise<
   return [...new Set(ids.filter((id): id is string => typeof id === "string" && id.length > 0))];
 }
 
+// ---------------------------------------------------------------------------
+// Keeping the local model loaded, and unloading it.
+//
+// Ollama unloads an idle model after 5 minutes. Chrono asks it to keep the
+// model for OLLAMA_KEEP_ALIVE and renews that every few minutes while it
+// runs, so answers never wait for a reload. A lease rather than "forever"
+// (-1) so that the model still leaves memory if Chrono crashes: the renewals
+// stop and Ollama drops it when the lease runs out. A normal shutdown
+// unloads it at once (keep_alive 0).
+// ---------------------------------------------------------------------------
+
+const OLLAMA_KEEP_ALIVE = "10m";
+const OLLAMA_RENEW_MS = 4 * 60_000;
+/** The Ollama model Chrono loaded and keeps loaded, if any. */
+let ollamaLoaded: { url: string; model: string } | null = null;
+
+/** POST /api/generate without a prompt: loads the model (or unloads it with keep_alive 0). */
+async function ollamaKeepAlive(url: string, model: string, keepAlive: string | number, timeoutMs: number): Promise<boolean> {
+  try {
+    const response = await fetch(`${url}/api/generate`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model, keep_alive: keepAlive }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    await response.body?.cancel().catch(() => undefined);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function unloadOllama(timeoutMs = 3000): Promise<void> {
+  const loaded = ollamaLoaded;
+  ollamaLoaded = null;
+  if (loaded) await ollamaKeepAlive(loaded.url, loaded.model, 0, timeoutMs);
+}
+
+let renewTimer: NodeJS.Timeout | null = null;
+function scheduleRenewals(): void {
+  if (renewTimer) return;
+  renewTimer = setInterval(() => {
+    const loaded = ollamaLoaded;
+    if (loaded) void ollamaKeepAlive(loaded.url, loaded.model, OLLAMA_KEEP_ALIVE, 60_000);
+  }, OLLAMA_RENEW_MS);
+  renewTimer.unref(); // never keeps the process alive
+}
+
+/**
+ * Load the configured local model ahead of the first question and keep it
+ * loaded; unload what the previous settings had loaded. Called when the
+ * server starts and whenever the AI settings change. Never throws: a model
+ * that cannot load now still gets its error when the assistant is used.
+ */
+let llamaPreloaded = false;
+export async function warmUpAi(): Promise<void> {
+  const settings = await readStored();
+  // Stop only the llama-server this preload started: one started by hand in
+  // Settings (e.g. to serve the network) stays until it is stopped there.
+  if (settings.provider !== "llamacpp" && llamaPreloaded) {
+    llamaPreloaded = false;
+    await stopLlamaServer().catch(() => undefined);
+  }
+  const wantOllama = settings.provider === "ollama" ? { url: settings.ollamaUrl, model: settings.ollamaModel } : null;
+  if (ollamaLoaded && (ollamaLoaded.url !== wantOllama?.url || ollamaLoaded.model !== wantOllama?.model)) await unloadOllama();
+  if (settings.provider === "llamacpp" && settings.autoStart && settings.activeModel) {
+    // startLlamaServer keeps a matching server and replaces one with older settings.
+    llamaPreloaded = true;
+    await startLlamaServer(settings).catch((error) => console.warn(`llama-server preload: ${(error as Error).message}`));
+  }
+  if (wantOllama && await ollamaKeepAlive(wantOllama.url, wantOllama.model, OLLAMA_KEEP_ALIVE, 120_000)) {
+    ollamaLoaded = wantOllama;
+    scheduleRenewals();
+  }
+}
+
+/** Unload every local model Chrono loaded (normal shutdown). */
+export async function shutdownAi(): Promise<void> {
+  if (renewTimer) { clearInterval(renewTimer); renewTimer = null; }
+  await Promise.all([stopLlamaServer().catch(() => undefined), unloadOllama()]);
+}
+
 async function ollamaComplete(settings: StoredSettings, prompt: string, maxTokens: number, timeoutMs: number): Promise<AiResult | null> {
   try {
     const response = await fetch(`${settings.ollamaUrl}/api/generate`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: settings.ollamaModel, stream: false, prompt, options: { temperature: 0.2, num_predict: maxTokens } }),
+      body: JSON.stringify({ model: settings.ollamaModel, stream: false, prompt, keep_alive: OLLAMA_KEEP_ALIVE, options: { temperature: 0.2, num_predict: maxTokens } }),
       signal: AbortSignal.timeout(timeoutMs),
     });
+    if (response.ok) ollamaLoaded = { url: settings.ollamaUrl, model: settings.ollamaModel };
     if (!response.ok) return null;
     const data = await response.json() as { response?: unknown };
     const text = typeof data.response === "string" ? data.response.trim() : "";
