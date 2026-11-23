@@ -86,6 +86,7 @@
       "public/**/*",
       "package.json"
     ],
+    "npmRebuild": false,
     "asarUnpack": [
       "server/**",
       "dist/**",
