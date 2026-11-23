@@ -1109,6 +1109,7 @@ export default function App() {
           {path && view === "landscape" && (
             <LandscapeView
               repositoryPath={path}
+              liveKey={liveTick}
               onFileAction={async (action, file, repository) => {
                 // Files inside a submodule open in that submodule's own tab.
                 if (repository !== path) {

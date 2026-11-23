@@ -12,7 +12,7 @@
    COLOUR and TYPE: sea blue, paper land, contour brown, magenta route; Overpass throughout
    LAYOUT: map full bleed, legend-style margin panel on the right; stacked under the map on phones */
 :root{color-scheme:light dark;--bg:light-dark(#fbfbf2,#0d1c24);--ink:light-dark(#13242e,#e4ece6);--soft:light-dark(#53656d,#9fb3b6);--line:light-dark(#13242e26,#e4ece626);--sea:light-dark(#bfe3ee,#0a1820);--brown:light-dark(#a8551b,#d39058);--mag:light-dark(#d6127e,#ff5cae);--teal:light-dark(#0d7680,#4cc6cf);--card:light-dark(#ffffff,#132a35)}
-:root{--terr:light-dark(#6b3fa0,#b892ff);--run:light-dark(#d6600a,#ff963c)}
+:root{--test:light-dark(#178a4c,#5fd38d);--terr:light-dark(#6b3fa0,#b892ff);--run:light-dark(#d6600a,#ff963c);--heat:light-dark(#d61e1e,#ff4646);--heatw:light-dark(#f5a000,#ffc83c)}
 :root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
 *{box-sizing:border-box;min-width:0}
 body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 Overpass,system-ui,sans-serif;overflow-x:clip}
@@ -70,6 +70,8 @@ input[type=search],select{font:16px Overpass,sans-serif;color:var(--ink);backgro
 .chk{display:flex;align-items:center;gap:10px;min-height:44px;font-weight:600}
 .chk input{width:22px;height:22px;accent-color:var(--mag)}
 .lbl{display:grid;gap:4px;font-size:14px;color:var(--soft)}
+#heatOpts{display:grid;gap:10px;padding:0 0 4px 32px}#heatOpts[hidden]{display:none}#heatK{width:100%;accent-color:var(--heat)}
+.heatkey{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--soft);margin:0}.heatkey i{flex:1;height:8px;border-radius:4px;background:linear-gradient(90deg,transparent,var(--heatw),var(--heat))}.heatkey b{width:10px;height:10px;border-radius:50%;border:2px solid var(--heat);flex:none}
 .repo{display:flex;gap:8px;align-items:center;width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:7px 8px;color:var(--ink);font:15px Overpass,sans-serif;cursor:pointer;min-height:40px}
 .repo:hover,.repo.on{background:color-mix(in srgb,var(--terr) 12%,transparent)}
 .repo b{font-weight:600;white-space:nowrap}.repo small{color:var(--soft);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -130,6 +132,13 @@ details b{font-weight:800}
   <input type="file" id="ftrace" accept=".json,.cpuprofile,.txt,.folded,.collapsed" hidden>
   <div class="opts">
    <label class="chk"><input type="checkbox" id="fog"> Fog of war: only show where I've been</label>
+   <label class="chk" id="heatRow" hidden><input type="checkbox" id="heat"> Heatmap: what changed recently</label>
+   <div id="heatOpts" hidden>
+    <label class="lbl">Strength (also dims the rest of the map)<input type="range" id="heatK" min="10" max="100" step="5" value="70" aria-label="Heatmap strength"></label>
+    <label class="lbl">Changed within<select id="heatWin"><option value="1">the last day</option><option value="7">the last week</option><option value="30" selected>the last month</option><option value="90">the last 3 months</option><option value="365">the last year</option></select></label>
+    <p class="heatkey"><span>older</span><i></i><span>newer</span><b></b><span>uncommitted</span></p>
+    <p class="heatkey" id="heatStat"></p>
+   </div>
    <label class="chk" id="terrRow" hidden><input type="checkbox" id="terr" checked> Show git submodules as territories</label>
    <label class="lbl">Height shows<select id="elev"><option value="size">Amount of code</option><option value="imp">How many files depend on it</option></select></label>
   </div>
@@ -140,10 +149,12 @@ details b{font-weight:800}
    <li><svg viewBox="0 0 30 18"><rect x="2" y="3" width="26" height="12" rx="3" style="fill:var(--terr);fill-opacity:.25;stroke:var(--terr);stroke-width:1.8;stroke-dasharray:5 3"/></svg>Purple border: a git submodule; nested ones are tinted deeper</li>
    <li><svg viewBox="0 0 30 18"><path d="M15 2 20 16H10Z" style="fill:var(--ink)"/></svg>Tower: one of the most-imported files</li>
    <li><svg viewBox="0 0 30 18"><path d="M15 1l2.4 5.3 5.6.6-4.2 3.8 1.2 5.6L15 13.4l-5 2.9 1.2-5.6L7 6.9l5.6-.6Z" style="fill:var(--mag)"/></svg>Star: where the program starts</li>
+   <li><svg viewBox="0 0 30 18"><path d="M15 3l1.8 3.9 4.2.5-3.1 2.8.9 4.2L15 12.2l-3.8 2.2.9-4.2-3.1-2.8 4.2-.5Z" style="fill:var(--bg);stroke:var(--test);stroke-width:1.6"/></svg>Hollow star: a test entry point (a test file nothing imports)</li>
    <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--ink);stroke-width:3;opacity:.55"/></svg>Highway: imports between regions (dashed when it crosses into another repo)</li>
    <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--mag);stroke-width:2.5"/></svg>Roads out: what the chosen file imports</li>
    <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--teal);stroke-width:2.5"/></svg>Roads in: files that import it</li>
    <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--soft);stroke-width:2.5;stroke-dasharray:1 4;stroke-linecap:round"/></svg>Your trail</li>
+   <li><svg viewBox="0 0 30 18"><circle cx="15" cy="9" r="8" style="fill:var(--heat);opacity:.45"/><circle cx="15" cy="9" r="4" style="fill:none;stroke:var(--heat);stroke-width:2"/></svg>Heatmap: glow is how recently and often a file changed; a ring means uncommitted edits</li>
    <li><svg viewBox="0 0 30 18"><circle cx="15" cy="9" r="8" style="fill:var(--run);opacity:.55"/><circle cx="15" cy="9" r="3" style="fill:var(--run)"/></svg>Runtime: glow is time spent, dots are calls in motion</li>
    <li><svg viewBox="0 0 30 18"><path d="M2 9h26" style="stroke:var(--run);stroke-width:2.5;stroke-dasharray:5 3"/></svg>Desire path: a runtime call with no import road</li>
   </ul>
@@ -178,8 +189,8 @@ const W=1000,H=700,KMIN=.7,KMAX=8,MAXF=12000,FF='Overpass, system-ui, sans-serif
 const stage=$('#stage'),cv=$('#map'),cx=cv.getContext('2d'),mm=$('#mini'),mx=mm.getContext('2d');
 const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 const PALS={
- light:{sea:[191,227,238],shallow:[222,242,246],ramp:[[248,248,236],[236,235,212],[222,212,180],[204,183,144],[180,151,114],[152,123,95]],contour:'rgba(168,85,27,',soft:'rgba(19,36,46,',road:'rgba(19,36,46,',ink:'#13242e',mag:'#d6127e',teal:'#0d7680',brown:'#a8551b',label:'#7a3d12',terr:[120,80,170],terrLine:'#6b3fa0',terrInk:'#55287f',halo:'rgba(251,251,242,.92)',fog:'rgba(234,237,230,.95)'},
- dark:{sea:[10,24,32],shallow:[20,44,56],ramp:[[32,46,46],[44,58,53],[60,70,59],[82,84,67],[108,100,79],[134,118,91]],contour:'rgba(211,144,88,',soft:'rgba(228,236,230,',road:'rgba(228,236,230,',ink:'#e4ece6',mag:'#ff5cae',teal:'#4cc6cf',brown:'#d39058',label:'#e8b585',terr:[150,110,210],terrLine:'#b892ff',terrInk:'#d6bcff',halo:'rgba(10,24,32,.88)',fog:'rgba(14,28,36,.96)'}};
+ light:{sea:[191,227,238],shallow:[222,242,246],ramp:[[248,248,236],[236,235,212],[222,212,180],[204,183,144],[180,151,114],[152,123,95]],contour:'rgba(168,85,27,',soft:'rgba(19,36,46,',road:'rgba(19,36,46,',ink:'#13242e',mag:'#d6127e',test:'#178a4c',teal:'#0d7680',brown:'#a8551b',label:'#7a3d12',terr:[120,80,170],terrLine:'#6b3fa0',terrInk:'#55287f',halo:'rgba(251,251,242,.92)',fog:'rgba(234,237,230,.95)'},
+ dark:{sea:[10,24,32],shallow:[20,44,56],ramp:[[32,46,46],[44,58,53],[60,70,59],[82,84,67],[108,100,79],[134,118,91]],contour:'rgba(211,144,88,',soft:'rgba(228,236,230,',road:'rgba(228,236,230,',ink:'#e4ece6',mag:'#ff5cae',test:'#5fd38d',teal:'#4cc6cf',brown:'#d39058',label:'#e8b585',terr:[150,110,210],terrLine:'#b892ff',terrInk:'#d6bcff',halo:'rgba(10,24,32,.88)',fog:'rgba(14,28,36,.96)'}};
 let C=PALS.light;
 let P=null,cam={x:W/2,y:H/2,k:1},vw=300,vh=300,dpr=1,fit=1;
 let sel=null,mode='explore',fogOn=false,terrOn=true,elev='size',route=null,rFrom=null,rTo=null,rPick='from',rNote='',tour=[],tourI=-1;
@@ -332,13 +343,18 @@ function build(name,recs,cut=0,demo=false,pre=null,note='',repos=null,syms=null)
  const edges=[];for(const f of files)for(const o of f.out)edges.push([f.id,o]);
  const ENT=/^(main|index|app|server|cli|__main__|manage|program|start|bootstrap|wsgi|asgi)\.[a-z0-9]+$/i;
  const reach=f=>{const seen=new Set([f.id]),q=[f.id];for(let h=0;h<q.length&&seen.size<5000;h++)for(const v of files[q[h]].out)if(!seen.has(v)){seen.add(v);q.push(v)}return seen.size};
- let entries=files.filter(f=>ENT.test(f.name)&&f.inn.size<=8&&f.out.size>0).map(f=>[reach(f),f]).sort((a,b)=>b[0]-a[0]||a[1].path.length-b[1].path.length).slice(0,3).map(a=>a[1]);
- if(!entries.length)entries=files.filter(f=>!f.inn.size&&f.out.size).sort((a,b)=>b.out.size-a.out.size).slice(0,1);
+ /* Tests are entry points of their own (a runner starts them), drawn apart from the program's. */
+ const TESTD=/(^|\/)(tests?|__tests__|specs?|e2e|testing)\//i,TESTF=/(\.|_|-)(test|spec)s?\.[a-z0-9]+$|^test_.+\.py$|Tests?\.(java|kt|cs|swift|scala)$/i;
+ const isTest=f=>TESTD.test(f.path)||TESTF.test(f.name);
+ const SCRIPTD=/(^|\/)(scripts?|bin|tools|cmd)\//i;
+ let entries=files.filter(f=>!isTest(f)&&FAM[f.lang]!=='css'&&((ENT.test(f.name)&&f.inn.size<=8&&(f.out.size>0||!f.inn.size))||(SCRIPTD.test(f.path)&&!f.inn.size))).map(f=>[reach(f),f]).sort((a,b)=>b[0]-a[0]||a[1].path.length-b[1].path.length).slice(0,60).map(a=>a[1]);
+ if(!entries.length)entries=files.filter(f=>!f.inn.size&&f.out.size&&!isTest(f)).sort((a,b)=>b.out.size-a.out.size).slice(0,1);
+ const testEntries=files.filter(f=>isTest(f)&&!f.inn.size&&!entries.includes(f)).slice(0,600);
  const nh=Math.max(4,Math.min(12,Math.round(files.length/10)));
- const hubs=files.filter(f=>f.inn.size>=2&&!entries.includes(f)).sort((a,b)=>b.inn.size-a.inn.size||b.loc-a.loc).slice(0,nh);
+ const hubs=files.filter(f=>f.inn.size>=2&&!entries.includes(f)&&!isTest(f)).sort((a,b)=>b.inn.size-a.inn.size||b.loc-a.loc).slice(0,nh);
  const highways=[];
  const islands=dirs.filter(d=>d.depth===1).map(d=>d.rect).concat(files.filter(f=>!f.reg).map(f=>({x:f.cell.x-6,y:f.cell.y-6,w:f.cell.w+12,h:f.cell.h+12})));
- P={name,note,files,edges,root,dirs:dirs.sort((a,b)=>a.depth-b.depth||b.rect.w*b.rect.h-a.rect.w*a.rect.h),hubs,entries,highways,islands,cut,demo,X,syms:null,repos:RP,tree:null,hiRepo:-1,borders:[],tdepth:null,
+ P={name,note,files,edges,root,dirs:dirs.sort((a,b)=>a.depth-b.depth||b.rect.w*b.rect.h-a.rect.w*a.rect.h),hubs,entries,testEntries,highways,islands,cut,demo,X,syms:null,repos:RP,tree:null,hiRepo:-1,borders:[],tdepth:null,
   byPath:new Map(files.map(f=>[f.path,f])),byLoc:[...files].sort((a,b)=>b.loc-a.loc),lines:files.reduce((a,f)=>a+f.loc,0),rev:new Set()};
  streets=new Path2D();for(const[a,b]of edges){const A=files[a],B=files[b],c=ctrl(A,B);streets.moveTo(A.x,A.y);streets.quadraticCurveTo(c[0],c[1],B.x,B.y)}
  for(const r of RP){let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;for(const f of files)if(r.anc&&f.repo.anc.has(r.id)){x0=Math.min(x0,f.cell.x);y0=Math.min(y0,f.cell.y);x1=Math.max(x1,f.cell.x+f.cell.w);y1=Math.max(y1,f.cell.y+f.cell.h)}r.bb=x1>x0?{x:x0,y:y0,w:x1-x0,h:y1-y0}:null;let a0=1e9,b0=1e9,a1=-1e9;for(const f of files)if(f.repo===r){a0=Math.min(a0,f.cell.x);b0=Math.min(b0,f.cell.y);a1=Math.max(a1,f.cell.x+f.cell.w)}r.lb=a1>a0?{x:a0,y:b0,w:a1-a0}:r.bb}
@@ -350,7 +366,7 @@ function build(name,recs,cut=0,demo=false,pre=null,note='',repos=null,syms=null)
  const saved=store.get('codemap:'+name);visited=new Set((saved&&saved.v||[]).filter(p=>P.byPath.has(p)));trail=(saved&&saved.t||[]).filter(p=>P.byPath.has(p));
  terrainBuild();paintTerrain();
  if(entries[0])select(entries[0]);else buildFog();
- renderAll();cam={x:W/2,y:H/2,k:1};req();
+ heatBuild();renderAll();cam={x:W/2,y:H/2,k:1};req();
 }
 
 function buildHighways(){
@@ -447,6 +463,7 @@ function road(a,b,col,s){
  cx.fillStyle=col;cx.beginPath();cx.moveTo(px+ux*z,py+uy*z);cx.lineTo(px-ux*z-uy*z*.6,py-uy*z+ux*z*.6);cx.lineTo(px-ux*z+uy*z*.6,py-uy*z-ux*z*.6);cx.closePath();cx.fill();
 }
 function tower(x,y){cx.beginPath();cx.moveTo(x,y-14);cx.lineTo(x+5.5,y+3);cx.lineTo(x-5.5,y+3);cx.closePath();cx.lineJoin='round';cx.lineWidth=3;cx.strokeStyle=C.halo;cx.stroke();cx.fillStyle=C.ink;cx.fill();boxes.push([x-7,y-16,14,20])}
+function testStar(x,y){cx.beginPath();for(let i=0;i<10;i++){const r=i%2?2.6:6.5,a=-Math.PI/2+i*Math.PI/5;cx.lineTo(x+r*Math.cos(a),y+r*Math.sin(a))}cx.closePath();cx.lineJoin='round';cx.lineWidth=3.5;cx.strokeStyle=C.halo;cx.stroke();cx.fillStyle=C.halo;cx.fill();cx.lineWidth=1.8;cx.strokeStyle=C.test;cx.stroke();boxes.push([x-7,y-7,14,14])}
 function star(x,y){cx.beginPath();for(let i=0;i<10;i++){const r=i%2?3.6:8.5,a=-Math.PI/2+i*Math.PI/5;cx.lineTo(x+r*Math.cos(a),y+r*Math.sin(a))}cx.closePath();cx.lineJoin='round';cx.lineWidth=3;cx.strokeStyle=C.halo;cx.stroke();cx.fillStyle=C.mag;cx.fill();boxes.push([x-9,y-9,18,18])}
 function dot(x,y,r,col){cx.beginPath();cx.arc(x,y,r,0,7);cx.lineWidth=3;cx.strokeStyle=C.halo;cx.stroke();cx.fillStyle=col;cx.fill()}
 function draw(){
@@ -461,6 +478,7 @@ function draw(){
  if(kz<1.8){for(const h of P.highways){const w=(.6+Math.log2(1+h.n)*.85)*Math.max(.45,Math.min(1,vw/900));cx.strokeStyle=C.halo;cx.lineWidth=(w+2)/s;cx.stroke(h.p);cx.strokeStyle=C.road+'.42)';cx.lineWidth=w/s;if(h.cross)cx.setLineDash([Math.max(6,w*1.6)/s,Math.max(4,w)/s]);cx.stroke(h.p);cx.setLineDash([])}}
  else{const dn=Math.min(1,Math.sqrt(3000/Math.max(1,P.edges.length)));cx.strokeStyle=C.road+((kz<3?.16:.24)*Math.max(.25,dn)).toFixed(3)+')';cx.lineWidth=.9/s;cx.stroke(streets)}
  cx.globalAlpha=1;if(runOn)drawRunWorld(s);
+ if(heatOn&&REC&&!runOn)drawHeat(s);
  if(fogOn&&fogCv)cx.drawImage(fogCv,0,0,W,H);
  if(mode==='walk'&&tour.length>1){cx.setLineDash([6/s,5/s]);cx.strokeStyle=C.brown;cx.lineWidth=2.2/s;cx.beginPath();tour.forEach((f,i)=>i?cx.lineTo(f.x,f.y):cx.moveTo(f.x,f.y));cx.stroke();cx.setLineDash([])}
  if(trail.length>1){cx.setLineDash([.5/s,4.5/s]);cx.strokeStyle=C.soft+'.8)';cx.lineWidth=2.4/s;cx.beginPath();let st=false;for(const p of trail){const f=P.byPath.get(p);if(!f)continue;if(st)cx.lineTo(f.x,f.y);else cx.moveTo(f.x,f.y);st=true}cx.stroke();cx.setLineDash([])}
@@ -471,10 +489,12 @@ function draw(){
  cx.fillStyle=C.soft+'.7)';
  for(const f of P.files){const pr=f.r*s;if(pr<3.5||!vis(f))continue;const[x,y]=T(f);if(!on(x,y))continue;cx.beginPath();cx.arc(x,y,Math.min(4.5,1.4+pr*.05),0,7);cx.fill()}
  for(const f of P.hubs){const[x,y]=T(f);if(on(x,y))tower(x,y)}
+ for(const f of P.testEntries){if(!vis(f))continue;const[x,y]=T(f);if(on(x,y))testStar(x,y)}
  for(const f of P.entries){const[x,y]=T(f);if(on(x,y))star(x,y)}
  if(route){for(const f of[route.path[0],route.path[route.path.length-1]]){const[x,y]=T(f);dot(x,y,6,C.mag)}}
  if(mode==='walk'&&tourI>=0){const[x,y]=T(tour[tourI]);cx.beginPath();cx.arc(x,y,13,0,7);cx.lineWidth=5;cx.strokeStyle=C.halo;cx.stroke();cx.lineWidth=2.5;cx.strokeStyle=C.brown;cx.stroke()}
  if(runOn)drawRunScreen(T,s);
+ if(heatOn&&REC&&!runOn)drawHeatScreen(T,vis,on);
  if(sel){const[x,y]=T(sel);cx.beginPath();cx.arc(x,y,10,0,7);cx.lineWidth=5;cx.strokeStyle=C.halo;cx.stroke();cx.lineWidth=2.5;cx.strokeStyle=C.mag;cx.stroke();boxes.push([x-11,y-11,22,22]);label(sel.name,x+14,y+5,`800 14px ${FF}`,C.ink)}
  if(route)for(const f of route.path){const[x,y]=T(f);label(f.name,x+9,y+4,`600 13px ${FF}`,C.ink)}
  if(mode==='walk')tour.forEach((f,i)=>{const[x,y]=T(f);label(`${i+1}. ${f.name}`,x+10,y+4,`600 13px ${FF}`,C.ink)});
@@ -488,7 +508,8 @@ function draw(){
 }
 function minimap(){
  const w=150,h=105;mx.setTransform(dpr,0,0,dpr,0,0);mx.clearRect(0,0,w,h);mx.imageSmoothingEnabled=true;mx.drawImage(terr,0,0,w,h);if(fogOn&&fogCv)mx.drawImage(fogCv,0,0,w,h);
- const s=sc(),k=w/W;mx.strokeStyle=C.mag;mx.lineWidth=1.5;mx.strokeRect((cam.x-vw/2/s)*k,(cam.y-vh/2/s)*k,vw/s*k,vh/s*k);
+ const s=sc(),k=w/W;
+ if(heatOn&&REC&&P.heat&&mode!=='run'){const hc=heatCol();for(const f of P.files){const v=P.heat[f.id];if(!v)continue;mx.fillStyle=`rgba(${hc(v)},${(.35+.65*v*heatK).toFixed(3)})`;mx.beginPath();mx.arc(f.x*k,f.y*k,1+2*v,0,7);mx.fill()}}mx.strokeStyle=C.mag;mx.lineWidth=1.5;mx.strokeRect((cam.x-vw/2/s)*k,(cam.y-vh/2/s)*k,vw/s*k,vh/s*k);
 }
 
 /* ---------- camera ---------- */
@@ -580,10 +601,10 @@ function renderRepos(){
 function renderSel(){
  const el=$('#sel');if(!P)return;
  if(!sel){el.innerHTML='<p class="muted">Tap a hill to stand on it. Towers mark the files most others depend on; stars mark where the program starts. Zoom in to see every street.</p>';return}
- const f=sel,tags=[];if(P.entries.includes(f))tags.push('starting point');if(P.hubs.includes(f))tags.push('landmark');
+ const f=sel,tags=[];if(P.entries.includes(f))tags.push('starting point');if(P.testEntries.includes(f))tags.push('test entry point');if(P.hubs.includes(f))tags.push('landmark');
  el.innerHTML=`<div class="card"><div class="ttl">${esc(f.name)}</div><div class="path">${esc(f.path)}</div><div class="meta">${esc(f.lang)} · ${f.loc.toLocaleString()} lines · in ${esc(regName(f))}${tags.length?' · '+tags.join(', '):''}</div>${P.repos.length>1?`<div class="meta">Repository: <b>${esc(f.repo.title)}</b>${f.repo.sha?' @'+esc(f.repo.sha):''}${f.repo.depth?` · submodule of ${esc(f.repo.parent.title)}${f.repo.depth>1?`, nested ${f.repo.depth} levels deep`:''}`:' · the main repository'}</div>`:''}
  <div class="row"><button class="btn sm" data-act="from">Route from here</button><button class="btn sm" data-act="to">Route to here</button></div>${EMBED?'<div class="row"><button class="btn sm" data-act="cx-explorer">Show in Explorer</button><button class="btn sm" data-act="cx-log">History</button><button class="btn sm" data-act="cx-blame">Blame</button></div>':''}
- ${RT?(()=>{const ins=RT.roadList.filter(r=>r.b===f).length,outs=RT.roadList.filter(r=>r.a===f).length;return RT.incl[f.id]?`<div class="meta" style="color:var(--run);font-weight:600">At runtime: ${pctOf(RT.incl[f.id])} of time, ${pctOf(RT.self[f.id])} in the file itself · called from ${ins} file${ins===1?'':'s'}, calls ${outs}</div>`:'<div class="meta" style="color:var(--soft)">Never ran in the loaded trace.</div>'})():''}
+ ${heatLine(f)}${RT?(()=>{const ins=RT.roadList.filter(r=>r.b===f).length,outs=RT.roadList.filter(r=>r.a===f).length;return RT.incl[f.id]?`<div class="meta" style="color:var(--run);font-weight:600">At runtime: ${pctOf(RT.incl[f.id])} of time, ${pctOf(RT.self[f.id])} in the file itself · called from ${ins} file${ins===1?'':'s'}, calls ${outs}</div>`:'<div class="meta" style="color:var(--soft)">Never ran in the loaded trace.</div>'})():''}
  ${list('Roads out: it imports',[...f.out],'mag')}${list('Roads in: imported by',[...f.inn],'teal')}${f.ext.size?`<h3>Leaves the map for<span>${f.ext.size}</span></h3><p class="ext">${[...f.ext].slice(0,30).map(esc).join(', ')}</p>`:''}</div>`;
 }
 function renderRoute(){
@@ -639,6 +660,52 @@ $('#q').addEventListener('keydown',e=>{if(e.key==='Enter'){const b=$('#qres .lnk
 $('#fog').addEventListener('change',e=>{fogOn=e.target.checked;if(fogOn&&P&&!visited.size)P.entries.forEach(f=>visited.add(f.path));buildFog();req()});
 $('#terr').addEventListener('change',e=>{terrOn=e.target.checked;if(P){terrainBuild();paintTerrain();buildHighways();req()}});
 $('#elev').addEventListener('change',e=>{elev=e.target.value;if(P){terrainBuild();paintTerrain();req()}});
+
+/* ---------- recent-changes heatmap (Chrono sends git history per file) ---------- */
+let REC=null,heatOn=false,heatK=.7,heatWin=30,heatPrefsRead=false;
+const HEATC={light:{hot:[214,30,30],warm:[245,160,0],wash:'240,241,236'},dark:{hot:[255,70,70],warm:[255,200,60],wash:'8,18,24'}};
+const heatPal=()=>isDark()?HEATC.dark:HEATC.light;
+const heatCol=()=>{const p=heatPal();return v=>mix(p.warm,p.hot,v).map(c=>c|0).join(',')};
+const ago=sec=>{const m=sec/60,h=m/60,d=h/24;return m<2?'just now':h<1?`${Math.round(m)} minutes ago`:d<1?`${Math.round(h)} hour${Math.round(h)===1?'':'s'} ago`:d<14?`${Math.round(d)} day${Math.round(d)===1?'':'s'} ago`:d<60?`${Math.round(d/7)} weeks ago`:`${Math.round(d/30)} months ago`};
+/* 0..1 per file: newer and more often changed is hotter; uncommitted is 1. */
+function heatBuild(){
+ if(!P)return;P.heat=new Float32Array(P.files.length);if(!REC)return;
+ let nmax=1;for(const f of P.files){const r=REC.files[f.path];if(r&&r.t&&(REC.now-r.t)/86400<=heatWin)nmax=Math.max(nmax,r.n)}
+ let hot=0,wip=0;
+ for(const f of P.files){const r=REC.files[f.path];if(!r)continue;let v=0;
+  if(r.w){v=1;wip++}
+  else if(r.t){const age=Math.max(0,(REC.now-r.t)/86400);if(age<=heatWin){const fresh=Math.exp(-2.3*age/heatWin),often=Math.log2(1+r.n)/Math.log2(1+nmax);v=Math.max(.12,fresh*(.6+.4*often))}}
+  if(v){P.heat[f.id]=v;hot++}}
+ const win=$('#heatWin').selectedOptions[0].textContent;
+ $('#heatStat').textContent=`${hot.toLocaleString()} file${hot===1?'':'s'} changed within ${win}${wip?`, ${wip} uncommitted`:''}${REC.capped?' (newest commits only)':''}.`;
+}
+function drawHeat(s){
+ /* Dim the land so the glow reads; the slider sets both. */
+ const p=heatPal(),hc=heatCol();cx.fillStyle=`rgba(${p.wash},${(.5*heatK).toFixed(3)})`;cx.fillRect(-W,-H,3*W,3*H);
+ const x0=cam.x-vw/2/s-60,x1=cam.x+vw/2/s+60,y0=cam.y-vh/2/s-60,y1=cam.y+vh/2/s+60;
+ for(const f of P.files){const v=P.heat[f.id];if(!v||f.x<x0||f.x>x1||f.y<y0||f.y>y1)continue;if(fogOn&&!P.rev.has(f.id))continue;
+  const R=Math.max(8,f.r*(1+.9*v)),c=hc(v),g=cx.createRadialGradient(f.x,f.y,0,f.x,f.y,R);
+  g.addColorStop(0,`rgba(${c},${(heatK*(.3+.6*v)).toFixed(3)})`);g.addColorStop(.55,`rgba(${c},${(heatK*(.15+.35*v)).toFixed(3)})`);g.addColorStop(1,`rgba(${c},0)`);
+  cx.fillStyle=g;cx.beginPath();cx.arc(f.x,f.y,R,0,7);cx.fill()}
+}
+function drawHeatScreen(T,vis,on){
+ const p=heatPal();cx.strokeStyle=rgb(p.hot);cx.lineWidth=2.2;const top=[];
+ for(const f of P.files){const v=P.heat[f.id];if(!v||!vis(f))continue;const[x,y]=T(f);if(!on(x,y))continue;const r=REC.files[f.path];
+  if(r&&r.w){cx.beginPath();cx.arc(x,y,6.5,0,7);cx.stroke()}top.push([v,f,x,y])}
+ if(top.length<=60)top.sort((a,b)=>b[0]-a[0]).slice(0,12).forEach(([v,f,x,y])=>label(f.name,x+9,y+4,`700 12px ${FF}`,C.ink));
+}
+function heatLine(f){
+ if(!REC)return'';const r=REC.files[f.path];
+ if(!r)return`<div class="meta" style="color:var(--soft)">No commits in the last ${REC.days} days.</div>`;
+ const bits=[];if(r.w)bits.push('<b>uncommitted edits</b>');if(r.t)bits.push(`last committed ${ago(REC.now-r.t)}`);if(r.n)bits.push(`${r.n} commit${r.n===1?'':'s'} in the last ${REC.days} days`);
+ return`<div class="meta" style="color:var(--heat);font-weight:600">Changes: ${bits.join(' · ')}</div>`;
+}
+const heatPref=()=>toChrono({type:'pref',key:'heat',value:{on:heatOn,k:heatK,win:heatWin}});
+function heatApply(){$('#heatOpts').hidden=!heatOn;heatBuild();renderSel();req()}
+$('#heat').addEventListener('change',e=>{heatOn=e.target.checked;heatApply();heatPref()});
+$('#heatK').addEventListener('input',e=>{heatK=e.target.value/100;req()});
+$('#heatK').addEventListener('change',heatPref);
+$('#heatWin').addEventListener('change',e=>{heatWin=+e.target.value;heatApply();heatPref()});
 
 /* ---------- runtime ---------- */
 let RT=null,rtT=-1,rtPlay=false,rtLast=0,rtDrawn=0,rtPanel=0,rtCv=null,rtRaf=0,rtHeat=null,rtKey='';
@@ -943,6 +1010,9 @@ if(EMBED){
   else if(d.type==='loading'){toast(d.text||'Reading the repository…',true)}
   else if(d.type==='error'){toast(String(d.text||'Could not read the repository.'),true)}
   else if(d.type==='scan'&&d.scan&&Array.isArray(d.scan.files)){const sc0=d.scan;if(!sc0.files.length){toast('No source files found in this repository.',true);return}memStore.clear();if(d.saved)memStore.set('codemap:'+sc0.name,d.saved);setMode('explore');build(sc0.name,sc0.files,sc0.cut||0,false,null,d.note||'',sc0.repos);toast(`Mapped ${sc0.files.length.toLocaleString()} files. Tap a hill to stand on it.`)}
+  else if(d.type==='recent'&&d.recent&&d.recent.files){REC=d.recent;$('#heatRow').hidden=false;
+   const pr=d.prefs;if(pr&&!heatPrefsRead){heatOn=!!pr.on;heatK=Math.min(1,Math.max(.1,+pr.k||.7));if([1,7,30,90,365].includes(+pr.win))heatWin=+pr.win;$('#heat').checked=heatOn;$('#heatK').value=Math.round(heatK*100);$('#heatWin').value=String(heatWin)}
+   heatPrefsRead=true;$('#heatOpts').hidden=!heatOn;heatBuild();renderSel();req()}
   else if(d.type==='goto'&&P){const f=P.byPath.get(d.path);if(f)goTo(f)}
  });
  toChrono({type:'ready'});

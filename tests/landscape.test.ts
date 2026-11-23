@@ -14,6 +14,7 @@ Object.assign(process.env, {
 delete process.env.GIT_CONFIG_GLOBAL;
 execFileSync("git", ["config", "--global", "protocol.file.allow", "always"]);
 const { landscapeScan } = await import("../server/src/landscape.ts");
+const { landscapeRecent } = await import("../server/src/landscapeRecent.ts");
 
 let checks = 0;
 const ok = (value: unknown, message: string) => { assert.ok(value, message); checks += 1; };
@@ -70,6 +71,24 @@ ok(moved.head !== scan.head, "a new HEAD triggers a fresh scan");
 const diskDir = path.join(temp, "config", "landscape");
 ok(fs.readdirSync(diskDir).some((name) => name.endsWith(".json")), "the last scan is kept on disk");
 
+// Heatmap data: last commit time, commit count and uncommitted edits per file,
+// submodule files under their path in the superproject.
+write(path.join(repo, "src/app/App.tsx"), "export function App() {\n  return 1;\n}\n");
+git(repo, "commit", "-qam", "app again");
+write(path.join(repo, "src/main.ts"), "// edited\n");
+write(path.join(repo, "src/new.ts"), "export {};\n");
+write(path.join(repo, "vendor-lib/util.py"), "def helper():\n    return 2\n");
+const recent = await landscapeRecent(repo, 30);
+const now = Math.floor(Date.now() / 1000);
+ok(recent.root === repo && recent.days === 30 && Math.abs(recent.now - now) < 5, "recent: root, window and server time");
+ok(recent.files["src/app/App.tsx"]?.n === 2 && Math.abs(recent.files["src/app/App.tsx"].t - now) < 120, "recent: commit count and time of the newest commit");
+ok(recent.files["src/main.ts"]?.w === 1 && recent.files["src/new.ts"]?.w === 1, "recent: modified and new files are uncommitted");
+ok(!recent.files["src/app/App.tsx"].w, "recent: committed files are not marked uncommitted");
+ok(recent.files["vendor-lib/util.py"]?.w === 1 && recent.files["vendor-lib/util.py"].n >= 1, "recent: submodule files, by their superproject path");
+ok(!recent.files["vendor-lib"], "recent: the submodule itself is not a file");
+ok(recent.commits >= 3 && !recent.capped, "recent: commits counted");
+ok(Object.keys((await landscapeRecent(lib, 30)).files).length >= 1, "recent: works on any repository");
+
 // The embedded page: works offline and only talks to its parent.
 const page = fs.readFileSync(path.join(import.meta.dirname, "..", "public", "landscape", "index.html"), "utf8");
 const script = page.slice(page.indexOf("<script>") + 8, page.lastIndexOf("</script>"));
@@ -77,6 +96,8 @@ ok(!/fonts\.googleapis|fonts\.gstatic/.test(page), "no web font requests");
 ok(/if\(EMBED\)return Promise\.reject/.test(script), "no CDN script load inside Chrono");
 ok(/e\.source!==parent/.test(script), "the page accepts messages only from Chrono");
 ok(/toChrono\(\{type:'ready'\}\)/.test(script) && /type==='scan'/.test(script), "ready/scan handshake present");
+ok(/testEntries/.test(script) && /function testStar/.test(script), "test entry points are marked apart from program entry points");
+ok(/type==='recent'/.test(script) && /id="heat"/.test(page) && /id="heatK"/.test(page), "heatmap overlay: switch, strength and recent-changes message");
 new Function(script); checks += 1; // parses
 
 const view = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "components", "gk", "LandscapeView.tsx"), "utf8");

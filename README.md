@@ -55,7 +55,7 @@ Browser (React 19)  ──WebSocket /api/rpc──────▶  Node server (
     with the Git Intelligence pull-request triage tab and remote auto-detection
   - `server/src/workspaces.ts` — workspace persistence (`~/.chrono-next/workspaces.json`)
   - `server/src/submodules.ts` — recursive submodule tree, bulk actions, foreach, manifest
-  - `server/src/landscape.ts` — source scan behind the landscape map (parsers in `landscapeParse.ts`)
+  - `server/src/landscape.ts` — source scan behind the landscape map (parsers in `landscapeParse.ts`; recent changes for the heatmap in `landscapeRecent.ts`)
   - `server/src/folders.ts`, `server/src/trust.ts` — in-app folder picker, `safe.directory` trust
 - `src/` — the React UI.
   - `src/graph.ts` — commit-graph layout engine (topological depth + lane
@@ -185,8 +185,15 @@ around it the way you find your way around a place:
   Files are hills: height is the amount of code, or how many files depend on
   it. Imports are roads, and highways join regions.
 - Submodules are territories with a purple border; nested ones are tinted
-  deeper. Towers mark the most-imported files, and stars mark where the
-  program starts.
+  deeper. Towers mark the most-imported files. Stars mark every entry point
+  (`main`, `index`, `server`, `cli`… and scripts in `scripts/`, `bin/`,
+  `tools/` that nothing imports); hollow green stars mark test entry points,
+  the test files nothing imports.
+- **Heatmap** (under the map's options) overlays what changed recently: the
+  glow is how recently and how often a file was committed, within the last
+  day, week, month, 3 months or year, and a ring marks uncommitted edits,
+  submodules included. The strength slider sets the glow and dims the rest of
+  the map. It updates live as files change.
 - **Explore** a file to see its roads in and out. **Route** gives directions
   between two files along import roads. **Walk** visits the landmarks in a
   fixed order, like a memory palace. **Runtime** overlays a profiler trace

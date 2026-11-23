@@ -26,6 +26,7 @@ import * as features from "./src/features.ts";
 import * as lineStaging from "./src/lineStaging.ts";
 import * as submodules from "./src/submodules.ts";
 import { landscapeScan } from "./src/landscape.ts";
+import { landscapeRecent } from "./src/landscapeRecent.ts";
 import { waitForChange } from "./src/repoWatch.ts";
 import * as trust from "./src/trust.ts";
 import * as folders from "./src/folders.ts";
@@ -88,6 +89,7 @@ const READ_ROUTES = new Set([
   "submodule_tree", "repository_trust", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
   "fork_point", "predict_conflicts", "cleanup_candidates", "file_blob", "sparse_status", "notes_get",
   "explorer_list", "explorer_properties", "explorer_diff_files", "explorer_diff_previous",
+  "landscape_recent",
 ]);
 
 const DIFF_VIEW_ROUTES = new Set(["working_tree_diff", "commit_file_diff", "diff_revisions", "explorer_diff_files", "explorer_diff_previous"]);
@@ -422,6 +424,8 @@ const routes: Record<string, Handler> = {
   submodule_manifest: (body) => submodules.submoduleManifest(bodyPath(body)),
   // Codebase landscape map: one record per source file (imports, symbols, size).
   landscape_scan: (body) => landscapeScan(bodyPath(body), body.force === true),
+  // Heatmap overlay: last commit, commit count and uncommitted edits per file.
+  landscape_recent: (body) => landscapeRecent(bodyPath(body), typeof body.days === "number" ? body.days : 90),
   // Long-poll: resolves when the repository changes after version `since`.
   repository_wait_change: (body) => waitForChange(bodyPath(body), typeof body.since === "number" ? body.since : -1, currentRequestSignal(), typeof body.timeoutMs === "number" ? body.timeoutMs : undefined),
   superproject_chain: (body) => submodules.superprojectChain(bodyPath(body)),

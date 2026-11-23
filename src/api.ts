@@ -90,6 +90,7 @@ import type {
   SubmoduleForeachResult,
   SubmoduleManifest,
   SubmoduleTree,
+  LandscapeRecent,
   LandscapeScan,
   RepositoryChange,
 } from "./types";
@@ -138,6 +139,7 @@ const READ_ROUTES = new Set([
   "repository_operation_state", "undo_state", "last_commit_message", "commit_offset", "diff_commit_files",
   "submodule_tree", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
   "fork_point", "predict_conflicts", "cleanup_candidates", "file_blob", "sparse_status", "notes_get",
+  "landscape_recent",
 ]);
 const repoReads = new Map<string, AbortController>();
 
@@ -377,6 +379,7 @@ export const api = {
     invoke<CommitFileChange[]>("diff_commit_files", { path, from, to }),
   submoduleTree: (path: string) => invoke<SubmoduleTree>("submodule_tree", { path }),
   landscapeScan: (path: string, force = false) => invoke<LandscapeScan>("landscape_scan", { path, force }),
+  landscapeRecent: (path: string, days = 365) => invoke<LandscapeRecent>("landscape_recent", { path, days }),
   /** Long-poll: resolves when the repository changes after `since` (-1 = now). */
   waitForChange: (path: string, since: number) => invoke<RepositoryChange>("repository_wait_change", { path, since }),
   submoduleAction: (path: string, action: SubmoduleAction, target = "") => invoke<string>("submodule_action", { path, action, target }),

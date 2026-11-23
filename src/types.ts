@@ -794,6 +794,16 @@ export type LandscapeScan = {
   durationMs: number;
 };
 
+/** Recent changes per file, for the landscape heatmap (server/src/landscapeRecent.ts). */
+export type LandscapeRecent = {
+  root: string;
+  now: number;
+  days: number;
+  files: Record<string, { t: number; n: number; w?: 1 }>;
+  commits: number;
+  capped: boolean;
+};
+
 /** Live change notification (server/src/repoWatch.ts). */
 export type RepositoryChange = {
   /** Bumped for every change in the working tree or the git directory. */
