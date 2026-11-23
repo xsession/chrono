@@ -6,7 +6,7 @@
     "email": "noreply@codelayer.hu"
   },
   "private": true,
-  "version": "0.8.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -70,7 +70,7 @@
   "build": {
     "appId": "hu.codelayer.chrono",
     "productName": "Chrono",
-    "copyright": "Copyright \u00a9 CodeLayer",
+    "copyright": "Copyright © CodeLayer",
     "asar": true,
     "directories": {
       "output": "release",
