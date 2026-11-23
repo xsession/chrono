@@ -128,6 +128,19 @@ The Graph view follows GitKraken's layout:
 - **Tabs:** each open repository is a tab. Switching shows the tab's last state
   at once and refreshes it in the background ("Updating…" in the status bar),
   so even a repository whose `git status` takes a minute switches instantly.
+  Drag a tab to reorder it (or press Ctrl+Shift+←/→). Close it with its ×, a
+  middle click, Delete, or the right-click menu, which also has *Close other tabs*.
+- **Live changes:** the server watches each open repository, so edits made in an
+  editor, a terminal or another tool show in the Changes list and the graph's
+  WIP row within about 0.1–0.2 s. Commits, checkouts, fetches and rebases made
+  elsewhere also reload the graph. Only folders git cares about are watched, so
+  ignored trees like `node_modules` cost nothing. If the system runs out of
+  inotify watches (`fs.inotify.max_user_watches`), Chrono checks `git status`
+  once a second instead.
+- **Resizable layout:** drag the edges of the branches panel, the commit details
+  panel, the Explorer folder tree and every column header (Graph, Commit, Author,
+  Date, Changes, SHA, and the Explorer list columns). Double-click an edge to
+  restore its default. Widths are remembered.
 
 | | |
 |---|---|
@@ -258,6 +271,32 @@ Like TortoiseGit, Chrono can add a **Chrono** submenu to the operating system's 
 
 ## Install
 
+### Installer scripts (desktop)
+
+The installer scripts build Chrono from this checkout and install it like a normal app. At the end they print the installed version.
+
+```bash
+./install-linux.sh                     # build + install (.deb on Debian/Ubuntu, .rpm on Fedora/openSUSE, AppImage elsewhere)
+./install-linux.sh --user              # per-user AppImage in ~/.local, no sudo
+./install-linux.sh --release v1.0.0    # download a GitHub release instead of building (latest if no tag)
+./install-linux.sh --file Chrono-1.0.0-linux-amd64.deb
+./install-linux.sh --uninstall
+```
+
+```bat
+install-windows.bat                    :: build + install per user (%LOCALAPPDATA%\Programs\Chrono), no admin
+install-windows.bat --release v1.0.0   :: download a GitHub release instead of building
+install-windows.bat --file Chrono-Setup-1.0.0-x64.exe
+install-windows.bat --uninstall
+```
+
+- **Building needs** Node.js 22+ and git. `--release` and `--file` need neither.
+- **The .deb/.rpm route** asks for sudo once. It replaces an earlier per-user AppImage install, so only one Chrono remains.
+- **On Windows,** close Chrono before installing. The setup runs silently and adds the Start menu and desktop shortcuts, the `chrono://` handler and the Explorer **Chrono** menu.
+- **Settings are kept** when you uninstall.
+
+### Packages
+
 Download from the [GitHub Releases](https://github.com/xsession/chrono/releases) page and verify with `SHA256SUMS.txt`:
 
 | Platform | Package | Notes |
@@ -354,6 +393,7 @@ npm run test:roadmap   # signing/hooks/stacks/cleanup/git-flow/custom-command sm
 npm run test:submodules # submodule tree, bulk actions, foreach and manifest
 npm run test:trust     # dubious-ownership detection and safe.directory trust
 npm run test:folders   # folder picker listing; no browser prompt dialogs
+npm run test:watch     # live changes: edits, commits and branch moves reported within one second
 npm run test:lanes     # per-repository git lanes: sharing, isolation, cancelling
 npm run test:landscape # landscape scan and the embedded map page
 npm run test:all       # everything above

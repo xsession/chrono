@@ -157,6 +157,14 @@ const requestSignalStore = new AsyncLocalStorage<AbortSignal>();
 export function withAbortSignal<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
   return requestSignalStore.run(signal, run);
 }
+/** The abort signal of the request being served, if any. */
+export function currentRequestSignal(): AbortSignal | undefined {
+  return requestSignalStore.getStore();
+}
+/** Run git work that must outlive the current request (shared background state). */
+export function outsideRequest<T>(run: () => T): T {
+  return requestSignalStore.exit(run);
+}
 
 const ABORTED: RawOutput = { stdout: "", stderr: "aborted: the client no longer needs this result", code: 130 };
 

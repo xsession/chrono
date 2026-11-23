@@ -8,6 +8,12 @@ import { useContextMenu, type MenuItem } from "../ContextMenu";
 import { askChoice, askConfirm, askFields, askText } from "../DialogHost";
 import { ExplorerDialogView, type ExplorerDialog } from "./ExplorerDialogs";
 import { pushToast } from "../../toastBus";
+import { SplitHandle } from "../SplitHandle";
+import { ColumnGrip, useStoredColumns, useStoredWidth } from "../ColumnGrip";
+
+// Resizable list columns (Name takes the free space, at least NAME_MIN).
+const LIST_COLUMNS = { status: 150, modified: 140, type: 120, size: 80 };
+const NAME_MIN = 160;
 
 /** Reveal (and optionally act on) items — used by "Show in Explorer" and by
  *  chrono://tgit deep links from the operating system's file manager. */
@@ -145,6 +151,8 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
   const [anchor, setAnchor] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [settings, setSettings] = useState<ExplorerSettings>(loadSettings);
+  const [treeWidth, resizeTree, resetTree] = useStoredWidth("chrono.explorer.treeWidth", 240, 150, 640);
+  const [columns, resizeColumn, resetColumn] = useStoredColumns("chrono.explorer.columns", LIST_COLUMNS, 48);
   const [dialog, setDialog] = useState<ExplorerDialog | null>(null);
   const [localTick, setLocalTick] = useState(0);
   const [sort, setSort] = useState<{ key: "name" | "status" | "size" | "modified" | "type"; dir: 1 | -1 }>({ key: "name", dir: 1 });
@@ -499,9 +507,19 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
     for (const entry of listing?.entries ?? []) result[entry.status] = (result[entry.status] ?? 0) + 1;
     return result;
   }, [listing]);
-  const sortHeader = (key: typeof sort.key, title: string) => (
-    <button type="button" onClick={() => setSort((value) => ({ key, dir: value.key === key ? (value.dir === 1 ? -1 : 1) : 1 }))}>{title}{sort.key === key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}</button>
-  );
+  // Each header's right edge resizes its column; Name's edge moves Git status's left side.
+  const sortHeader = (key: typeof sort.key, title: string) => {
+    const column = key === "name" ? "status" : key;
+    const sign = key === "name" ? -1 : 1;
+    return (
+      <span className="tg-head-cell">
+        <button type="button" onClick={() => setSort((value) => ({ key, dir: value.key === key ? (value.dir === 1 ? -1 : 1) : 1 }))}>{title}{sort.key === key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}</button>
+        <ColumnGrip label={`Resize ${title} column`} onDelta={(delta) => resizeColumn(column, sign * delta)} onReset={() => resetColumn(column)} />
+      </span>
+    );
+  };
+  const listColumns = `minmax(${NAME_MIN}px, 1fr) ${columns.status}px ${columns.modified}px ${columns.type}px ${columns.size}px`;
+  const listMinWidth = NAME_MIN + columns.status + columns.modified + columns.type + columns.size;
 
   return (
     <div className="tg-explorer" onKeyDown={onKeyDown}>
@@ -523,10 +541,12 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
         </button>
       </header>
 
-      <div className={`tg-explorer-body${settings.showTree ? "" : " no-tree"}`}>
+      <div className={`tg-explorer-body${settings.showTree ? "" : " no-tree"}`} style={settings.showTree ? { gridTemplateColumns: `${treeWidth}px 6px minmax(0, 1fr)` } : undefined}>
         {settings.showTree && <FolderTree repositoryPath={repositoryPath} refreshKey={refreshKey + localTick} current={dir} onOpen={navigate} rootName={listing?.root.split(/[\\/]/).pop() ?? "repository"} />}
+        {settings.showTree && <SplitHandle label="Resize folder tree" onDelta={resizeTree} onReset={resetTree} />}
         <div
           className="tg-list"
+          style={{ ["--tg-cols" as string]: listColumns, ["--tg-min" as string]: `${listMinWidth}px` }}
           ref={listRef}
           tabIndex={0}
           onClick={(event) => { if (event.target === event.currentTarget) setSelection([]); }}

@@ -91,6 +91,7 @@ import type {
   SubmoduleManifest,
   SubmoduleTree,
   LandscapeScan,
+  RepositoryChange,
 } from "./types";
 
 // Diff display options (Settings → Display) are attached to diff viewer calls.
@@ -128,6 +129,7 @@ export function saveApiConnection(connection: { url: string; token: string }): v
 // tab the user just switched to. The server kills the matching git processes.
 // Writes are never cancelled.
 const READ_ROUTES = new Set([
+  "repository_wait_change",
   "repository_summary", "repository_remotes", "repository_history", "repository_history_page", "history_query",
   "repository_status", "repository_branches", "repository_conflicts", "search_commits", "commit_details",
   "commit_file_diff", "list_tags", "reference_groups", "working_tree_diff", "unstaged_file_diff", "list_tree",
@@ -375,6 +377,8 @@ export const api = {
     invoke<CommitFileChange[]>("diff_commit_files", { path, from, to }),
   submoduleTree: (path: string) => invoke<SubmoduleTree>("submodule_tree", { path }),
   landscapeScan: (path: string, force = false) => invoke<LandscapeScan>("landscape_scan", { path, force }),
+  /** Long-poll: resolves when the repository changes after `since` (-1 = now). */
+  waitForChange: (path: string, since: number) => invoke<RepositoryChange>("repository_wait_change", { path, since }),
   submoduleAction: (path: string, action: SubmoduleAction, target = "") => invoke<string>("submodule_action", { path, action, target }),
   submoduleBulk: (path: string, action: SubmoduleBulkAction, targets: string[]) => invoke<SubmoduleBulkResult[]>("submodule_bulk", { path, action, targets }),
   submoduleForeach: (path: string, command: string, targets: string[]) => invoke<SubmoduleForeachResult[]>("submodule_foreach", { path, command, targets }),

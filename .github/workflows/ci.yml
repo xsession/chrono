@@ -49,6 +49,8 @@ jobs:
         run: npm run test:landscape
       - name: Folder picker
         run: npm run test:folders
+      - name: Live repository changes
+        run: npm run test:watch
       - name: Roadmap features
         run: npm run test:roadmap
       - name: Git smoke tests

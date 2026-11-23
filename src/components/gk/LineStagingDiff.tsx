@@ -10,6 +10,8 @@ type Props = {
   repositoryPath: string;
   file: string;
   initialSide: DiffSide;
+  /** Changes when the working tree changed elsewhere: reload the diff. */
+  liveKey?: number;
   onChanged: () => void | Promise<void>;
   onClose: () => void;
 };
@@ -18,7 +20,7 @@ const key = (hunk: number, line: number) => `${hunk}:${line}`;
 
 /** Diff with line-level staging: click (or drag / shift-click) changed lines,
  *  then stage, unstage or discard exactly those lines — or a whole hunk. */
-export function LineStagingDiff({ repositoryPath, file, initialSide, onChanged, onClose }: Props) {
+export function LineStagingDiff({ repositoryPath, file, initialSide, liveKey, onChanged, onClose }: Props) {
   const [side, setSide] = useState<DiffSide>(initialSide);
   const [diffs, setDiffs] = useState<Record<DiffSide, SideDiff | null>>({ unstaged: null, staged: null });
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +30,7 @@ export function LineStagingDiff({ repositoryPath, file, initialSide, onChanged, 
   const dragging = useRef<null | "add" | "remove">(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<Record<DiffSide, SideDiff> | null> => {
     setError(null);
     try {
       const [unstaged, staged] = await Promise.all([
@@ -37,13 +39,27 @@ export function LineStagingDiff({ repositoryPath, file, initialSide, onChanged, 
       ]);
       setDiffs({ unstaged, staged });
       setSide((current) => (current === "staged" && !staged.hunks.length && unstaged.hunks.length ? "unstaged" : current === "unstaged" && !unstaged.hunks.length && staged.hunks.length ? "staged" : current));
+      return { unstaged, staged };
     } catch (reason) {
       setError(String(reason).replace(/^Error: /, ""));
+      return null;
     }
   }, [repositoryPath, file]);
 
   useEffect(() => { setSelected(new Set()); setAnchor(null); void load(); }, [load]);
   useEffect(() => { setSide(initialSide); }, [initialSide, file]);
+  // Reload in place after an outside edit; a selection only survives if the
+  // diff it points into is unchanged.
+  const shownRef = useRef(diffs);
+  shownRef.current = diffs;
+  useEffect(() => {
+    if (!liveKey) return;
+    const before = shownRef.current;
+    void load().then((after) => {
+      if (after && (before.unstaged?.fingerprint !== after.unstaged?.fingerprint || before.staged?.fingerprint !== after.staged?.fingerprint)) { setSelected(new Set()); setAnchor(null); }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload only when liveKey moves
+  }, [liveKey]);
   useEffect(() => { setSelected(new Set()); setAnchor(null); }, [side]);
   useEffect(() => {
     const stop = () => { dragging.current = null; };

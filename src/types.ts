@@ -777,3 +777,12 @@ export type LandscapeScan = {
   scannedAt: string;
   durationMs: number;
 };
+
+/** Live change notification (server/src/repoWatch.ts). */
+export type RepositoryChange = {
+  /** Bumped for every change in the working tree or the git directory. */
+  version: number;
+  /** Bumped when HEAD, refs or the operation state changed. */
+  gitVersion: number;
+  mode: "events" | "poll" | "starting";
+};

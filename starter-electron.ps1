@@ -58,9 +58,11 @@ Write-Host $gitVer
 
 Step 'Installing npm dependencies (includes Electron)'
 npm install
+if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit code $LASTEXITCODE)" }
 
 Step 'Building frontend'
 npm run build
+if ($LASTEXITCODE -ne 0) { throw "npm run build failed (exit code $LASTEXITCODE)" }
 
 if ($mode -eq 'check') {
   Write-Host ''

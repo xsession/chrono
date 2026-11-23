@@ -18,6 +18,8 @@ import { OperationBanner } from "./components/OperationBanner";
 import { ConflictCenter } from "./components/ConflictCenter";
 import { RebasePlanner } from "./components/RebasePlanner";
 import { RepoTabs } from "./components/RepoTabs";
+import { SplitHandle } from "./components/SplitHandle";
+import { useStoredWidth } from "./components/ColumnGrip";
 import { TerminalPanel, type TerminalPanelHandle } from "./components/TerminalPanel";
 import { GitLogModal } from "./components/GitLogModal";
 import { KeyBindingsModal } from "./components/KeyBindingsModal";
@@ -127,6 +129,7 @@ export default function App() {
   useEffect(() => { api.customCommands().then(setCustomCommands).catch(() => undefined); }, [view]);
   const openSettings = useCallback((tab?: SettingsTab) => { setSettingsTab(tab); setView("settings"); }, []);
   const [leftPanelOpen, setLeftPanelOpen] = useState(() => localStorage.getItem("chrono.gk.leftPanel") !== "hidden");
+  const [leftPanelWidth, resizeLeftPanel, resetLeftPanel] = useStoredWidth("chrono.gk.leftWidth", 250, 170, 640);
   const [cloneOpen, setCloneOpen] = useState(false);
   const historyRequestRef = useRef(0);
 
@@ -224,6 +227,53 @@ export default function App() {
       if (requestId === historyRequestRef.current) { setBusy(false); setRevalidating(false); }
     }
   }, [path, summary]);
+
+  // Live changes: the server watches the open repository and answers this
+  // long-poll as soon as something changes, so edits made in an editor or a
+  // terminal reach the Changes list and the graph's WIP row within ~0.2 s.
+  // Working-tree edits reload the status only; HEAD, ref or operation changes
+  // (a commit, checkout, fetch or rebase elsewhere) reload the graph as well.
+  const [liveTick, setLiveTick] = useState(0);
+  const liveRef = useRef({ busy, atTop: true, refresh });
+  liveRef.current = { busy, atTop: historySegments.length <= 1 && (historySegments[0]?.offset ?? 0) === 0, refresh };
+  useEffect(() => {
+    if (!path) return;
+    const target = path;
+    let stopped = false;
+    const update = async (gitChanged: boolean) => {
+      const live = liveRef.current;
+      if (live.busy) return; // the running action refreshes when it finishes
+      if (gitChanged && live.atTop) { await live.refresh(target); setLiveTick((value) => value + 1); return; }
+      const [nextChanges, nextSummary, nextBranches] = await Promise.all([
+        api.status(target),
+        gitChanged ? api.summary(target) : Promise.resolve(null),
+        gitChanged ? api.branches(target) : Promise.resolve(null),
+      ]);
+      if (stopped) return;
+      setChanges(nextChanges);
+      if (nextSummary) setSummary(nextSummary);
+      if (nextBranches) setBranches(nextBranches);
+      if (nextChanges.length === 0) { setWipSelected(false); setWipDiff(null); }
+      setLiveTick((value) => value + 1);
+    };
+    void (async () => {
+      let seen = -1;
+      let seenGit = -1;
+      while (!stopped) {
+        try {
+          const change = await api.waitForChange(target, seen);
+          if (stopped) return;
+          if (seen >= 0 && change.version !== seen) await update(change.gitVersion !== seenGit).catch(() => undefined);
+          seen = change.version;
+          seenGit = change.gitVersion;
+        } catch (error) {
+          if (stopped || isAbandoned(error)) return;
+          await new Promise((resolve) => setTimeout(resolve, 2000)); // backend restarting: try again
+        }
+      }
+    })();
+    return () => { stopped = true; };
+  }, [path]);
 
   const trustUntrusted = useCallback(async () => {
     if (!untrusted) return;
@@ -600,6 +650,25 @@ export default function App() {
     }
   }, [repoTabs, path, refresh, clearRepositoryView]);
 
+  // Drag-and-drop or Ctrl+Shift+←/→ in the tab strip: put `target` at `index`
+  // (an index into the list before the move).
+  const moveTab = useCallback((target: string, index: number) => {
+    setRepoTabs((current) => {
+      const from = current.indexOf(target);
+      if (from < 0) return current;
+      const next = current.filter((tab) => tab !== target);
+      const at = Math.max(0, Math.min(next.length, index > from ? index - 1 : index));
+      next.splice(at, 0, target);
+      return next.every((tab, position) => tab === current[position]) ? current : next;
+    });
+  }, []);
+
+  const closeOtherTabs = useCallback((keep: string) => {
+    for (const tab of repoTabs) if (tab !== keep) { snapshotsRef.current.delete(tab); abandonRepositoryReads(tab); }
+    setRepoTabs((current) => current.filter((tab) => tab === keep));
+    if (keep !== path) void refresh(keep).catch(() => undefined);
+  }, [repoTabs, path, refresh]);
+
   const closeActiveTab = useCallback(() => { if (path) closeTab(path); }, [path, closeTab]);
 
   const selectTab = useCallback((index: number) => {
@@ -847,6 +916,8 @@ export default function App() {
             activeId={path || null}
             onSelect={(id) => void refresh(id)}
             onClose={(id) => closeTab(id)}
+            onCloseOthers={(id) => closeOtherTabs(id)}
+            onMove={moveTab}
             onNew={() => void openRepoTab()}
           />
         )}
@@ -905,7 +976,7 @@ export default function App() {
             <ConflictCenter repositoryPath={path} operation={operation.operation} onRepositoryChanged={() => refresh()} />
           )}
           {path && view === "history" && (
-            <div className={`gk-workspace${leftPanelOpen ? "" : " no-left"}`}>
+            <div className={`gk-workspace${leftPanelOpen ? "" : " no-left"}`} style={leftPanelOpen ? { gridTemplateColumns: `${leftPanelWidth}px 6px minmax(0, 1fr)` } : undefined}>
               {leftPanelOpen && (
                 <GkLeftPanel
                   repositoryPath={path}
@@ -922,6 +993,7 @@ export default function App() {
                   onOpenSubmoduleMap={() => setView("submodules")}
                 />
               )}
+              {leftPanelOpen && <SplitHandle label="Resize branches panel" onDelta={resizeLeftPanel} onReset={resetLeftPanel} />}
               <CommitGraph
                 repositoryPath={path} commits={commits} branches={branches} headSha={summary?.head ?? undefined}
                 selected={selectedCommit}
@@ -935,7 +1007,7 @@ export default function App() {
                 onRestoreFile={(revision, file) => runRepositoryAction(`Restore ${file} from ${revision.slice(0, 8)}`, () => api.explorerAction(path, { action: "checkout_revision", files: [file], revision }))}
                 overlay={wipSelected && wipDiff ? (
                   <div className="gk-center-overlay">
-                    <LineStagingDiff repositoryPath={path} file={wipDiff} initialSide={wipDiffSide} onClose={() => setWipDiff(null)} onChanged={() => refresh()} />
+                    <LineStagingDiff repositoryPath={path} file={wipDiff} initialSide={wipDiffSide} liveKey={liveTick} onClose={() => setWipDiff(null)} onChanged={() => refresh()} />
                   </div>
                 ) : undefined}
                 inspector={wipSelected && dirtyCount > 0 ? (
@@ -962,7 +1034,7 @@ export default function App() {
           {path && view === "explorer" && (
             <FileExplorer
               repositoryPath={path}
-              refreshKey={refreshKey}
+              refreshKey={refreshKey + liveTick}
               branches={branches}
               currentBranch={summary?.branch ?? null}
               busy={busy}

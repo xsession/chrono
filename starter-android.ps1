@@ -131,9 +131,11 @@ $env:ANDROID_HOME = $sdk
 # --- npm + build ---
 Step 'Installing npm dependencies'
 npm install
+if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit code $LASTEXITCODE)" }
 
 Step 'Building frontend + syncing Capacitor'
 npm run android:sync
+if ($LASTEXITCODE -ne 0) { throw "npm run android:sync failed (exit code $LASTEXITCODE)" }
 
 if ($mode -eq 'check') {
   Write-Host ''

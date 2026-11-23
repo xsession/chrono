@@ -26,9 +26,10 @@ import * as features from "./src/features.ts";
 import * as lineStaging from "./src/lineStaging.ts";
 import * as submodules from "./src/submodules.ts";
 import { landscapeScan } from "./src/landscape.ts";
+import { waitForChange } from "./src/repoWatch.ts";
 import * as trust from "./src/trust.ts";
 import * as folders from "./src/folders.ts";
-import { withAbortSignal, withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
+import { currentRequestSignal, withAbortSignal, withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
 import { readStream, validStreamId } from "./src/lib/streams.ts";
 import { rejectReason, type GuardOptions } from "./src/lib/requestGuard.ts";
 import { listPullRequests } from "./src/provider.ts";
@@ -77,6 +78,7 @@ async function resolveHost(body: Record<string, unknown>): Promise<features.Remo
 // repository tab), their git processes are killed. Routes that write never are,
 // so a half-done operation is never left behind.
 const READ_ROUTES = new Set([
+  "repository_wait_change",
   "repository_summary", "repository_remotes", "repository_history", "repository_history_page", "history_query",
   "repository_status", "repository_branches", "repository_conflicts", "search_commits", "commit_details",
   "commit_file_diff", "list_tags", "reference_groups", "working_tree_diff", "unstaged_file_diff", "list_tree",
@@ -420,6 +422,8 @@ const routes: Record<string, Handler> = {
   submodule_manifest: (body) => submodules.submoduleManifest(bodyPath(body)),
   // Codebase landscape map: one record per source file (imports, symbols, size).
   landscape_scan: (body) => landscapeScan(bodyPath(body), body.force === true),
+  // Long-poll: resolves when the repository changes after version `since`.
+  repository_wait_change: (body) => waitForChange(bodyPath(body), typeof body.since === "number" ? body.since : -1, currentRequestSignal(), typeof body.timeoutMs === "number" ? body.timeoutMs : undefined),
   superproject_chain: (body) => submodules.superprojectChain(bodyPath(body)),
   repository_trust: (body) => trust.checkTrust(bodyPath(body)),
   trust_repository: (body) => trust.trustRepository(bodyPath(body)),

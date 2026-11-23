@@ -4,10 +4,12 @@ import type { KeyboardEvent, PointerEvent } from "react";
 type Props = {
   label: string;
   onDelta: (deltaX: number) => void;
+  /** Double-click (or Home) restores the default width. */
+  onReset?: () => void;
   step?: number;
 };
 
-export function SplitHandle({ label, onDelta, step = 24 }: Props) {
+export function SplitHandle({ label, onDelta, onReset, step = 24 }: Props) {
   const lastX = useRef<number | null>(null);
 
   const startResize = (event: PointerEvent<HTMLDivElement>) => {
@@ -38,6 +40,9 @@ export function SplitHandle({ label, onDelta, step = 24 }: Props) {
     } else if (event.key === "ArrowRight") {
       event.preventDefault();
       onDelta(step);
+    } else if (event.key === "Home" && onReset) {
+      event.preventDefault();
+      onReset();
     }
   };
 
@@ -53,6 +58,8 @@ export function SplitHandle({ label, onDelta, step = 24 }: Props) {
       onPointerUp={stopResize}
       onPointerCancel={stopResize}
       onKeyDown={keyResize}
+      onDoubleClick={onReset}
+      title={onReset ? `${label} (double-click to reset)` : undefined}
     >
       <span aria-hidden="true" />
     </div>

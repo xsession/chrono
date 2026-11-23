@@ -10,6 +10,7 @@ import {
 import type { GraphLabel, GraphRowData } from "../graph";
 import { Icon } from "./Icon";
 import { SplitHandle } from "./SplitHandle";
+import { ColumnGrip, useStoredColumns, useStoredWidth } from "./ColumnGrip";
 import { CommitDiffView } from "./CommitDiffView";
 import { CommitCompareDiff, CommitCompareInspector } from "./gk/CommitCompare";
 import { CommitExtras, SignatureBadge, SIGNATURE_LABEL } from "./gk/CommitExtras";
@@ -69,6 +70,10 @@ const FILTER_HISTORY_STORAGE = "chrono.history.filterHistory";
 const GRAPH_SCOPE_STORAGE = "chrono.history.scope";
 const HIDDEN_REFS_STORAGE = "chrono.history.hiddenRefs";
 const FILTER_HISTORY_MAX = 10;
+// History columns the user can resize (Graph has its own stored width and
+// Commit takes whatever is left, but never less than COMMIT_MIN).
+const HISTORY_COLUMNS = { author: 140, date: 142, changes: 116, sha: 84 };
+const COMMIT_MIN = 160;
 
 function formatDate(value: string): string {
   const date = /^\d+$/.test(value) ? new Date(Number(value) * 1000) : new Date(value);
@@ -194,7 +199,8 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   });
   const [hiddenRefs, setHiddenRefs] = useState<string[]>(loadHiddenRefs);
   const [refMenuOpen, setRefMenuOpen] = useState(false);
-  const [inspectorWidth, setInspectorWidth] = useState(380);
+  const [inspectorWidth, resizeInspector] = useStoredWidth("chrono.history.inspectorWidth", 380, 260, 900);
+  const [columns, resizeColumn, resetColumn] = useStoredColumns("chrono.history.columns", HISTORY_COLUMNS, 48);
   const [stats, setStats] = useState<Map<string, HistoryChangeStat>>(new Map());
   const [details, setDetails] = useState<CommitDetails | null>(null);
   const [diffFile, setDiffFile] = useState<string | null>(null);
@@ -546,9 +552,10 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     return compareSwapped ? { from: newer, to: older } : { from: older, to: newer };
   })();
   const wip = worktrees.filter((worktree) => !worktree.isMain && (worktree.dirtyCount > 0 || worktree.conflictCount > 0));
-  const gridTemplate = showChanges
-    ? `${graphColWidth}px minmax(220px, 1fr) minmax(110px, .28fr) 142px 116px 80px`
-    : `${graphColWidth}px minmax(220px, 1fr) minmax(100px, .28fr) 118px 132px`;
+  // Commit takes the free space; every other column has a stored width.
+  const gridTemplate = `${graphColWidth}px minmax(${COMMIT_MIN}px, 1fr) ${columns.author}px ${columns.date}px ${showChanges ? `${columns.changes}px ` : ""}${columns.sha}px`;
+  const gridMinWidth = graphColWidth + COMMIT_MIN + columns.author + columns.date + (showChanges ? columns.changes : 0) + columns.sha;
+  const rowStyle = { gridTemplateColumns: gridTemplate, minWidth: gridMinWidth };
   const contextMenuStyle = contextMenu ? {
     left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 244)),
     top: Math.max(8, Math.min(contextMenu.y, window.innerHeight - 330)),
@@ -700,8 +707,16 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
         })()}
 
         <div ref={historyGridRef} className={`ux-commit-grid${showChanges ? " show-changes" : ""}`} aria-label="Commit history list" onScroll={updateHistoryViewport}>
-          <div className="ux-commit-grid-header" style={{ gridTemplateColumns: gridTemplate }} aria-hidden="true"><span>Graph</span><span>Commit</span><span>Author</span><span>Date</span>{showChanges && <span>Changes</span>}<span>SHA</span></div>
-          <div className="ux-commit-rows" style={{ gridTemplateColumns: gridTemplate }}>
+          <div className="ux-commit-grid-header" style={rowStyle}>
+            <span>Graph<ColumnGrip label="Resize graph column" onDelta={(delta) => applyGraphWidth(graphColWidth + delta)} onReset={() => applyGraphWidth(0)} /></span>
+            {/* Commit fills the free space, so its edge moves the Author column's left side. */}
+            <span>Commit<ColumnGrip label="Resize commit column" onDelta={(delta) => resizeColumn("author", -delta)} onReset={() => resetColumn("author")} /></span>
+            <span>Author<ColumnGrip label="Resize author column" onDelta={(delta) => resizeColumn("author", delta)} onReset={() => resetColumn("author")} /></span>
+            <span>Date<ColumnGrip label="Resize date column" onDelta={(delta) => resizeColumn("date", delta)} onReset={() => resetColumn("date")} /></span>
+            {showChanges && <span>Changes<ColumnGrip label="Resize changes column" onDelta={(delta) => resizeColumn("changes", delta)} onReset={() => resetColumn("changes")} /></span>}
+            <span>SHA<ColumnGrip label="Resize SHA column" onDelta={(delta) => resizeColumn("sha", delta)} onReset={() => resetColumn("sha")} /></span>
+          </div>
+          <div className="ux-commit-rows" style={rowStyle}>
             {historyHasNewer && !filteredCommits && (
               <div className="ux-history-load-more ux-history-load-more--top">
                 <button type="button" className="ux-button" disabled={historyLoading || !onLoadNewer} onClick={() => { if (onLoadNewer) void onLoadNewer(); }}>
@@ -715,7 +730,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               const displayIndex = historyRowViewport.start + relativeIndex;
               if (entry.kind === "elided") {
                 return (
-                  <div key={`elided-${displayIndex}`} className="ux-commit-row ux-elided-row" style={{ gridTemplateColumns: gridTemplate }} aria-hidden="true">
+                  <div key={`elided-${displayIndex}`} className="ux-commit-row ux-elided-row" style={rowStyle} aria-hidden="true">
                     <span className="ux-graph-cell" style={{ width: graphColWidth }}>
                       <svg className="ux-graph-svg" width={graphWidthPx} height={ROW_H} viewBox={`0 0 ${graphWidthPx} ${ROW_H}`}>
                         {entry.throughLanes.map((lane) => (
@@ -756,7 +771,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                 <div
                   key={commit.id}
                   className={`ux-commit-row${isSelected ? " is-selected" : ""}${compareWith?.id === commit.id ? " is-compared" : ""}${isDimmed ? " is-dimmed" : ""}`}
-                  style={{ gridTemplateColumns: gridTemplate }}
+                  style={rowStyle}
                   role="button"
                   tabIndex={0}
                   aria-pressed={isSelected}
@@ -836,7 +851,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
         </div>
       </section>
 
-      <SplitHandle label="Resize commit inspector" onDelta={(delta) => setInspectorWidth((width) => Math.min(780, Math.max(300, width - delta)))} />
+      <SplitHandle label="Resize commit inspector" onDelta={(delta) => resizeInspector(-delta)} />
 
       <aside className={`ux-inspector${inspector ? " gk-inspector-override" : ""}`} aria-label="Commit details">
         {inspector ? inspector : compareSides ? (

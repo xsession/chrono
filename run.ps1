@@ -50,9 +50,11 @@ Write-Host $gitVer
 
 Step 'Installing npm dependencies'
 npm install
+if ($LASTEXITCODE -ne 0) { throw "npm install failed (exit code $LASTEXITCODE)" }
 
 Step 'Building frontend'
 npm run build
+if ($LASTEXITCODE -ne 0) { throw "npm run build failed (exit code $LASTEXITCODE)" }
 
 if ($check) {
   Write-Host ''
