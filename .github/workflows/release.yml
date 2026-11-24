@@ -206,6 +206,10 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }},enable=${{ needs.verify.outputs.prerelease == 'false' }}
             type=raw,value=latest,enable=${{ needs.verify.outputs.prerelease == 'false' }}
       - uses: docker/build-push-action@v6
+        env:
+          # No build-record artifact: it is not a release file, and
+          # download-artifact cannot extract it, which broke the publish job.
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -222,9 +226,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only the release files, by name: other artifacts in the run (such as
+      # Docker's .dockerbuild record) are not downloadable as plain files.
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: "{installers-*,desktop-*,server,android}"
           merge-multiple: true
       - name: Checksums
         working-directory: artifacts
