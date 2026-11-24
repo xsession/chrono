@@ -46,19 +46,29 @@ jobs:
   linux:
     name: Build Linux (deb, pacman, rpm, AppImage)
     runs-on: ubuntu-latest
+    # Build in Debian 12 rather than on the newest runner: node-pty has no Linux
+    # prebuilt binary and is compiled here, and a native module compiled against
+    # a newer glibc does not load on older systems (Ubuntu 22.04, Debian 12).
+    # node:22-bookworm also has the compilers node-gyp needs.
+    container: node:22-bookworm
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
       - name: Packaging tools
         # rpm for the .rpm, libarchive-tools (bsdtar) and zstd for the Arch package.
-        run: sudo apt-get update && sudo apt-get install -y rpm libarchive-tools zstd
+        run: apt-get update && apt-get install -y rpm libarchive-tools zstd
       - run: npm ci
+      - name: node-pty loads on Ubuntu 22.04 and newer
+        # Ubuntu 22.04 has glibc 2.35: the compiled module must not need more.
+        run: |
+          module=node_modules/node-pty/build/Release/pty.node
+          test -f "$module"
+          needed="$(objdump -T "$module" | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -n1)"
+          echo "$module needs $needed"
+          [ "$(printf '%s\nGLIBC_2.35\n' "$needed" | sort -V | tail -n1)" = "GLIBC_2.35" ] || { echo "::error::$module needs $needed, newer than Ubuntu 22.04's glibc 2.35"; exit 1; }
+          node -e 'require("node-pty"); console.log("node-pty loads")'
       - run: npm run build
       - name: Build packages
         run: npx electron-builder --linux --x64 --publish never
@@ -147,11 +157,18 @@ jobs:
           app=/opt/Chrono
           ELECTRON_RUN_AS_NODE=1 CHRONO_PORT="$TEST_PORT" CHRONO_CONFIG_DIR=/tmp/chrono-config \
             "$app/chrono" --experimental-strip-types "$app/resources/app.asar.unpacked/server/index.ts" > /tmp/backend.log 2>&1 &
+          pid=$!
           for _ in $(seq 1 60); do
             if curl -fsS "http://127.0.0.1:$TEST_PORT/api/health"; then echo; exit 0; fi
+            kill -0 "$pid" 2>/dev/null || break   # it exited: no point waiting
             sleep 0.5
           done
-          cat /tmp/backend.log; echo "the installed backend did not start" >&2; exit 1
+          cat /tmp/backend.log
+          # Also as annotations, which can be read without signing in to GitHub.
+          head -n 30 /tmp/backend.log | sed 's/^/::error title=Backend log::/'
+          ldd "$app/chrono" "$app/resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node" 2>&1 \
+            | grep -E 'not found' | sed 's/^/::error title=Missing library::/' || true
+          echo "::error::the installed backend did not start"; exit 1
       - name: Uninstall removes it
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -188,11 +205,18 @@ jobs:
           app=/opt/Chrono
           ELECTRON_RUN_AS_NODE=1 CHRONO_PORT="$TEST_PORT" CHRONO_CONFIG_DIR=/tmp/chrono-config \
             "$app/chrono" --experimental-strip-types "$app/resources/app.asar.unpacked/server/index.ts" > /tmp/backend.log 2>&1 &
+          pid=$!
           for _ in $(seq 1 60); do
             if curl -fsS "http://127.0.0.1:$TEST_PORT/api/health"; then echo; exit 0; fi
+            kill -0 "$pid" 2>/dev/null || break   # it exited: no point waiting
             sleep 0.5
           done
-          cat /tmp/backend.log; echo "the installed backend did not start" >&2; exit 1
+          cat /tmp/backend.log
+          # Also as annotations, which can be read without signing in to GitHub.
+          head -n 30 /tmp/backend.log | sed 's/^/::error title=Backend log::/'
+          ldd "$app/chrono" "$app/resources/app.asar.unpacked/node_modules/node-pty/build/Release/pty.node" 2>&1 \
+            | grep -E 'not found' | sed 's/^/::error title=Missing library::/' || true
+          echo "::error::the installed backend did not start"; exit 1
       - name: Uninstall removes it
         run: |
           pacman -R --noconfirm chrono-next
