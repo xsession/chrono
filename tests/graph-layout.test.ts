@@ -152,7 +152,7 @@ function rowOf(result, id: string) {
 {
   assert.equal(LANE_W, 26);
   assert.equal(LANE_PAD, 16);
-  assert.equal(ROW_H, 38);
+  assert.equal(ROW_H, 34);
   assert.equal(laneX(0), 16);
   assert.equal(laneX(2), 16 + 2 * 26);
   assert.equal(graphWidth(1), 96, "minimum width clamp");

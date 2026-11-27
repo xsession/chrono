@@ -18,6 +18,9 @@ export const SIGNATURE_LABEL: Record<string, { text: string; kind: string; short
 export function SignatureBadge({ info, compact = false }: { info: SignatureInfo | undefined; compact?: boolean }) {
   if (!info || info.status === "N" || !SIGNATURE_LABEL[info.status]) return null;
   const meta = SIGNATURE_LABEL[info.status];
+  // In the history list only verified, bad and expired signatures earn a
+  // badge; "signed, but the key can't be checked" stays in the inspector.
+  if (compact && meta.kind === "unknown") return null;
   return (
     <span className={`gk-sig is-${meta.kind}`} title={`${meta.text}${info.signer ? ` — ${info.signer}` : ""}${info.key ? ` (key ${info.key})` : ""}`} aria-label={`${meta.text}${info.signer ? ` by ${info.signer}` : ""}`}>
       {meta.kind === "good" ? "✓" : meta.kind === "bad" ? "✕" : meta.kind === "expired" ? "⌛" : "?"}{compact ? "" : ` ${meta.short}`}

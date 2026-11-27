@@ -39,7 +39,7 @@ export const LANE_PAD = 16;
 // Must equal the rendered row height (.ux-commit-rows .ux-commit-row in
 // ux.css): each row's SVG spans the full row so vertical lines connect
 // across row boundaries without a gap.
-export const ROW_H = 38;
+export const ROW_H = 34;
 
 export function laneX(lane: number): number {
   return LANE_PAD + lane * LANE_W;

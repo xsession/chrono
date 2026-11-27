@@ -22,6 +22,7 @@ import { reachableCommitIds, referenceKey, visibleRefCommitIds } from "../refVis
 // Typed search operators (Sublime Merge / GitLens style): author: path: …
 const SEARCH_OPERATOR_RE = /(^|\s)-?(author|by|committer|message|msg|path|file|contents?|code|since|after|until|before|type|is|sha|commit|ref|branch|in):/i;
 import { HISTORY_ROW_HEIGHT, visibleHistoryRows } from "../historyWindow";
+import { COLUMN_DROP_ORDER, COLUMN_LABELS, formatDate, formatDateLong, hiddenHistoryColumns, relativeDate, type OptionalColumn } from "../historyColumns";
 
 /** GitKraken "// WIP" node shown above the newest commit. */
 export type GraphWip = { count: number; conflicts: number; branch: string | null; selected: boolean; onSelect: () => void };
@@ -75,23 +76,12 @@ const FILTER_HISTORY_MAX = 10;
 // v2: the stored width may now be narrower than the graph (v1 never was).
 const GRAPH_WIDTH_STORAGE = "chrono.history.graphWidth.v2";
 const GRAPH_MIN_WIDTH = 48;
-const HISTORY_COLUMNS = { refs: 190, author: 140, date: 142, changes: 116, sha: 84 };
+const HISTORY_COLUMNS = { refs: 160, author: 140, date: 104, changes: 116, sha: 84 };
 const COMMIT_MIN = 160;
 
-function formatDate(value: string): string {
-  const date = /^\d+$/.test(value) ? new Date(Number(value) * 1000) : new Date(value);
-  return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined, {
-    month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit"
-  }).format(date);
-}
-
-/** GitKraken-style author avatar: initials on a colour derived from the email. */
-function Avatar({ name, email }: { name: string; email: string }) {
-  return <span className="gk-avatar" style={{ background: `hsl(${authorHue(name, email)} 45% 38%)` }} aria-hidden="true">{authorInitials(name)}</span>;
-}
 
 /** Radius of a commit node, which carries its author's initials. */
-const NODE_R = 11;
+const NODE_R = 10;
 
 /** A ref name whose folder part (dependabot/npm_and_yarn/) gives way first,
  *  so the part that tells branches apart stays readable in a narrow column. */
@@ -265,6 +255,15 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
   const [contextMenu, setContextMenu] = useState<CommitContextMenu | null>(null);
   const [historyViewport, setHistoryViewport] = useState({ scrollTop: 0, height: 720 });
   const historyGridRef = useRef<HTMLDivElement | null>(null);
+  const [relativeDates, setRelativeDates] = useState(() => localStorage.getItem("chrono.history.relativeDates") !== "off");
+  const [gridWidth, setGridWidth] = useState(0);
+  // Relative dates ("3 min ago") move on by themselves.
+  const [, setClock] = useState(0);
+  useEffect(() => {
+    if (!relativeDates) return;
+    const timer = setInterval(() => setClock((tick) => tick + 1), 60000);
+    return () => clearInterval(timer);
+  }, [relativeDates]);
   const graphDrag = useRef<number | null>(null);
   const currentBranch = branches.find((branch) => branch.current);
   const refBranches = useMemo(() => branches.filter((branch) => branch.name.length > 0), [branches]);
@@ -535,6 +534,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     if (!element) return;
     setHistoryViewport((previous) => {
       const next = { scrollTop: element.scrollTop, height: element.clientHeight || previous.height };
+      setGridWidth((width) => (element.clientWidth && element.clientWidth !== width ? element.clientWidth : width));
       return previous.scrollTop === next.scrollTop && previous.height === next.height ? previous : next;
     });
   };
@@ -596,9 +596,13 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
     return compareSwapped ? { from: newer, to: older } : { from: older, to: newer };
   })();
   const wip = worktrees.filter((worktree) => !worktree.isMain && (worktree.dirtyCount > 0 || worktree.conflictCount > 0));
-  // Commit takes the free space; every other column has a stored width.
-  const gridTemplate = `${columns.refs}px ${graphColWidth}px minmax(${COMMIT_MIN}px, 1fr) ${columns.author}px ${columns.date}px ${showChanges ? `${columns.changes}px ` : ""}${columns.sha}px`;
-  const gridMinWidth = columns.refs + graphColWidth + COMMIT_MIN + columns.author + columns.date + (showChanges ? columns.changes : 0) + columns.sha;
+  // Commit takes the free space; every other column has a stored width. When
+  // the list is narrow, SHA, Changes, Author and Date give way (in that
+  // order) so the commit message stays readable instead of the row scrolling.
+  const { hidden, squeezed } = hiddenHistoryColumns(columns, columns.refs + graphColWidth, gridWidth, showChanges);
+  const shown = (column: OptionalColumn) => !hidden.has(column);
+  const gridTemplate = `${columns.refs}px ${graphColWidth}px minmax(${COMMIT_MIN}px, 1fr)${shown("author") ? ` ${columns.author}px` : ""}${shown("date") ? ` ${columns.date}px` : ""}${shown("changes") ? ` ${columns.changes}px` : ""}${shown("sha") ? ` ${columns.sha}px` : ""}`;
+  const gridMinWidth = columns.refs + graphColWidth + COMMIT_MIN + COLUMN_DROP_ORDER.reduce((sum, column) => sum + (shown(column) ? columns[column] : 0), 0);
   const rowStyle = { gridTemplateColumns: gridTemplate, minWidth: gridMinWidth };
   const contextMenuStyle = contextMenu ? {
     left: Math.max(8, Math.min(contextMenu.x, window.innerWidth - 244)),
@@ -653,6 +657,8 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                   </div>
                   <div className="ux-view-field"><span>Columns</span>
                     <label className="ux-check-row"><input type="checkbox" checked={showChanges} onChange={(event) => { setShowChanges(event.target.checked); localStorage.setItem("chrono.history.changes", event.target.checked ? "on" : "off"); }} />Changes</label>
+                    <label className="ux-check-row"><input type="checkbox" checked={relativeDates} onChange={(event) => { setRelativeDates(event.target.checked); localStorage.setItem("chrono.history.relativeDates", event.target.checked ? "on" : "off"); }} />Relative dates</label>
+                    {squeezed.length > 0 && <small className="ux-view-note">Widen the list to see {squeezed.map((column) => COLUMN_LABELS[column]).join(", ")}.</small>}
                   </div>
                   <div className="ux-view-field"><span>Branches</span>
                     <div className="ux-ref-visibility">
@@ -756,10 +762,10 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
             <span>Graph<ColumnGrip label="Resize graph column" onDelta={(delta) => applyGraphWidth(graphColWidth + delta)} onReset={() => applyGraphWidth(0)} /></span>
             {/* Commit fills the free space, so its edge moves the Author column's left side. */}
             <span>Commit<ColumnGrip label="Resize commit column" onDelta={(delta) => resizeColumn("author", -delta)} onReset={() => resetColumn("author")} /></span>
-            <span>Author<ColumnGrip label="Resize author column" onDelta={(delta) => resizeColumn("author", delta)} onReset={() => resetColumn("author")} /></span>
-            <span>Date<ColumnGrip label="Resize date column" onDelta={(delta) => resizeColumn("date", delta)} onReset={() => resetColumn("date")} /></span>
-            {showChanges && <span>Changes<ColumnGrip label="Resize changes column" onDelta={(delta) => resizeColumn("changes", delta)} onReset={() => resetColumn("changes")} /></span>}
-            <span>SHA<ColumnGrip label="Resize SHA column" onDelta={(delta) => resizeColumn("sha", delta)} onReset={() => resetColumn("sha")} /></span>
+            {shown("author") && <span>Author<ColumnGrip label="Resize author column" onDelta={(delta) => resizeColumn("author", delta)} onReset={() => resetColumn("author")} /></span>}
+            {shown("date") && <span>Date<ColumnGrip label="Resize date column" onDelta={(delta) => resizeColumn("date", delta)} onReset={() => resetColumn("date")} /></span>}
+            {shown("changes") && <span>Changes<ColumnGrip label="Resize changes column" onDelta={(delta) => resizeColumn("changes", delta)} onReset={() => resetColumn("changes")} /></span>}
+            {shown("sha") && <span>SHA<ColumnGrip label="Resize SHA column" onDelta={(delta) => resizeColumn("sha", delta)} onReset={() => resetColumn("sha")} /></span>}
           </div>
           <div className="ux-commit-rows" style={rowStyle}>
             {historyHasNewer && !filteredCommits && (
@@ -786,9 +792,10 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                       </svg>
                     </span>
                     <span className="ux-elided-label">{entry.count} more commit{entry.count === 1 ? "" : "s"} hidden by filter</span>
-                    <span /><span />
-                    {showChanges && <span />}
-                    <code />
+                    {shown("author") && <span />}
+                    {shown("date") && <span />}
+                    {shown("changes") && <span />}
+                    {shown("sha") && <code />}
                   </div>
                 );
               }
@@ -802,7 +809,7 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
               return (
                 <div
                   key={commit.id}
-                  className={`ux-commit-row${isSelected ? " is-selected" : ""}${compareWith?.id === commit.id ? " is-compared" : ""}${isDimmed ? " is-dimmed" : ""}`}
+                  className={`ux-commit-row${item.isMerge ? " is-merge" : ""}${isSelected ? " is-selected" : ""}${compareWith?.id === commit.id ? " is-compared" : ""}${isDimmed ? " is-dimmed" : ""}`}
                   style={rowStyle}
                   role="button"
                   tabIndex={0}
@@ -853,9 +860,11 @@ export function CommitGraph({ repositoryPath, commits, branches, headSha, select
                     <span className="ux-commit-subject-text"><Linkified text={commit.subject} rules={autolinkRules} /></span>
                     <SignatureBadge info={signatures.get(commit.id)} compact />
                   </span>
-                  <span className="gk-author-cell" title={`${commit.authorName} <${commit.authorEmail}>`}><Avatar name={commit.authorName} email={commit.authorEmail} /><span>{commit.authorName}</span></span><span>{formatDate(commit.authoredAt)}</span>
-                  {showChanges && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} file${stat.filesChanged === 1 ? "" : "s"}, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}
-                  <code>{commit.id.slice(0, 8)}</code>
+                  {/* The node in the graph already carries the author's initials. */}
+                  {shown("author") && <span className="gk-author-cell" title={`${commit.authorName} <${commit.authorEmail}>`}><span>{commit.authorName}</span></span>}
+                  {shown("date") && <span className="ux-date-cell" title={formatDateLong(commit.authoredAt)}>{relativeDates ? relativeDate(commit.authoredAt) : formatDate(commit.authoredAt)}</span>}
+                  {shown("changes") && <span className="ux-change-cell" title={stat ? `${stat.filesChanged} file${stat.filesChanged === 1 ? "" : "s"}, +${stat.additions}, -${stat.deletions}` : "Loading changes…"}>{stat ? <><b>+{stat.additions}</b><i>−{stat.deletions}</i><small>{stat.filesChanged}</small></> : <small>…</small>}</span>}
+                  {shown("sha") && <code>{commit.id.slice(0, 8)}</code>}
                 </div>
               );
             })}

@@ -53,11 +53,12 @@ const bounded = many.reduce((current, segment) => addHistoryPage(current, segmen
 assert.equal(bounded.length, HISTORY_MAX_PAGES, "history window never exceeds its page budget");
 
 let viewport = visibleHistoryRows(3600, 0, 720, 2);
+const firstEnd = Math.ceil(720 / HISTORY_ROW_HEIGHT) + 2;
 assert.deepEqual(viewport, {
   start: 0,
-  end: 21,
+  end: firstEnd,
   topSpacer: 0,
-  bottomSpacer: (3600 - 21) * HISTORY_ROW_HEIGHT,
+  bottomSpacer: (3600 - firstEnd) * HISTORY_ROW_HEIGHT,
 }, "history viewport mounts the first rows with overscan");
 viewport = visibleHistoryRows(3600, 120 * HISTORY_ROW_HEIGHT, 10 * HISTORY_ROW_HEIGHT, 2);
 assert.deepEqual(viewport, {

@@ -12,7 +12,7 @@ export const HISTORY_MAX_PAGES = 12;
 /** The fixed row height used by the history graph. Keeping this value next to
  * the viewport math makes the spacer dimensions deterministic and prevents a
  * large history from requiring one DOM node per commit. */
-export const HISTORY_ROW_HEIGHT = 38;
+export const HISTORY_ROW_HEIGHT = 34;
 
 export const HISTORY_VIEWPORT_OVERSCAN = 40;
 
