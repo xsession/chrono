@@ -37,6 +37,7 @@ import { currentRequestSignal, withAbortSignal, withDiffOptions, type DiffOption
 import { readStream, validStreamId } from "./src/lib/streams.ts";
 import { rejectReason, type GuardOptions } from "./src/lib/requestGuard.ts";
 import { listPullRequests } from "./src/provider.ts";
+import * as hosting from "./src/hosting.ts";
 import * as repo from "./src/repo.ts";
 import { loadWorkspaces, saveWorkspaces, type Workspace } from "./src/workspaces.ts";
 import { recentGitCommands } from "./src/lib/gitLog.ts";
@@ -66,7 +67,7 @@ function branchActionLabel(body: Record<string, unknown>): string {
 
 async function resolveHost(body: Record<string, unknown>): Promise<features.RemoteHost> {
   const host = await features.remoteHost(bodyPath(body), optStr(body.remote) ?? "origin");
-  if (!host) throw new AppError("invalid", "could not detect a GitHub/GitLab/Gitea/Bitbucket Server remote — check the remote URL");
+  if (!host) throw new AppError("invalid", "could not detect a GitHub, GitLab, Gitea or Bitbucket remote — check the remote URL");
   const apiBase = optStr(body.apiBase);
   if (apiBase) {
     if (!/^https?:\/\//i.test(apiBase)) throw new AppError("invalid", "API base must be an http(s) URL");
@@ -632,13 +633,22 @@ const routes: Record<string, Handler> = {
   pr_template: (body) => features.pullRequestTemplate(bodyPath(body)),
   pr_create: async (body) => {
     const host = await resolveHost(body);
-    return features.createPullRequest(host, typeof body.token === "string" ? body.token : "", {
+    return features.createPullRequest(host, await hosting.resolveToken(body.token, host.host), {
       head: str(body.head, "head"), base: str(body.base, "base"), title: str(body.title, "title"),
       body: typeof body.description === "string" ? body.description : "", draft: body.draft === true,
     });
   },
-  ci_checks: async (body) => features.ciChecks(await resolveHost(body), typeof body.token === "string" ? body.token : "", str(body.sha, "sha")),
-  ci_rerun: async (body) => features.rerunCheck(await resolveHost(body), typeof body.token === "string" ? body.token : "", body.check as features.CheckRun),
+  ci_checks: async (body) => { const host = await resolveHost(body); return features.ciChecks(host, await hosting.resolveToken(body.token, host.host), str(body.sha, "sha")); },
+  ci_rerun: async (body) => { const host = await resolveHost(body); return features.rerunCheck(host, await hosting.resolveToken(body.token, host.host), body.check as features.CheckRun); },
+  hosting_connections: async () => hosting.listConnections(),
+  hosting_connection_save: (body) => hosting.saveConnection(str(body.host, "host"), {
+    insecureTls: typeof body.insecureTls === "boolean" ? body.insecureTls : undefined,
+    caFile: typeof body.caFile === "string" ? body.caFile : undefined,
+    timeoutSeconds: typeof body.timeoutSeconds === "number" ? body.timeoutSeconds : undefined,
+    token: body.token === null ? null : typeof body.token === "string" ? body.token : undefined,
+  }),
+  hosting_connection_remove: async (body) => { await hosting.removeConnection(str(body.host, "host")); return null; },
+  hosting_connection_test: async (body) => hosting.testConnection(str(body.provider, "provider"), str(body.apiBase, "apiBase"), await hosting.resolveToken(body.token, str(body.host, "host"))),
 
   // ---- Roadmap Tier 3 -------------------------------------------------------
   agent_worktree_create: (body) => features.createAgentWorktree(bodyPath(body), str(body.name, "name"), optStr(body.base) ?? "HEAD", optStr(body.location)),
@@ -669,13 +679,14 @@ const routes: Record<string, Handler> = {
     return null;
   },
 
-  list_pull_requests: (body) =>
+  list_pull_requests: async (body) =>
     listPullRequests(
       str(body.provider, "provider"),
       str(body.baseUrl, "baseUrl"),
       str(body.owner, "owner"),
       str(body.repository, "repository"),
-      str(body.token, "token"),
+      // No token typed: use the one remembered for this server, if any.
+      await hosting.resolveToken(body.token, optStr(body.host) || str(body.baseUrl, "baseUrl")),
     ),
 };
 

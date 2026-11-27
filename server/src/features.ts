@@ -30,6 +30,7 @@ import {
   type CommandResult,
   type CommitRecord, HISTORY_ALL_REFS } from "./lib/git.ts";
 import { workspacesFile } from "./workspaces.ts";
+import { authHeaders, hostingFetch } from "./hosting.ts";
 import { finishStream, runGitStreaming } from "./lib/streams.ts";
 import { commitSubmodules, NestedCommitError, type NestedCommit } from "./nestedCommit.ts";
 import { aiComplete, AiUnavailableError } from "./ai.ts";
@@ -1104,11 +1105,12 @@ export async function notesSet(inputPath: string, commit: string, text: string, 
 // Hosting providers: remote parsing, PR creation, CI checks
 // ===========================================================================
 
-export type HostingProvider = "github" | "gitlab" | "gitea" | "bitbucket-server";
-export const HOSTING_PROVIDERS: readonly HostingProvider[] = ["github", "gitlab", "gitea", "bitbucket-server"];
+export type HostingProvider = "github" | "gitlab" | "gitea" | "bitbucket-server" | "bitbucket-cloud";
+export const HOSTING_PROVIDERS: readonly HostingProvider[] = ["github", "gitlab", "gitea", "bitbucket-server", "bitbucket-cloud"];
 
 /** For "bitbucket-server", owner is the project key (~user for a personal
- *  repository) and repository is the repository slug. */
+ *  repository) and repository is the repository slug. For "bitbucket-cloud"
+ *  (bitbucket.org), owner is the workspace. */
 export interface RemoteHost { provider: HostingProvider; host: string; owner: string; repository: string; apiBase: string; webBase: string }
 
 /** Self-hosted Bitbucket Server / Data Center. Clone URLs look like
@@ -1163,6 +1165,7 @@ export function parseRemote(url: string): RemoteHost | null {
   if (bitbucket) return bitbucket;
   const repository = parts.pop()!;
   const owner = parts.join("/");
+  if (/(^|\.)bitbucket\.org$/i.test(host)) return { provider: "bitbucket-cloud", host: "bitbucket.org", owner, repository, apiBase: "https://api.bitbucket.org/2.0", webBase: `https://bitbucket.org/${owner}/${repository}` };
   if (host === "github.com") return { provider: "github", host, owner, repository, apiBase: "https://api.github.com", webBase: `https://github.com/${owner}/${repository}` };
   if (host.includes("gitlab")) return { provider: "gitlab", host, owner, repository, apiBase: `https://${host}/api/v4`, webBase: `https://${host}/${owner}/${repository}` };
   return { provider: "gitea", host, owner, repository, apiBase: `https://${host}/api/v1`, webBase: `https://${host}/${owner}/${repository}` };
@@ -1184,23 +1187,19 @@ export async function pullRequestTemplate(inputPath: string): Promise<string> {
 
 async function providerFetch(url: string, init: RequestInit): Promise<unknown> {
   let response: Response;
-  try { response = await fetch(url, { ...init, signal: AbortSignal.timeout(20000) }); }
-  catch (error) { throw new AppError("http", `request to ${url} failed: ${(error as Error).message}`); }
+  try { response = await hostingFetch(url, init); }
+  catch (error) { throw error instanceof AppError ? error : new AppError("http", `request to ${url} failed: ${(error as Error).message}`); }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     // Bitbucket Server reports errors as { errors: [{ message }] }.
     const record = body && typeof body === "object" ? body as Record<string, unknown> : null;
     const errors = Array.isArray(record?.errors) ? (record.errors as Array<Record<string, unknown>>).map((entry) => String(entry?.message ?? "")).filter(Boolean).join("; ") : "";
-    const detail = record ? String(record.message ?? record.error ?? "") || errors : "";
+    // Bitbucket Cloud: { error: { message } }.
+    const nested = record?.error && typeof record.error === "object" ? String((record.error as Record<string, unknown>).message ?? "") : "";
+    const detail = record ? nested || String(record.message ?? (typeof record.error === "string" ? record.error : "") ?? "") || errors : "";
     throw new AppError("http", `provider responded ${response.status}${detail ? `: ${detail}` : ""}`);
   }
   return body;
-}
-
-function authHeaders(provider: RemoteHost["provider"], token: string): Record<string, string> {
-  if (!token) return {};
-  if (provider === "gitlab") return { "PRIVATE-TOKEN": token };
-  return { Authorization: `Bearer ${token}` };
 }
 
 export async function createPullRequest(target: RemoteHost, token: string, request: { head: string; base: string; title: string; body: string; draft: boolean }): Promise<{ number: number; url: string }> {
@@ -1223,6 +1222,11 @@ export async function createPullRequest(target: RemoteHost, token: string, reque
     const body = await providerFetch(`${target.apiBase}${bitbucketRepoPath(target)}/pull-requests`, { method: "POST", headers, body: JSON.stringify(payload) }) as Record<string, unknown>;
     const links = body.links as { self?: Array<{ href?: string }> } | undefined;
     return { number: Number(body.id), url: String(links?.self?.[0]?.href ?? `${target.webBase}/pull-requests/${String(body.id)}`) };
+  }
+  if (target.provider === "bitbucket-cloud") {
+    const body = await providerFetch(`${target.apiBase}/repositories/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repository)}/pullrequests`, { method: "POST", headers, body: JSON.stringify({ title: request.title, description: request.body, source: { branch: { name: request.head } }, destination: { branch: { name: request.base } }, draft: request.draft }) }) as Record<string, unknown>;
+    const links = body.links as { html?: { href?: string } } | undefined;
+    return { number: Number(body.id), url: String(links?.html?.href ?? `${target.webBase}/pull-requests/${String(body.id)}`) };
   }
   if (target.provider === "gitlab") {
     const project = encodeURIComponent(`${target.owner}/${target.repository}`);
@@ -1262,6 +1266,20 @@ export async function ciChecks(target: RemoteHost, token: string, sha: string): 
         rerunnable: false,
       });
     }
+  } else if (target.provider === "bitbucket-cloud") {
+    // Build statuses from Bitbucket Pipelines and external CI.
+    const statuses = await providerFetch(`${target.apiBase}/repositories/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.repository)}/commit/${rev}/statuses?pagelen=100`, { headers }) as { values?: Array<Record<string, unknown>> } | null;
+    for (const build of statuses?.values ?? []) {
+      const state = String(build.state ?? "");
+      checks.push({
+        id: String(build.key ?? build.uuid ?? ""),
+        name: String(build.name ?? build.key ?? "build"),
+        status: state === "INPROGRESS" ? "in_progress" : "completed",
+        conclusion: state === "SUCCESSFUL" ? "success" : state === "FAILED" ? "failure" : state === "STOPPED" ? "cancelled" : state === "INPROGRESS" ? "pending" : state.toLowerCase(),
+        url: String(build.url ?? ""),
+        rerunnable: false,
+      });
+    }
   } else if (target.provider === "gitlab") {
     const project = encodeURIComponent(`${target.owner}/${target.repository}`);
     const pipelines = await providerFetch(`${target.apiBase}/projects/${project}/pipelines?sha=${rev}&per_page=20`, { headers }) as Array<Record<string, unknown>>;
@@ -1281,7 +1299,7 @@ export async function rerunCheck(target: RemoteHost, token: string, check: Check
   if (target.provider === "github") {
     const runId = /\/actions\/runs\/(\d+)/.exec(check.url)?.[1];
     if (!runId) throw invalidError("only GitHub Actions runs can be re-run from Chrono");
-    await fetch(`${target.apiBase}/repos/${target.owner}/${target.repository}/actions/runs/${runId}/rerun-failed-jobs`, { method: "POST", headers, signal: AbortSignal.timeout(20000) }).then((response) => { if (!response.ok) throw new AppError("http", `provider responded ${response.status}`); });
+    await hostingFetch(`${target.apiBase}/repos/${target.owner}/${target.repository}/actions/runs/${runId}/rerun-failed-jobs`, { method: "POST", headers }).then((response) => { if (!response.ok) throw new AppError("http", `provider responded ${response.status}`); });
     return `Re-running failed jobs of run ${runId}`;
   }
   if (target.provider === "gitlab") {

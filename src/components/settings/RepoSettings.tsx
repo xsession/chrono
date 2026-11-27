@@ -10,6 +10,7 @@ import { getDisplayPrefs, setDisplayPrefs, type DisplayPrefs } from "../../displ
 import { notificationsEnabled, setNotificationsEnabled } from "../../notify";
 import { chooseFolder } from "../FolderPicker";
 import { NetworkAiFields, SelfHostedAi } from "./LocalLlmSettings";
+import { HostingTab } from "./HostingSettings";
 
 type Props = {
   repositoryPath: string;
@@ -18,10 +19,11 @@ type Props = {
   initialTab?: SettingsTab;
 };
 
-export type SettingsTab = "identity" | "ai" | "performance" | "hooks" | "links" | "templates" | "commands" | "gitflow" | "sparse" | "archive" | "display" | "shell";
+export type SettingsTab = "identity" | "hosting" | "ai" | "performance" | "hooks" | "links" | "templates" | "commands" | "gitflow" | "sparse" | "archive" | "display" | "shell";
 
 const TABS: Array<{ id: SettingsTab; label: string; icon: IconName }> = [
   { id: "identity", label: "Identity & signing", icon: "users" },
+  { id: "hosting", label: "Hosting connections", icon: "cloud" },
   { id: "ai", label: "AI assistant", icon: "command" },
   { id: "performance", label: "Performance", icon: "activity" },
   { id: "hooks", label: "Git hooks", icon: "commit" },
@@ -489,6 +491,7 @@ export function RepoSettings(props: Props) {
       </nav>
       <div className="st-body">
         {tab === "identity" && <IdentityTab {...props} />}
+        {tab === "hosting" && <HostingTab repositoryPath={props.repositoryPath} />}
         {tab === "ai" && <AiTab busy={props.busy} run={props.run} />}
         {tab === "performance" && <PerformanceTab {...props} />}
         {tab === "hooks" && <HooksTab {...props} />}

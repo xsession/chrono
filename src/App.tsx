@@ -888,6 +888,7 @@ export default function App() {
     { id: "settings", title: "Repository settings", category: "Settings", disabled: !path, run: () => openSettings() },
     { id: "settings-signing", title: "Set up commit signing (GPG / SSH)", category: "Settings", keywords: ["gpg", "ssh", "verify", "sign"], disabled: !path, run: () => openSettings("identity") },
     { id: "settings-profiles", title: "Identity profiles", category: "Settings", keywords: ["email", "user", "account"], disabled: !path, run: () => openSettings("identity") },
+    { id: "settings-hosting", title: "Hosting connections (GitHub, GitLab, Gitea, Bitbucket)", category: "Settings", keywords: ["token", "certificate", "self-signed", "ca", "bitbucket cloud", "enterprise", "api"], disabled: !path, run: () => openSettings("hosting") },
     { id: "settings-perf", title: "Large-repo performance preset", category: "Settings", keywords: ["commit-graph", "fsmonitor", "maintenance", "speed"], disabled: !path, run: () => openSettings("performance") },
     { id: "settings-hooks", title: "Manage git hooks", category: "Settings", disabled: !path, run: () => openSettings("hooks") },
     { id: "settings-links", title: "Issue tracker links", category: "Settings", keywords: ["jira", "autolink", "bugtraq"], disabled: !path, run: () => openSettings("links") },

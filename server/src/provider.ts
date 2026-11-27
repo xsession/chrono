@@ -1,9 +1,11 @@
-// Pull request providers: GitHub, GitLab, Gitea/Forgejo, Bitbucket Server.
+// Pull request providers: GitHub, GitLab, Gitea/Forgejo, Bitbucket Server and
+// Bitbucket Cloud.
 //
 // Ported from `src-tauri/src/provider.rs` using Node's built-in fetch (the Rust
 // backend used reqwest).
 
 import { AppError, httpError } from "./lib/errors.ts";
+import { authHeaders, hostingFetch } from "./hosting.ts";
 
 export interface PullRequestRecord {
   id: string;
@@ -49,6 +51,19 @@ function normalize(provider: string, value: Record<string, unknown>): PullReques
       targetBranch: text(value, "/toRef/displayId"),
       webUrl: typeof self === "string" ? self : "",
       updatedAt: updated,
+    };
+  }
+  if (provider === "bitbucket-cloud") {
+    return {
+      id: String(number(value, "/id")),
+      number: number(value, "/id"),
+      title: text(value, "/title"),
+      author: text(value, "/author/display_name") || text(value, "/author/nickname"),
+      state: text(value, "/state").toLowerCase(), // OPEN | MERGED | DECLINED | SUPERSEDED
+      sourceBranch: text(value, "/source/branch/name"),
+      targetBranch: text(value, "/destination/branch/name"),
+      webUrl: text(value, "/links/html/href"),
+      updatedAt: (typeof value.updated_on === "string" && value.updated_on) || null,
     };
   }
   if (provider === "gitlab") {
@@ -105,6 +120,12 @@ export async function listPullRequests(
       url = `${base}/repos/${owner}/${repository}/pulls?state=all&limit=100`;
       if (token) headers["Authorization"] = `Bearer ${token}`;
       break;
+    case "bitbucket-cloud":
+      // base is https://api.bitbucket.org/2.0; owner is the workspace.
+      url = `${base}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&pagelen=50`;
+      headers["Accept"] = "application/json";
+      Object.assign(headers, authHeaders(normalized, token));
+      break;
     case "bitbucket-server":
       // base is the REST API root, e.g. https://bitbucket.example.com/rest/api/1.0;
       // owner is the project key (~user for personal repositories).
@@ -118,16 +139,17 @@ export async function listPullRequests(
 
   let response: Response;
   try {
-    response = await fetch(url, { headers });
+    response = await hostingFetch(url, { headers });
   } catch (error) {
+    if (error instanceof AppError) throw error;
     throw httpError(`request to ${url} failed: ${(error as Error).message}`);
   }
   if (!response.ok) {
     throw httpError(`provider responded ${response.status} for ${url}`);
   }
   let body: unknown = await response.json().catch(() => null);
-  // Bitbucket Server pages its results: { values: [...], isLastPage, ... }.
-  if (normalized === "bitbucket-server" && body && typeof body === "object" && Array.isArray((body as { values?: unknown }).values)) {
+  // Bitbucket pages its results: { values: [...], isLastPage | next, ... }.
+  if ((normalized === "bitbucket-server" || normalized === "bitbucket-cloud") && body && typeof body === "object" && Array.isArray((body as { values?: unknown }).values)) {
     body = (body as { values: unknown[] }).values;
   }
   if (!Array.isArray(body)) {

@@ -1,4 +1,5 @@
 import type {
+  HostingConnection,
   AuthRequest,
   BranchRecord,
   CloneRequest,
@@ -363,7 +364,8 @@ export const api = {
     owner: string,
     repository: string,
     token: string,
-  ) => invoke<PullRequestRecord[]>("list_pull_requests", { provider, baseUrl, owner, repository, token }),
+    host?: string,
+  ) => invoke<PullRequestRecord[]>("list_pull_requests", { provider, baseUrl, owner, repository, token, host }),
   // v6 saga bridge (GitKraken RE §11.2): external-control surface for deep links / CLI / Electron IPC.
   invokeSaga: (name: string, args: Record<string, unknown> = {}) =>
     invoke<{ ok: boolean; result?: unknown; error?: string }>("saga_invoke", { name, args }),
@@ -468,6 +470,11 @@ export const api = {
   ciChecks: (path: string, sha: string, token: string, remote = "origin", apiBase?: string, provider?: string) =>
     invoke<{ state: string; checks: CheckRun[] }>("ci_checks", { path, sha, token, remote, apiBase, provider }),
   rerunCheck: (path: string, check: CheckRun, token: string, remote = "origin", apiBase?: string, provider?: string) => invoke<string>("ci_rerun", { path, check, token, remote, apiBase, provider }),
+  hostingConnections: () => invoke<HostingConnection[]>("hosting_connections", {}),
+  /** token: a new token to remember on the server; null forgets it. */
+  hostingConnectionSave: (host: string, update: { insecureTls?: boolean; caFile?: string; timeoutSeconds?: number; token?: string | null }) => invoke<HostingConnection>("hosting_connection_save", { host, ...update }),
+  hostingConnectionRemove: (host: string) => invoke<null>("hosting_connection_remove", { host }),
+  hostingConnectionTest: (host: string, provider: string, apiBase: string, token: string) => invoke<{ ok: boolean; user: string | null; message: string }>("hosting_connection_test", { host, provider, apiBase, token }),
 
   // Roadmap Tier 3
   createAgentWorktree: (path: string, name: string, base: string, location: string | null = null) => invoke<{ path: string; branch: string }>("agent_worktree_create", { path, name, base, location }),

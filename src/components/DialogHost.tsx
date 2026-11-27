@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 // Promise-based modal dialogs (replaces window.prompt/confirm in the
 // GitKraken/TortoiseGit surfaces). Any module can `await askText(...)`.
 
-type Field = { name: string; label: string; initial?: string; placeholder?: string; multiline?: boolean };
+/** A checkbox field answers "true" or "". */
+type Field = { name: string; label: string; initial?: string; placeholder?: string; multiline?: boolean; type?: "text" | "password" | "checkbox" };
 type Choice = { value: string; label: string; description?: string; danger?: boolean };
 
 type Request =
@@ -94,12 +95,17 @@ export function DialogHost() {
         <div className="ux-dialog-body gk-dialog-body">
           {current.kind !== "text" && current.message && <div className="gk-dialog-message">{current.message}</div>}
           {current.kind === "text" && current.message && <p className="gk-dialog-message">{current.message}</p>}
-          {current.kind === "text" && current.fields.map((field, index) => (
+          {current.kind === "text" && current.fields.map((field, index) => field.type === "checkbox" ? (
+            <label key={field.name} className="gk-dialog-check">
+              <input type="checkbox" checked={values[field.name] === "true"} onChange={(event) => setValues((v) => ({ ...v, [field.name]: event.target.checked ? "true" : "" }))} />
+              <span>{field.label}</span>
+            </label>
+          ) : (
             <label key={field.name} className="gk-dialog-field">
               <span>{field.label}</span>
               {field.multiline
                 ? <textarea ref={index === 0 ? (el) => { firstInput.current = el; } : undefined} rows={5} value={values[field.name] ?? ""} placeholder={field.placeholder} onChange={(event) => setValues((v) => ({ ...v, [field.name]: event.target.value }))} />
-                : <input ref={index === 0 ? (el) => { firstInput.current = el; } : undefined} value={values[field.name] ?? ""} placeholder={field.placeholder} onChange={(event) => setValues((v) => ({ ...v, [field.name]: event.target.value }))} />}
+                : <input ref={index === 0 ? (el) => { firstInput.current = el; } : undefined} type={field.type === "password" ? "password" : "text"} autoComplete={field.type === "password" ? "off" : undefined} value={values[field.name] ?? ""} placeholder={field.placeholder} onChange={(event) => setValues((v) => ({ ...v, [field.name]: event.target.value }))} />}
             </label>
           ))}
           {current.kind === "choice" && (

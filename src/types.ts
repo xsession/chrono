@@ -761,10 +761,14 @@ export type IdentityProfile = { name: string; userName: string; userEmail: strin
 export type CustomCommandParam = { name: string; label: string; type: "text" | "branch" | "checkbox"; default?: string };
 export type CustomCommand = { id: string; name: string; argv: string[]; scope: "repository" | "commit" | "branch" | "files"; confirm: boolean; refresh: boolean; params: CustomCommandParam[] };
 export type FileBlob = { exists: boolean; mime: string; size: number; base64: string; lfs: boolean };
-export type HostingProvider = "github" | "gitlab" | "gitea" | "bitbucket-server";
+export type HostingProvider = "github" | "gitlab" | "gitea" | "bitbucket-server" | "bitbucket-cloud";
 /** For "bitbucket-server", owner is the project key (~user for personal repositories). */
 export type RemoteHost = { provider: HostingProvider; host: string; owner: string; repository: string; apiBase: string; webBase: string };
-export const HOSTING_PROVIDER_LABELS: Record<HostingProvider, string> = { github: "GitHub", gitlab: "GitLab", gitea: "Gitea / Forgejo", "bitbucket-server": "Bitbucket Server" };
+export const HOSTING_PROVIDER_LABELS: Record<HostingProvider, string> = { github: "GitHub", gitlab: "GitLab", gitea: "Gitea / Forgejo", "bitbucket-server": "Bitbucket Server", "bitbucket-cloud": "Bitbucket Cloud" };
+/** Default API base per provider ("" where it depends on the server). */
+export const HOSTING_DEFAULT_API: Record<HostingProvider, string> = { github: "https://api.github.com", gitlab: "", gitea: "", "bitbucket-server": "", "bitbucket-cloud": "https://api.bitbucket.org/2.0" };
+/** Per-host options the server applies to provider requests (server/src/hosting.ts). */
+export type HostingConnection = { host: string; insecureTls: boolean; caFile: string; timeoutSeconds: number; hasToken: boolean };
 export type CheckRun = { id: string; name: string; status: string; conclusion: string; url: string; rerunnable: boolean };
 export type GitflowConfig = { initialized: boolean; master: string; develop: string; feature: string; release: string; hotfix: string; support: string; versionTag: string };
 export type FlowType = "feature" | "release" | "hotfix" | "support";

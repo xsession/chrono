@@ -4,7 +4,7 @@ import type { CheckRun, CleanupCandidate, HostingProvider, RemoteHost } from "..
 import { HOSTING_PROVIDER_LABELS } from "../../types";
 import { Icon } from "../Icon";
 import { pushToast } from "../../toastBus";
-import { ensureToken, forgetToken, getApiBase, getProviderOverride, getToken, setApiBase as saveApiBase, setProviderOverride } from "../../providerTokens";
+import { ensureToken, forgetToken, getApiBase, getProviderOverride, getToken, isTokenRemembered, setApiBase as saveApiBase, setProviderOverride } from "../../providerTokens";
 import { notifyIfHidden } from "../../notify";
 import { plural } from "../../plural";
 import { aiSourceLabel } from "../../aiSource";
@@ -106,9 +106,9 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
             if (host && next !== host.provider && apiBase === host.apiBase) setApiBase("");
             if (host && next === host.provider && !apiBase) setApiBase(host.apiBase);
           }}>{(Object.keys(HOSTING_PROVIDER_LABELS) as HostingProvider[]).map((value) => <option key={value} value={value}>{HOSTING_PROVIDER_LABELS[value]}</option>)}</select></label>
-          <label>API base<input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder={provider === "bitbucket-server" ? "https://bitbucket.example.com/rest/api/1.0" : "https://api.github.com"} /></label>
+          <label>API base<input value={apiBase} onChange={(event) => setApiBase(event.target.value)} placeholder={provider === "bitbucket-server" ? "https://bitbucket.example.com/rest/api/1.0" : provider === "bitbucket-cloud" ? "https://api.bitbucket.org/2.0" : "https://api.github.com"} /></label>
         </div>
-        <p className="tg-note">{host === undefined ? "Detecting provider…" : host ? <>Provider: <b>{HOSTING_PROVIDER_LABELS[provider]}</b>{provider !== host.provider ? " (chosen by hand)" : ""} · {host.owner}/{host.repository}{getToken(host.host) ? <> · token set <button type="button" className="gk-link-button" onClick={() => { forgetToken(host.host); pushToast("Token forgotten", "info"); }}>forget</button></> : " · you will be asked for a token"}</> : "This remote is not a GitHub, GitLab, Gitea or Bitbucket Server URL."}</p>
+        <p className="tg-note">{host === undefined ? "Detecting provider…" : host ? <>Provider: <b>{HOSTING_PROVIDER_LABELS[provider]}</b>{provider !== host.provider ? " (chosen by hand)" : ""} · {host.owner}/{host.repository}{getToken(host.host) ? <> · {isTokenRemembered(host.host) ? "token remembered" : "token set"} <button type="button" className="gk-link-button" onClick={() => { void forgetToken(host.host).then(() => pushToast("Token forgotten", "info")); }}>forget</button></> : " · you will be asked for a token"} · options in Settings → Hosting connections</> : "This remote is not a GitHub, GitLab, Gitea or Bitbucket URL."}</p>
         <label className="gk-dialog-field"><span>Title</span><input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
         <div className="tg-message-head"><strong>Description</strong><button type="button" className="ux-button compact" disabled={generating} onClick={() => void generate()}>{generating ? "Generating…" : "✨ Generate"}</button></div>
         <textarea className="tg-message" rows={10} value={description} onChange={(event) => setDescription(event.target.value)} />
