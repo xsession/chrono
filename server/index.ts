@@ -38,6 +38,7 @@ import { readStream, validStreamId } from "./src/lib/streams.ts";
 import { rejectReason, type GuardOptions } from "./src/lib/requestGuard.ts";
 import { listPullRequests } from "./src/provider.ts";
 import * as hosting from "./src/hosting.ts";
+import * as github from "./src/github.ts";
 import * as repo from "./src/repo.ts";
 import { loadWorkspaces, saveWorkspaces, type Workspace } from "./src/workspaces.ts";
 import { recentGitCommands } from "./src/lib/gitLog.ts";
@@ -87,6 +88,23 @@ async function resolveHost(body: Record<string, unknown>): Promise<features.Remo
   }
   return host;
 }
+
+/** A GitHub repository from a remote of the open repository, with its token. */
+async function githubRepo(body: Record<string, unknown>): Promise<{ host: features.RemoteHost; token: string }> {
+  const host = await resolveHost({ ...body, provider: optStr(body.provider) ?? undefined });
+  if (host.provider !== "github") throw new AppError("invalid", `${host.host} is not a GitHub remote (set its provider in Settings → Hosting connections if it is GitHub Enterprise)`);
+  return { host, token: await hosting.resolveToken(body.token, host.host) };
+}
+
+/** A GitHub server by API base (account, repositories, SSH keys). */
+async function githubServer(body: Record<string, unknown>): Promise<{ apiBase: string; host: string; token: string }> {
+  const apiBase = str(body.apiBase, "apiBase").replace(/\/+$/, "");
+  if (!/^https?:\/\//i.test(apiBase)) throw new AppError("invalid", "API base must be an http(s) URL");
+  const host = optStr(body.host) || new URL(apiBase).host.replace(/^api\./, "");
+  return { apiBase, host, token: await hosting.resolveToken(body.token, host) };
+}
+
+const strList = (value: unknown): string[] => Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length < 120) : [];
 
 // Viewer routes whose diffs honour the user's whitespace/algorithm options.
 // Read-only routes: when the client drops the request (it switched to another
@@ -641,6 +659,55 @@ const routes: Record<string, Handler> = {
   ci_checks: async (body) => { const host = await resolveHost(body); return features.ciChecks(host, await hosting.resolveToken(body.token, host.host), str(body.sha, "sha")); },
   ci_rerun: async (body) => { const host = await resolveHost(body); return features.rerunCheck(host, await hosting.resolveToken(body.token, host.host), body.check as features.CheckRun); },
   hosting_connections: async () => hosting.listConnections(),
+  gh_account: async (body) => { const server = await githubServer(body); return github.account(server.apiBase, server.token); },
+  gh_token_page: async (body) => github.tokenPageUrl(str(body.apiBase, "apiBase")),
+  gh_repos: async (body) => { const server = await githubServer(body); return github.myRepositories(server.apiBase, server.token); },
+  gh_ssh_keys: async (body) => { const server = await githubServer(body); return github.sshKeys(server.apiBase, server.token); },
+  gh_ssh_upload: async (body) => { if (!isLoopbackHost()) throw new AppError("invalid", "SSH keys can only be managed from the computer running Chrono"); const server = await githubServer(body); await github.uploadSshKey(server.apiBase, server.token, str(body.keyPath, "keyPath"), optStr(body.title) ?? ""); return null; },
+  gh_ssh_generate: async (body) => { if (!isLoopbackHost()) throw new AppError("invalid", "SSH keys can only be managed from the computer running Chrono"); const server = await githubServer(body); return github.generateSshKey(server.apiBase, server.token, str(body.gitHost, "gitHost"), body.writeConfig === true); },
+  gh_forks: async (body) => { const { host, token } = await githubRepo(body); return github.forks(host, token); },
+  gh_fork_create: async (body) => { const { host, token } = await githubRepo(body); return github.createFork(host, token, optStr(body.organization) ?? undefined); },
+  gh_pulls: async (body) => { const { host, token } = await githubRepo(body); return github.openPulls(host, token); },
+  gh_pull: async (body) => { const { host, token } = await githubRepo(body); return github.pullDetail(host, token, body.number); },
+  gh_pull_update: async (body) => {
+    const { host, token } = await githubRepo(body);
+    const patch = (typeof body.patch === "object" && body.patch ? body.patch : {}) as Record<string, unknown>;
+    const pullPatch: { title?: string; body?: string; state?: "open" | "closed" } = {};
+    if (typeof patch.title === "string") pullPatch.title = patch.title;
+    if (typeof patch.body === "string") pullPatch.body = patch.body;
+    if (patch.state === "open" || patch.state === "closed") pullPatch.state = patch.state;
+    if (Object.keys(pullPatch).length) await github.updatePull(host, token, body.number, pullPatch);
+    const fields: { labels?: string[]; assignees?: string[]; milestone?: number | null } = {};
+    if (Array.isArray(patch.labels)) fields.labels = strList(patch.labels);
+    if (Array.isArray(patch.assignees)) fields.assignees = strList(patch.assignees);
+    if (patch.milestone === null || typeof patch.milestone === "number") fields.milestone = patch.milestone as number | null;
+    if (Object.keys(fields).length) await github.updateIssueFields(host, token, body.number, fields);
+    if (Array.isArray(patch.addReviewers) || Array.isArray(patch.removeReviewers)) await github.setReviewers(host, token, body.number, strList(patch.addReviewers), strList(patch.removeReviewers));
+    return null;
+  },
+  gh_comment: async (body) => { const { host, token } = await githubRepo(body); await github.comment(host, token, body.number, typeof body.body === "string" ? body.body : ""); return null; },
+  gh_review: async (body) => { const { host, token } = await githubRepo(body); await github.review(host, token, body.number, str(body.event, "event"), typeof body.body === "string" ? body.body : ""); return null; },
+  gh_merge: async (body) => { const { host, token } = await githubRepo(body); return github.merge(host, token, body.number, str(body.method, "method"), optStr(body.title) ?? undefined, optStr(body.message) ?? undefined); },
+  gh_pull_checkout: (body) => gk.journaled(bodyPath(body), `Check out pull request #${String(body.number)}`, "keep", () => github.checkoutPull(bodyPath(body), optStr(body.remote) ?? "origin", { number: Number(body.number), headRef: str(body.headRef, "headRef"), sameRepo: body.sameRepo === true })),
+  gh_issues: async (body) => { const { host, token } = await githubRepo(body); return github.searchIssues(host, token, typeof body.query === "string" ? body.query : ""); },
+  gh_issue: async (body) => { const { host, token } = await githubRepo(body); return github.issueDetail(host, token, body.number); },
+  gh_issue_update: async (body) => {
+    const { host, token } = await githubRepo(body);
+    const patch = (typeof body.patch === "object" && body.patch ? body.patch : {}) as Record<string, unknown>;
+    const fields: { title?: string; body?: string; state?: "open" | "closed"; labels?: string[]; assignees?: string[]; milestone?: number | null } = {};
+    if (typeof patch.title === "string") fields.title = patch.title;
+    if (typeof patch.body === "string") fields.body = patch.body;
+    if (patch.state === "open" || patch.state === "closed") fields.state = patch.state;
+    if (Array.isArray(patch.labels)) fields.labels = strList(patch.labels);
+    if (Array.isArray(patch.assignees)) fields.assignees = strList(patch.assignees);
+    if (patch.milestone === null || typeof patch.milestone === "number") fields.milestone = patch.milestone as number | null;
+    await github.updateIssueFields(host, token, body.number, fields);
+    return null;
+  },
+  gh_issue_create: async (body) => { const { host, token } = await githubRepo(body); return github.createIssue(host, token, { title: str(body.title, "title"), body: typeof body.body === "string" ? body.body : "", labels: strList(body.labels), assignees: strList(body.assignees) }); },
+  gh_repo_options: async (body) => { const { host, token } = await githubRepo(body); return github.repoOptions(host, token); },
+  gh_issue_branch: (body) => gk.journaled(bodyPath(body), `Create branch ${String(body.name)}`, "keep", () => github.branchForIssue(bodyPath(body), str(body.name, "name"), optStr(body.base) ?? "HEAD", str(body.issueUrl, "issueUrl"))),
+  gh_issue_branches: (body) => github.issueBranches(bodyPath(body)),
   hosting_connection_save: (body) => hosting.saveConnection(str(body.host, "host"), {
     insecureTls: typeof body.insecureTls === "boolean" ? body.insecureTls : undefined,
     caFile: typeof body.caFile === "string" ? body.caFile : undefined,

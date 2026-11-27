@@ -12,6 +12,10 @@ import { pushToast } from "../../toastBus";
 import { plural } from "../../plural";
 import type { ForkStatus } from "../../types";
 import { forkBadge } from "../ForksView";
+import { AddRemoteDialog, createIssueBranch, LabelChip } from "./GithubDialogs";
+import { ISSUE_FILTERS, useGithubPanel } from "./useGithubPanel";
+import { ago, openUrl } from "../../githubContext";
+import { askToken } from "../../providerTokens";
 
 type Props = {
   repositoryPath: string;
@@ -31,7 +35,7 @@ type Props = {
   onOpenSubmoduleMap?: () => void;
 };
 
-type SectionId = "local" | "remote" | "worktrees" | "stashes" | "tags" | "submodules" | "prs";
+type SectionId = "local" | "remote" | "worktrees" | "stashes" | "tags" | "submodules" | "prs" | "issues";
 const COLLAPSE_KEY = "chrono.gk.leftPanel.collapsed";
 
 function loadCollapsed(): Set<SectionId> {
@@ -80,6 +84,8 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
   const [stashFiles, setStashFiles] = useState<StashFile[] | null>(null);
   const menu = useContextMenu();
   const [subTree, setSubTree] = useState<SubmoduleTree | null>(null);
+  const [addRemoteOpen, setAddRemoteOpen] = useState(false);
+  const github = useGithubPanel(repositoryPath, refreshKey, run);
   const [openSubs, setOpenSubs] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -302,9 +308,17 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
     { id: "copy", label: "Copy URL", icon: "copy", onSelect: () => copy(remote.fetchUrl) },
   ] : [];
 
-  const addRemote = async () => {
-    const values = await askFields("Add remote", [{ name: "name", label: "Name", initial: remotes.length ? "" : "origin" }, { name: "url", label: "URL", placeholder: "https://github.com/owner/repo.git" }]);
-    if (values?.name.trim() && values.url.trim()) await run(`Add remote ${values.name.trim()}`, () => api.remoteAction(repositoryPath, "add", values.name.trim(), values.url.trim()));
+  const addRemote = () => setAddRemoteOpen(true);
+
+  /** Connect to GitHub from the panel: GitHub's token page with the scopes
+   *  pre-selected, then the pasted token is remembered. */
+  const connectGithub = async () => {
+    if (!github.gh) return;
+    try {
+      openUrl(await api.ghTokenPage(github.gh.host.apiBase));
+      const token = await askToken(github.gh.host.host, "github", `Connect to GitHub (${github.gh.host.host})`, { remember: true, message: "GitHub opened a page for a new personal access token with the scopes Chrono needs. Generate it there and paste it here." });
+      if (token) github.refreshConnection();
+    } catch (reason) { pushToast(String(reason).replace(/^Error: /, ""), "error"); }
   };
 
   const tagMenu = (tag: TagRecord): MenuItem[] => [
@@ -326,8 +340,18 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
     event.preventDefault();
     setDragOver(null);
     const source = event.dataTransfer.getData("application/x-chrono-branch");
-    if (!source || source === fullName(target) || target.remote) return;
-    const choices = target.current
+    if (!source || source === fullName(target)) return;
+    // A pull request merges a pushed branch: name the head without its remote.
+    const sourceRef = refs?.branches.find((branch) => fullName(branch) === source);
+    const prHead = sourceRef?.remote ? sourceRef.name : source;
+    const prChoice = remotes.length ? [{ value: "pr", label: `Start a pull request from ${prHead} to ${target.name}…`, description: "Opens the pull request form; push the branch first if it is not on the remote yet." }] : [];
+    if (target.remote) {
+      if (!prChoice.length) return;
+      const choice = await askChoice(`Drop ${source} onto ${fullName(target)}`, prChoice);
+      if (choice === "pr") setPrFor({ head: prHead, base: target.name });
+      return;
+    }
+    const choices: Array<{ value: string; label: string; danger?: boolean; description?: string }> = target.current
       ? [
           { value: "merge", label: `Merge ${source} into ${target.name}` },
           { value: "rebase", label: `Rebase ${target.name} onto ${source}` },
@@ -338,6 +362,7 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
           { value: "ff", label: `Fast-forward ${target.name} to ${source}` },
           { value: "reset", label: `Reset ${target.name} to ${source}`, danger: true, description: "Moves the branch pointer (undo is available)." },
         ];
+    choices.push(...prChoice);
     let note: string | undefined;
     try {
       const prediction = await api.predictConflicts(repositoryPath, "merge", source, target.name);
@@ -349,6 +374,7 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
     else if (choice === "ff") await run(`Fast-forward ${target.name}`, () => api.branchAction(repositoryPath, { action: "fast_forward", branch: target.name, target: source }));
     else if (choice === "checkout-merge") await run(`Merge ${source} into ${target.name}`, () => api.branchAction(repositoryPath, { action: "checkout_and_merge", branch: source, target: target.name }));
     else if (choice === "reset") await run(`Reset ${target.name}`, () => api.branchAction(repositoryPath, { action: "force_to_commit", branch: target.name, target: source }));
+    else if (choice === "pr") setPrFor({ head: prHead, base: target.name });
   };
 
   // ------------------------------------------------------------- rendering
@@ -363,7 +389,7 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
         tabIndex={0}
         draggable
         onDragStart={(event) => onDragStart(event, branch)}
-        onDragOver={(event) => { if (!branch.remote) { event.preventDefault(); setDragOver(key); } }}
+        onDragOver={(event) => { if (!branch.remote || remotes.length) { event.preventDefault(); setDragOver(key); } }}
         onDragLeave={() => setDragOver((value) => (value === key ? null : value))}
         onDrop={(event) => void onDrop(event, branch)}
         onClick={() => onSelectRevision(branch.target)}
@@ -375,6 +401,7 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
         {branch.current ? <Icon name="check" className="gk-ref-check" /> : <Icon name={branch.remote ? "cloud" : "branch"} />}
         <span className="gk-ref-name">{label}</span>
         {!branch.remote && parents[branch.name] && <span className="gk-ref-parent" title={`Stacked on ${parents[branch.name]}`}>↳ {parents[branch.name]}</span>}
+        {!branch.remote && github.issueOf(branch.name) !== null && <button type="button" className="gk-issue-badge" title={`Branch for issue #${github.issueOf(branch.name)}: click to open it`} onClick={(event) => { event.stopPropagation(); github.openIssue(github.issueOf(branch.name)!); }}>#{github.issueOf(branch.name)}</button>}
         {(branch.ahead > 0 || branch.behind > 0) && (
           <span className="gk-ref-track">{branch.behind > 0 && <span>↓{branch.behind}</span>}{branch.ahead > 0 && <span>↑{branch.ahead}</span>}</span>
         )}
@@ -403,10 +430,10 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
     return rows;
   };
 
-  const section = (id: SectionId, title: string, icon: IconName, count: number, body: ReactNode, extra?: { onAdd?: () => void; addTitle?: string; onContext?: (event: ReactMouseEvent) => void }) => {
+  const section = (id: SectionId, title: string, icon: IconName, count: number, body: ReactNode, extra?: { onAdd?: () => void; addTitle?: string; onContext?: (event: ReactMouseEvent) => void; always?: boolean }) => {
     const isCollapsed = collapsed.has(id);
     // Empty sections are noise: hide them unless the user is filtering.
-    const alwaysShown = id === "local" || id === "remote";
+    const alwaysShown = id === "local" || id === "remote" || extra?.always === true;
     if (!alwaysShown && !needle && (count === 0 || (id === "worktrees" && count <= 1))) return null;
     return (
       <section className={`gk-section${isCollapsed ? " is-collapsed" : ""}`} aria-label={title}>
@@ -497,6 +524,67 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
               );
             })}{remotesByName.size === 0 && <div className="gk-empty">No remotes — use + to add one</div>}</>
           ), { onAdd: addRemote, addTitle: "Add remote" })}
+          {github.gh && section("prs", "PULL REQUESTS", "compare", github.pulls?.length ?? 0, !github.connected ? (
+            <div className="gk-empty gk-gh-connect"><span>Connect to see and review pull requests of {github.gh.fullName}.</span><button type="button" className="ux-button compact" onClick={() => void connectGithub()}>Connect to GitHub…</button></div>
+          ) : github.error ? <div className="gk-empty" title={github.error}>{github.error}</div> : !github.pulls ? <div className="gk-empty"><i className="ux-spinner" />Loading…</div> : github.pulls.length === 0 ? <div className="gk-empty">No open pull requests</div> : github.pulls.filter((pull) => matches(`#${pull.number} ${pull.title} ${pull.head} ${pull.author}`)).map((pull) => (
+            <div key={pull.number} className="gk-ref-row gk-gh-row" role="treeitem" tabIndex={0}
+              title={`#${pull.number} ${pull.title}\n${pull.author}: ${pull.head} → ${pull.base}${pull.draft ? " (draft)" : ""}\nClick to open`}
+              onClick={() => github.openPull(pull.number)}
+              onKeyDown={(event) => { if (event.key === "Enter") github.openPull(pull.number); }}
+              onContextMenu={(event) => menu.open(event, [
+                { id: "open", label: "Open pull request", icon: "compare", onSelect: () => github.openPull(pull.number) },
+                { id: "web", label: "Open on GitHub", icon: "external", onSelect: () => openUrl(pull.htmlUrl) },
+                { id: "copy", label: "Copy link", icon: "copy", onSelect: () => copy(pull.htmlUrl) },
+              ], `pr-${pull.number}`)}>
+              <Icon name="compare" />
+              <span className="gk-ref-name">{pull.draft && <em className="gk-gh-draft">draft</em>}{pull.title}</span>
+              <small className="gk-gh-meta">#{pull.number} · {ago(pull.updatedAt)}</small>
+            </div>
+          )), {
+            always: true,
+            onAdd: remotes.length ? () => setPrFor({ head: current?.name ?? "HEAD", base: parents[current?.name ?? ""] ?? (refs?.branches.find((candidate) => !candidate.remote && (candidate.name === "main" || candidate.name === "master"))?.name ?? "main") }) : undefined,
+            addTitle: "Create pull request from the current branch",
+            onContext: (event) => menu.open(event, [
+              { id: "reload", label: "Refresh", icon: "refresh", onSelect: () => void github.reload() },
+              { id: "web", label: `Pull requests on GitHub`, icon: "external", onSelect: () => openUrl(`${github.gh!.webUrl}/pulls`) },
+              ...(github.remotes.length > 1 ? [{ kind: "separator", id: "s" } as MenuItem, ...github.remotes.map<MenuItem>((entry) => ({ id: `r-${entry.remote}`, label: `${entry.remote}: ${entry.fullName}`, checked: entry.remote === github.gh!.remote, onSelect: () => github.chooseRemote(entry.remote) }))] : []),
+            ], "Pull requests"),
+          })}
+          {github.gh && section("issues", "ISSUES", "flag", github.issues?.total ?? 0, !github.connected ? (
+            <div className="gk-empty gk-gh-connect"><span>Connect to see the issues of {github.gh.fullName}.</span><button type="button" className="ux-button compact" onClick={() => void connectGithub()}>Connect to GitHub…</button></div>
+          ) : <>
+            <button type="button" className="gk-gh-filter" title="Filter with GitHub's search syntax (click to change)" onClick={async () => { const value = await askText("Filter issues", "GitHub search, e.g. is:open label:bug assignee:@me", github.query); if (value !== null) github.setQuery(value); }}><Icon name="filter" /><span>{github.query}</span></button>
+            {github.error ? <div className="gk-empty" title={github.error}>{github.error}</div> : !github.issues ? <div className="gk-empty"><i className="ux-spinner" />Loading…</div> : github.issues.items.length === 0 ? <div className="gk-empty">No issues match</div> : github.issues.items.filter((issue) => matches(`#${issue.number} ${issue.title} ${issue.author}`)).map((issue) => (
+              <div key={issue.number} className={`gk-ref-row gk-gh-row${issue.state === "closed" ? " is-closed" : ""}`} role="treeitem" tabIndex={0}
+                title={`#${issue.number} ${issue.title}\n${issue.author} · ${issue.comments} comment(s)${issue.labels.length ? ` · ${issue.labels.map((label) => label.name).join(", ")}` : ""}\nClick to open`}
+                onClick={() => github.openIssue(issue.number)}
+                onKeyDown={(event) => { if (event.key === "Enter") github.openIssue(issue.number); }}
+                onContextMenu={(event) => menu.open(event, [
+                  { id: "open", label: "Open issue", icon: "flag", onSelect: () => github.openIssue(issue.number) },
+                  { id: "branch", label: "Create a branch for this issue…", icon: "branch", disabled: busy, onSelect: () => void createIssueBranch(repositoryPath, issue, run) },
+                  { id: "web", label: "Open on GitHub", icon: "external", onSelect: () => openUrl(issue.htmlUrl) },
+                  { id: "copy", label: "Copy link", icon: "copy", onSelect: () => copy(issue.htmlUrl) },
+                ], `issue-${issue.number}`)}>
+                <Icon name="flag" />
+                <span className="gk-ref-name">{issue.title}</span>
+                {issue.labels.slice(0, 2).map((label) => <LabelChip key={label.name} label={label} />)}
+                <small className="gk-gh-meta">#{issue.number}</small>
+              </div>
+            ))}
+            {github.issues && github.issues.total > github.issues.items.length && <button type="button" className="gk-link-button gk-gh-more" onClick={() => openUrl(`${github.gh!.webUrl}/issues?q=${encodeURIComponent(`is:issue ${github.query}`)}`)}>{github.issues.total - github.issues.items.length} more on GitHub</button>}
+          </>, {
+            always: true,
+            onAdd: github.connected ? github.newIssue : undefined,
+            addTitle: "New issue",
+            onContext: (event) => menu.open(event, [
+              ...ISSUE_FILTERS.map<MenuItem>(([labelText, value]) => ({ id: `f-${value}`, label: labelText, checked: github.query === value, onSelect: () => github.setQuery(value) })),
+              { id: "custom", label: "Custom filter…", icon: "filter", onSelect: async () => { const value = await askText("Filter issues", "GitHub search, e.g. is:open label:bug assignee:@me", github.query); if (value !== null) github.setQuery(value); } },
+              { kind: "separator", id: "s" },
+              { id: "new", label: "New issue…", icon: "plus", disabled: !github.connected, onSelect: github.newIssue },
+              { id: "reload", label: "Refresh", icon: "refresh", onSelect: () => void github.reload() },
+              { id: "web", label: "Issues on GitHub", icon: "external", onSelect: () => openUrl(`${github.gh!.webUrl}/issues`) },
+            ], "Issues"),
+          })}
           {section("worktrees", "WORKTREES", "worktree", worktrees.length, worktrees.map((worktree) => (
             <div key={worktree.path} className={`gk-ref-row${worktree.isMain ? " is-current" : ""}`} role="treeitem" tabIndex={0} title={worktree.path}
               onDoubleClick={() => onOpenRepository(worktree.path)}
@@ -556,6 +644,8 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
       </div>
       {menu.element}
       {prFor && <PullRequestDialog repositoryPath={repositoryPath} head={prFor.head} defaultBase={prFor.base} remotes={remotes.map((remote) => remote.name)} onClose={() => setPrFor(null)} run={run} />}
+      {github.dialogs}
+      {addRemoteOpen && <AddRemoteDialog repositoryPath={repositoryPath} remotes={remotes} run={run} onClose={() => setAddRemoteOpen(false)} onOpenSettings={onOpenSettings ? () => { setAddRemoteOpen(false); onOpenSettings("hosting"); } : undefined} />}
       {cleanupOpen && <CleanupDialog repositoryPath={repositoryPath} onClose={() => setCleanupOpen(false)} run={run} />}
     </aside>
   );

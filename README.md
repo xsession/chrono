@@ -256,6 +256,31 @@ changed: commit that to record the new commit id.
 
 ![Forks & upstreams: Renode is 720 commits behind renode/renode, its submodules are listed under it](docs/screenshots/forks.jpg)
 
+## GitHub integration
+
+Connect once in **Settings → Hosting connections**: **Connect to GitHub…** opens
+GitHub's page for a new personal access token with the scopes Chrono needs
+pre-selected (repo, read:org, workflow, admin:public_key); paste it back and
+Chrono remembers it on this computer. GitHub Enterprise works the same way
+(set the host's provider to GitHub). Then:
+
+- **SSH keys**: see which keys in `~/.ssh` are on your account, add one with a
+  click, or **Generate SSH key and add to GitHub**.
+- **Clone**: browse and search your GitHub repositories in the Clone dialog.
+- **Remotes and forks**: the **+** on REMOTE finds your fork of the repository
+  (or forks it on GitHub and adds it), lists other forks, and your own
+  repositories, over HTTPS or SSH.
+- **Pull requests** (left panel): open one to edit the title, description,
+  reviewers, assignees, labels and milestone; comment, approve or request
+  changes; merge (merge, squash or rebase); check its branch out; see its
+  build status. Drag a branch onto another (or a remote branch) and pick
+  **Start a pull request**; new pull requests can get reviewers, assignees
+  and labels right away.
+- **Issues** (left panel): filter with GitHub's search syntax
+  (`is:open assignee:@me label:bug`, or the presets in the right-click menu),
+  open, edit, comment, close, create, and **create a branch for an issue**:
+  the branch shows the issue's number and opens it.
+
 ## Several git identities
 
 Save identity profiles (name, email, signing key) in *Repository settings →

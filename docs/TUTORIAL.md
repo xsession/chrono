@@ -414,6 +414,19 @@ Click **Landscape map** in the left rail.
 4. A commit's details show its **CI checks** (GitHub Actions, GitLab
    pipelines, Bitbucket build statuses from Jenkins, Bamboo, TeamCity…) and
    can re-run GitHub and GitLab jobs.
+5. **GitHub**: in Settings → Hosting connections, **Connect to GitHub…** opens
+   a token page with the right scopes ticked; paste the token back and tick
+   "Remember". The same panel adds SSH keys to your account or generates one.
+6. With a GitHub remote, the left panel gains **PULL REQUESTS** and
+   **ISSUES**. Click a pull request to review it: edit it, request reviewers,
+   comment, approve or request changes, merge it or check it out. Right-click
+   ISSUES for filters such as "Assigned to me", or write your own with
+   GitHub's search syntax; **+** creates an issue.
+7. Open an issue and press **Create a branch for this issue**: the branch is
+   named after it (`12-login-fails-on-safari`) and shows `#12` in LOCAL.
+8. The **+** on REMOTE finds your fork (or forks the repository for you) and
+   lists your repositories; Clone has **Browse your GitHub repositories**.
+9. Drag a branch onto another and choose **Start a pull request…**.
 
 ## 17. The terminal UI
 

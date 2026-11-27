@@ -3,6 +3,7 @@ import type { ChangeEvent, FormEvent, MouseEvent } from "react";
 import { Icon } from "./Icon";
 import { chooseFolder } from "./FolderPicker";
 import type { CloneOptions } from "../types";
+import { GithubRepoPicker } from "./gk/GithubRepoPicker";
 
 type Props = {
   openDialog: boolean;
@@ -20,6 +21,8 @@ export function CloneDialog({ openDialog, busy, onClose, onClone }: Props) {
   const [sparse, setSparse] = useState(false);
   const [branch, setBranch] = useState("");
   const [singleBranch, setSingleBranch] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
+  const [protocol, setProtocol] = useState<"https" | "ssh">(() => (localStorage.getItem("chrono.clone.protocol") === "ssh" ? "ssh" : "https"));
   const urlRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -63,6 +66,13 @@ export function CloneDialog({ openDialog, busy, onClose, onClone }: Props) {
           <div><h2 id="clone-dialog-title">Clone repository</h2><p>Create a local working copy from a remote Git URL.</p></div>
         </header>
         <div className="ux-dialog-body">
+          <button type="button" className="gk-link-button gh-browse-toggle" onClick={() => setBrowsing((value) => !value)} aria-expanded={browsing}>{browsing ? "Hide your GitHub repositories" : "Browse your GitHub repositories…"}</button>
+          {browsing && <GithubRepoPicker compact protocol={protocol} onProtocol={(value) => { setProtocol(value); localStorage.setItem("chrono.clone.protocol", value); }} onPick={(repo, picked) => {
+            setUrl(picked);
+            // Suggest <parent of the current destination>/<repository name>.
+            setDestination((current) => { const parent = current.trim().replace(/[\\/][^\\/]*$/, ""); return parent ? `${parent}/${repo.name}` : current; });
+            setBrowsing(false);
+          }} />}
           <label className="ux-field-stack">
             <span>Repository URL</span>
             <input

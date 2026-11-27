@@ -53,12 +53,12 @@ function tokenHelp(provider: string): string {
 
 /** Ask for a token (and, for Bitbucket Cloud, a username), with the choice to
  *  remember it. Returns what the API calls should send, or null if cancelled. */
-export async function askToken(host: string, provider: string, title = `Access token for ${host}`): Promise<string | null> {
+export async function askToken(host: string, provider: string, title = `Access token for ${host}`, options: { remember?: boolean; message?: string } = {}): Promise<string | null> {
   const fields: Parameters<typeof askFields>[1] = [];
   if (provider === "bitbucket-cloud") fields.push({ name: "username", label: "Bitbucket username (for an app password)", placeholder: "leave empty for an access token" });
   fields.push({ name: "token", label: tokenLabel(provider), type: "password" });
-  fields.push({ name: "remember", label: "Remember on this computer (kept by the Chrono server, never shown again)", type: "checkbox" });
-  const values = await askFields(title, fields, { message: `${tokenHelp(provider)} Without "Remember", the token is kept for this session only.`.trim(), confirm: "Use token" });
+  fields.push({ name: "remember", label: "Remember on this computer (kept by the Chrono server, never shown again)", type: "checkbox", initial: options.remember ? "true" : "" });
+  const values = await askFields(title, fields, { message: options.message ?? `${tokenHelp(provider)} Without "Remember", the token is kept for this session only.`.trim(), confirm: "Use token" });
   const secret = values?.token.trim();
   if (!values || !secret) return null;
   const username = values.username?.trim();

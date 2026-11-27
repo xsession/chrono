@@ -870,3 +870,27 @@ export type RepositoryChange = {
   gitVersion: number;
   mode: "events" | "poll" | "starting";
 };
+
+// GitHub integration (server/src/github.ts).
+export type GithubLabel = { name: string; color: string };
+export type GithubAccount = { login: string; name: string | null; avatarUrl: string; htmlUrl: string; scopes: string[] };
+export type GithubRepo = { fullName: string; owner: string; name: string; description: string; private: boolean; fork: boolean; cloneUrl: string; sshUrl: string; htmlUrl: string; defaultBranch: string; updatedAt: string | null };
+export type GithubForks = { me: string; parent: GithubRepo; mine: GithubRepo | null; others: GithubRepo[] };
+export type GithubPullSummary = { number: number; title: string; author: string; avatarUrl: string; draft: boolean; head: string; base: string; updatedAt: string; htmlUrl: string; labels: GithubLabel[] };
+export type GithubTimelineItem = { kind: "comment" | "review"; author: string; avatarUrl: string; body: string; state?: string; createdAt: string; htmlUrl: string };
+export type GithubPullDetail = {
+  number: number; title: string; body: string; state: "open" | "closed" | "merged"; draft: boolean; htmlUrl: string;
+  author: { login: string; avatarUrl: string } | null; createdAt: string; updatedAt: string;
+  head: { ref: string; sha: string; repo: string | null; cloneUrl: string | null; sameRepo: boolean }; base: { ref: string };
+  mergeable: boolean | null; mergeableState: string; commits: number; additions: number; deletions: number; changedFiles: number;
+  reviewers: Array<{ login: string; avatarUrl: string; state: string }>; assignees: string[]; labels: GithubLabel[];
+  milestone: { number: number; title: string } | null; timeline: GithubTimelineItem[]; checks: { state: string; checks: CheckRun[] }; viewer: string; canMerge: boolean;
+};
+export type GithubIssueSummary = { number: number; title: string; state: string; author: string; avatarUrl: string; labels: GithubLabel[]; assignees: string[]; comments: number; updatedAt: string; htmlUrl: string };
+export type GithubIssueDetail = GithubIssueSummary & { body: string; createdAt: string; milestone: { number: number; title: string } | null; timeline: GithubTimelineItem[]; viewer: string };
+export type GithubRepoOptions = { assignees: string[]; labels: GithubLabel[]; milestones: Array<{ number: number; title: string }> };
+export type SshKeyInfo = { path: string; type: string; comment: string; fingerprint: string; onGithub: boolean | null };
+/** Which remote a GitHub call is about, with the overrides from Settings → Hosting connections. */
+export type GithubRemoteRef = { remote: string; apiBase?: string; provider?: string; token: string };
+/** A GitHub server (account-level calls). */
+export type GithubServerRef = { apiBase: string; host: string; token: string };

@@ -9,6 +9,7 @@ import { HOSTING_DEFAULT_API, HOSTING_PROVIDER_LABELS } from "../../types";
 import type { HostingConnection, HostingProvider, RemoteHost } from "../../types";
 import { askConfirm } from "../DialogHost";
 import { pushToast } from "../../toastBus";
+import { GithubAccountPanel } from "./GithubAccount";
 import { askToken, forgetToken, getApiBase, getProviderOverride, getToken, isTokenRemembered, loadRememberedTokens, locallyKnownHosts, setApiBase, setProviderOverride } from "../../providerTokens";
 
 const errorText = (error: unknown) => String(error).replace(/^Error: /, "");
@@ -108,6 +109,7 @@ function ConnectionCard({ row, onChanged }: { row: Row; onChanged: () => void })
         <label className="st-wide">CA certificate file (PEM, on the computer running Chrono)<input value={caFile} onChange={(event) => setCaFile(event.target.value)} placeholder="/etc/ssl/certs/company-ca.pem — for servers signed by your own CA" /></label>
         <label className="st-check st-wide"><input type="checkbox" checked={insecureTls} onChange={(event) => setInsecureTls(event.target.checked)} />Accept self-signed and invalid certificates (not safe on untrusted networks)</label>
       </div>
+      {provider === "github" && effectiveApi && !dirty && <GithubAccountPanel host={row.host} apiBase={effectiveApi} onChanged={() => { refreshToken(); onChanged(); }} />}
       {result && <p className={`st-hosting-result ${result.ok ? "is-ok" : "is-error"}`} role="status">{result.ok ? "✓ " : "✕ "}{result.message}</p>}
       <div className="st-row-actions wrap">
         <button type="button" className="ux-primary-button" disabled={!dirty} onClick={() => void save()}>Save</button>
@@ -144,6 +146,9 @@ export function HostingTab({ repositoryPath }: { repositoryPath: string }) {
     for (const connection of server) row(connection.host).server = connection;
     for (const host of locallyKnownHosts()) row(host);
     for (const host of added) row(host);
+    // GitHub is always offered, so you can connect before opening a GitHub repository.
+    const githubRow = row("github.com");
+    githubRow.detected ??= { provider: "github", host: "github.com", owner: "", repository: "", apiBase: "https://api.github.com", webBase: "https://github.com" };
     setRows([...byHost.values()].sort((a, b) => Number(b.remotes.length > 0) - Number(a.remotes.length > 0) || a.host.localeCompare(b.host)));
   }, [repositoryPath, added]);
 

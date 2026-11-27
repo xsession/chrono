@@ -8,10 +8,11 @@ import { ensureToken, forgetToken, getApiBase, getProviderOverride, getToken, is
 import { notifyIfHidden } from "../../notify";
 import { plural } from "../../plural";
 import { aiSourceLabel } from "../../aiSource";
+import { applyPrExtras, GithubPrExtras, type PrExtras } from "./GithubDialogs";
 
 const errorText = (error: unknown) => String(error).replace(/^Error: /, "");
 
-function Modal({ title, icon, onClose, children, footer, wide }: { title: string; icon: Parameters<typeof Icon>[0]["name"]; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode; wide?: boolean }) {
+export function Modal({ title, icon, onClose, children, footer, wide }: { title: string; icon: Parameters<typeof Icon>[0]["name"]; onClose: () => void; children: React.ReactNode; footer?: React.ReactNode; wide?: boolean }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
@@ -48,6 +49,7 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
   const [created, setCreated] = useState<{ number: number; url: string } | null>(null);
   const [apiBase, setApiBase] = useState("");
   const [provider, setProvider] = useState<HostingProvider>("github");
+  const [extras, setExtras] = useState<PrExtras>({ reviewers: [], assignees: [], labels: [] });
 
   useEffect(() => { setHost(undefined); api.remoteHost(repositoryPath, remote).then((value) => { setHost(value); setApiBase(value ? getApiBase(value.host) || value.apiBase : ""); if (value) setProvider(getProviderOverride(value.host) || value.provider); }).catch(() => setHost(null)); }, [repositoryPath, remote]);
   useEffect(() => { api.prTemplate(repositoryPath).then((template) => { if (template) setDescription((current) => current || template); }).catch(() => undefined); }, [repositoryPath]);
@@ -83,6 +85,7 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
       setProviderOverride(host.host, provider !== host.provider ? provider : "");
       const result = await api.createPullRequest(repositoryPath, { remote, token, head, base, title, description, draft, apiBase: apiBase || undefined, provider });
       setCreated(result);
+      if (provider === "github") await applyPrExtras(repositoryPath, remote, result.number, extras).catch((reason) => pushToast(`Pull request #${result.number} created, but reviewers/labels failed: ${errorText(reason)}`, "error"));
       notifyIfHidden("Pull request created", `#${result.number} ${title}`);
     });
   };
@@ -110,6 +113,7 @@ export function PullRequestDialog({ repositoryPath, head, defaultBase, remotes, 
         </div>
         <p className="tg-note">{host === undefined ? "Detecting provider…" : host ? <>Provider: <b>{HOSTING_PROVIDER_LABELS[provider]}</b>{provider !== host.provider ? " (chosen by hand)" : ""} · {host.owner}/{host.repository}{getToken(host.host) ? <> · {isTokenRemembered(host.host) ? "token remembered" : "token set"} <button type="button" className="gk-link-button" onClick={() => { void forgetToken(host.host).then(() => pushToast("Token forgotten", "info")); }}>forget</button></> : " · you will be asked for a token"} · options in Settings → Hosting connections</> : "This remote is not a GitHub, GitLab, Gitea or Bitbucket URL."}</p>
         <label className="gk-dialog-field"><span>Title</span><input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+        {provider === "github" && host && <GithubPrExtras repositoryPath={repositoryPath} remote={remote} value={extras} onChange={setExtras} />}
         <div className="tg-message-head"><strong>Description</strong><button type="button" className="ux-button compact" disabled={generating} onClick={() => void generate()}>{generating ? "Generating…" : "✨ Generate"}</button></div>
         <textarea className="tg-message" rows={10} value={description} onChange={(event) => setDescription(event.target.value)} />
         {preview && (
