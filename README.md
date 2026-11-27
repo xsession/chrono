@@ -13,6 +13,19 @@ Rewritten from the original Tauri/Rust stack to pure TypeScript.
 | ![Forks and upstreams of Renode and its submodules](docs/screenshots/forks.jpg) | ![The terminal UI](docs/screenshots/tui.png) |
 | [Forks and upstreams](#forks-and-upstreams) | [Terminal UI](#terminal-ui-chrono-tui) |
 
+## See it in action
+
+| | |
+|---|---|
+| ![Clicking a commit shows its details and diff; the search box filters by author](docs/gifs/graph-browse.gif) | ![Staging two files, committing, then undoing the commit](docs/gifs/stage-commit.gif) |
+| Browse history and search it | Stage, commit, and undo any step |
+| ![Dragging a branch onto main offers merge, rebase or fast-forward](docs/gifs/drag-merge.gif) | ![Opening Forks & upstreams from the command palette and syncing every fork](docs/gifs/command-palette.gif) |
+| Merge or rebase by drag and drop | Command palette, and fork sync in one click |
+| ![Explorer with Git status columns and the right-click Git menu](docs/gifs/explorer.gif) | ![The submodule list, then the mind map of the same tree](docs/gifs/submodule-map.gif) |
+| TortoiseGit-style explorer | Submodule list and mind map |
+
+The same clips with title cards make an [80-second video tour](docs/video/chrono-tutorial.mp4).
+
 ## Documentation
 
 - [Tutorial](docs/TUTORIAL.md): a hands-on walk through every feature, on a

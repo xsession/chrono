@@ -6,6 +6,9 @@ says what to click or press and what you should see. For the reference of
 every option see the [README](../README.md); for how things work inside, see
 [Theory of operation](THEORY_OF_OPERATION.md).
 
+Prefer to watch first? The [80-second video tour](video/chrono-tutorial.mp4)
+shows the main workflows; each section below also has a short clip.
+
 Contents:
 
 1. [Set up a practice repository](#1-set-up-a-practice-repository)
@@ -86,6 +89,8 @@ Two keys work everywhere: **Ctrl+P** (or Ctrl+Shift+P) opens the command
 palette, which can run every action by name, and **Ctrl+K** lists the
 keyboard shortcuts.
 
+![Opening Forks & upstreams from the command palette, then syncing every fork](gifs/command-palette.gif)
+
 ## 3. Open repositories and tabs
 
 1. Click **Open repository**. Chrono's own folder picker opens. Type
@@ -108,6 +113,8 @@ keyboard shortcuts.
 ![Folder picker](screenshots/folder-picker.jpg)
 
 ## 4. Read the graph
+
+![Clicking a commit shows its details and diff; the search box filters by author](gifs/graph-browse.gif)
 
 Click **Graph** in the left rail (Ctrl+2).
 
@@ -142,6 +149,8 @@ Try these:
 ![Graph](screenshots/multi-repo-tabs.jpg)
 
 ## 5. Stage and commit
+
+![Staging two files, writing the message, committing, then undoing the commit](gifs/stage-commit.gif)
 
 Make some changes in `~/chrono-practice/work`:
 
@@ -183,6 +192,8 @@ throws away work it doesn't know about. The journal survives restarts.
 
 ## 7. Branches, merges and rebases
 
+![Dragging feature/fork-sync onto main offers merge, rebase or fast-forward, with a conflict check](gifs/drag-merge.gif)
+
 1. Click **Branch** in the toolbar, name it `feature/greeting`, and commit a
    change on it.
 2. Double-click `main` in the left panel to check it out, and commit a
@@ -218,6 +229,8 @@ throws away work it doesn't know about. The journal survives restarts.
 Pull and Push are disabled in a repository without remotes.
 
 ## 9. Submodules
+
+![The submodule list, then the mind map of the same tree](gifs/submodule-map.gif)
 
 Click **Submodules** in the left rail.
 
@@ -370,6 +383,8 @@ Click **Landscape map** in the left rail.
 ![Landscape heatmap](screenshots/landscape-heatmap.jpg)
 
 ## 15. The TortoiseGit explorer and your file manager
+
+![Explorer with Git status columns, then the right-click Git menu on a file](gifs/explorer.gif)
 
 1. Press **Ctrl+4** for **Explorer**. It looks like Windows Explorer with
    TortoiseGit: a folder tree, sortable columns, and status overlays on every
