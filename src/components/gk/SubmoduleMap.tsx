@@ -68,7 +68,7 @@ export function SubmoduleMap({ repositoryPath, forks, refreshKey, busy, run, onO
   const [open, setOpen] = useState<Set<string> | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
-  const [mode, setMode] = useState<Mode>(() => (localStorage.getItem(MODE_KEY) === "mindmap" ? "mindmap" : "list"));
+  const [mode, setMode] = useState<Mode>(() => (localStorage.getItem(MODE_KEY) === "list" ? "list" : "mindmap"));
   const [results, setResults] = useState<Results | null>(null);
   const [working, setWorking] = useState<string | null>(null);
   const [manifest, setManifest] = useState<string | null>(null);

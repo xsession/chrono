@@ -4113,3 +4113,21 @@ button.ux-refs-row:disabled { opacity: .55; cursor: default; }
   background: rgba(255, 255, 255, 0.07);
 }
 .ux-zoom-row { display: flex; gap: 8px; margin-top: 14px; }
+
+/* Repository opening: full view on start, an overlay over the repository that
+   is still shown while another one opens. */
+.ux-content { position: relative; }
+.ux-opening { height: 100%; display: grid; place-items: center; padding: 30px; }
+.ux-opening.is-overlay { position: absolute; inset: 0; z-index: 30; height: auto; background: rgba(12, 14, 19, .72); backdrop-filter: blur(2px); animation: ux-opening-in .2s ease-out; }
+.ux-opening-card { max-width: 520px; display: grid; justify-items: center; gap: 10px; text-align: center; }
+.ux-opening.is-overlay .ux-opening-card { padding: 26px 30px; border: 1px solid var(--ux-border); border-radius: 10px; background: var(--ux-bg-1); box-shadow: 0 14px 40px rgba(0, 0, 0, .45); }
+.ux-opening h1 { margin: 4px 0 0; font-size: 18px; }
+.ux-opening p { margin: 0; color: var(--ux-text-2); }
+.ux-opening .ux-welcome-mark .ux-spinner { width: 22px; height: 22px; border-width: 2px; }
+.ux-opening-path { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ux-text-3) !important; }
+.ux-opening-bar { width: 260px; height: 3px; overflow: hidden; border-radius: 2px; background: var(--ux-bg-0); }
+.ux-opening-bar i { display: block; width: 35%; height: 100%; border-radius: 2px; background: var(--ux-accent); animation: ux-opening-slide 1.2s ease-in-out infinite; }
+.ux-opening-slow { font-size: 12px; }
+@keyframes ux-opening-slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@keyframes ux-opening-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .ux-opening-bar i { animation: none; width: 100%; opacity: .5; } }

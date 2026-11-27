@@ -48,6 +48,7 @@ import type { ExplorerFocus } from "./components/explorer/FileExplorer";
 import { askFields } from "./components/DialogHost";
 import { chooseFolder, FolderPickerHost } from "./components/FolderPicker";
 import { LandscapeView } from "./components/gk/LandscapeView";
+import { RepositoryOpening } from "./components/RepositoryOpening";
 import { ForksView } from "./components/ForksView";
 import { plural } from "./plural";
 
@@ -177,6 +178,8 @@ export default function App() {
   // and refreshes it in the background, instead of waiting for git.
   const snapshotsRef = useRef(new Map<string, RepositorySnapshot>());
   const [revalidating, setRevalidating] = useState(false);
+  // A repository being opened with nothing to show yet (no cached snapshot).
+  const [opening, setOpening] = useState<{ path: string; since: number } | null>(null);
   useEffect(() => {
     if (!path || !summary) return;
     snapshotsRef.current.set(path, { summary, historySegments, selectedCommit, changes, branches, operation, undoState });
@@ -212,6 +215,10 @@ export default function App() {
     }
     const background = Boolean(snapshot) || (!switching && Boolean(summary));
     if (background) setRevalidating(true); else setBusy(true);
+    if (switching && !snapshot) {
+      setOpening({ path: repositoryPath, since: Date.now() });
+      setMessage(`Opening ${repositoryPath.split(/[\\/]/).filter(Boolean).pop() ?? repositoryPath}…`);
+    }
     try {
       const [nextSummary, nextHistory, nextChanges, nextBranches, nextOperation, nextUndo] = await Promise.all([
         api.summary(repositoryPath),
@@ -245,7 +252,7 @@ export default function App() {
         setMessage(text);
       }
     } finally {
-      if (requestId === historyRequestRef.current) { setBusy(false); setRevalidating(false); }
+      if (requestId === historyRequestRef.current) { setBusy(false); setRevalidating(false); setOpening(null); }
     }
   }, [path, summary]);
 
@@ -415,6 +422,17 @@ export default function App() {
       return next;
     });
   const clearListedRepositories = (workspaceId: string) => updateWorkspace(workspaceId, () => []);
+
+  // Stops waiting for a repository that is still opening; the one shown before
+  // (if any) stays.
+  const cancelOpening = () => {
+    if (!opening) return;
+    historyRequestRef.current += 1;
+    abandonRepositoryReads(opening.path);
+    setOpening(null);
+    setBusy(false);
+    setMessage("Opening cancelled");
+  };
 
   const openRepository = async () => {
     const selected = await promptRepositoryPath("Open Git repository");
@@ -1033,7 +1051,8 @@ export default function App() {
 
         <section className="ux-content" aria-live="polite">
           <ErrorBoundary label="This view" resetKey={`${path}|${view}`}>
-          {!path && view !== "cherry" && busy && repoTabs.length > 0 && (
+          {opening && <RepositoryOpening key={opening.path} path={opening.path} since={opening.since} overlay={Boolean(path)} onCancel={cancelOpening} />}
+          {!path && view !== "cherry" && busy && repoTabs.length > 0 && !opening && (
             <div className="ux-welcome is-loading" role="status">
               <div className="ux-welcome-mark"><i className="ux-spinner" /></div>
               <h1>Opening repository…</h1>

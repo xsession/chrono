@@ -662,7 +662,7 @@ $('#terr').addEventListener('change',e=>{terrOn=e.target.checked;if(P){terrainBu
 $('#elev').addEventListener('change',e=>{elev=e.target.value;if(P){terrainBuild();paintTerrain();req()}});
 
 /* ---------- recent-changes heatmap (Chrono sends git history per file) ---------- */
-let REC=null,heatOn=false,heatK=.7,heatWin=30,heatPrefsRead=false;
+let REC=null,heatOn=true,heatK=.7,heatWin=30,heatPrefsRead=false; // the heatmap is on until the user turns it off
 const HEATC={light:{hot:[214,30,30],warm:[245,160,0],wash:'240,241,236'},dark:{hot:[255,70,70],warm:[255,200,60],wash:'8,18,24'}};
 const heatPal=()=>isDark()?HEATC.dark:HEATC.light;
 const heatCol=()=>{const p=heatPal();return v=>mix(p.warm,p.hot,v).map(c=>c|0).join(',')};
@@ -1012,7 +1012,7 @@ if(EMBED){
   else if(d.type==='scan'&&d.scan&&Array.isArray(d.scan.files)){const sc0=d.scan;if(!sc0.files.length){toast('No source files found in this repository.',true);return}memStore.clear();if(d.saved)memStore.set('codemap:'+sc0.name,d.saved);setMode('explore');build(sc0.name,sc0.files,sc0.cut||0,false,null,d.note||'',sc0.repos);toast(`Mapped ${sc0.files.length.toLocaleString()} files. Tap a hill to stand on it.`)}
   else if(d.type==='recent'&&d.recent&&d.recent.files){REC=d.recent;$('#heatRow').hidden=false;
    const pr=d.prefs;if(pr&&!heatPrefsRead){heatOn=!!pr.on;heatK=Math.min(1,Math.max(.1,+pr.k||.7));if([1,7,30,90,365].includes(+pr.win))heatWin=+pr.win;$('#heat').checked=heatOn;$('#heatK').value=Math.round(heatK*100);$('#heatWin').value=String(heatWin)}
-   heatPrefsRead=true;$('#heatOpts').hidden=!heatOn;heatBuild();renderSel();req()}
+   heatPrefsRead=true;$('#heat').checked=heatOn;$('#heatOpts').hidden=!heatOn;heatBuild();renderSel();req()}
   else if(d.type==='goto'&&P){const f=P.byPath.get(d.path);if(f)goTo(f)}
  });
  toChrono({type:'ready'});
