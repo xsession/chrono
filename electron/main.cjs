@@ -65,7 +65,19 @@ else {
   app.on("open-url", (event, url) => { event.preventDefault(); forwardDeepLink(url); }); // macOS
 }
 
-async function wait(url) { for (let i = 0; i < 80; i++) { try { if ((await fetch(url)).ok) return; } catch {} await new Promise((r) => setTimeout(r, 100)); } throw new Error("Backend start timeout"); }
+// The first start can be slow: Node strips the TypeScript types of the whole
+// server, and a checkout on a slow or network drive (NTFS via FUSE) reads
+// those files slowly. CHRONO_BACKEND_TIMEOUT_MS overrides the 90 s limit.
+const BACKEND_TIMEOUT_MS = Number(process.env.CHRONO_BACKEND_TIMEOUT_MS) || 90_000;
+async function wait(url, child) {
+  const deadline = Date.now() + BACKEND_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.signalCode !== null) throw new Error("The backend exited before it was ready");
+    try { if ((await fetch(url, { signal: AbortSignal.timeout(2000) })).ok) return; } catch {}
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  throw new Error(`The backend did not start within ${Math.round(BACKEND_TIMEOUT_MS / 1000)} s (set CHRONO_BACKEND_TIMEOUT_MS to wait longer)`);
+}
 
 async function launch() {
   backendPort = String(14210 + Math.floor(Math.random() * 1000));
@@ -93,7 +105,7 @@ async function launch() {
     dialog.showErrorBox("Chrono backend stopped", `exit code ${code}${signal ? ` (${signal})` : ""}\n\nLog: ${logFile}\n\n${backendLog}`);
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
   });
-  await wait(`http://127.0.0.1:${backendPort}/api/health`);
+  await wait(`http://127.0.0.1:${backendPort}/api/health`, backend);
   mainWindow = new BrowserWindow({ width: 1440, height: 900, minWidth: 860, minHeight: 600, backgroundColor: "#111318", title: "Chrono", autoHideMenuBar: true, webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true } });
   await mainWindow.loadURL(`http://127.0.0.1:${backendPort}`);
   for (const uri of pendingDeepLinks.splice(0)) forwardDeepLink(uri);

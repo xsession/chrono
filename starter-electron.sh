@@ -73,8 +73,11 @@ apt_pkg() {
   echo "$1"
 }
 if [ "$(uname -s)" = "Linux" ] && have apt-get; then
+  # Read the cache once: under pipefail, "ldconfig -p | grep -q" fails even on
+  # a match, because grep exits early and ldconfig dies of SIGPIPE.
+  ldcache="$(ldconfig -p 2>/dev/null || true)"
   for lib in libnss3 libatk-1.0 libgtk-3 libasound; do
-    if ! ldconfig -p 2>/dev/null | grep -q "${lib//./\\.}"; then
+    if ! grep -q "${lib//./\\.}" <<<"$ldcache"; then
       pkgs=()
       for pkg in libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2 libxss1 libxtst6 libxcomposite1; do
         pkgs+=("$(apt_pkg "$pkg")")
@@ -116,50 +119,38 @@ if [ "$MODE" = "packager" ]; then
 fi
 
 # Chromium sandboxes its renderers with user namespaces. Ubuntu 23.10+ blocks
-# those for unconfined programs (kernel.apparmor_restrict_unprivileged_userns),
-# so Electron falls back to the setuid helper chrome-sandbox, which must be
-# owned by root with mode 4755. A checkout on NTFS/exFAT or a nosuid mount
-# cannot hold that. Then the helper is installed to /usr/local/lib/chrono and
-# Electron is pointed at it with CHROME_DEVEL_SANDBOX; Electron only reads that
-# variable when there is no chrome-sandbox next to its binary, so the unusable
-# copy in node_modules is removed. The sandbox stays on either way.
+# those for programs without an AppArmor profile that allows them
+# (kernel.apparmor_restrict_unprivileged_userns), and Electron then aborts with
+# "No usable sandbox". As Chromium's docs recommend, install a small profile
+# for this checkout's Electron binary that allows user namespaces (Ubuntu ships
+# the same kind of profile for Chrome and VS Code). The sandbox stays on.
+# https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md
 setup_linux_sandbox() {
   [ "$(uname -s)" = "Linux" ] || return 0
-  if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" != "1" ] &&
-     [ "$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || echo 1)" = "1" ]; then
-    return 0 # user namespaces are available; no setuid helper needed
-  fi
-  local helper="node_modules/electron/dist/chrome-sandbox"
-  local dest="/usr/local/lib/chrono/chrome-sandbox"
-  sandbox_ok() {
-    [ "$(stat -c '%u %a' "$1" 2>/dev/null)" = "0 4755" ] &&
-      ! findmnt -n -o OPTIONS -T "$1" 2>/dev/null | tr ',' '\n' | grep -qx nosuid
-  }
-  use_dest() { rm -f "$helper"; export CHROME_DEVEL_SANDBOX="$dest"; echo "chrome-sandbox: $dest"; }
+  [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)" = "1" ] || return 0
+  local electron profile_file="/etc/apparmor.d/chrono-electron" profile
+  electron="$(realpath node_modules/electron/dist/electron)"
+  profile="# Lets Chrono's Electron (started by starter-electron.sh) use user namespaces
+# for its sandbox. Remove this file to undo.
+abi <abi/4.0>,
+include <tunables/global>
 
-  if [ -f "$helper" ] && sandbox_ok "$helper"; then return 0; fi
-  # Installed on an earlier run (and the same Electron version).
-  if sandbox_ok "$dest" && { [ ! -f "$helper" ] || cmp -s "$helper" "$dest"; }; then use_dest; return 0; fi
-  if [ ! -f "$helper" ]; then
-    echo "error: $helper is missing. Reinstall Electron (rm -rf node_modules/electron && npm install) and try again." >&2
-    exit 1
-  fi
+profile chrono-electron \"$electron\" flags=(unconfined) {
+  userns,
 
-  step "Setting up the Electron sandbox helper"
-  echo "This system restricts unprivileged user namespaces, so Electron needs its"
-  echo "setuid sandbox helper (owned by root, mode 4755). sudo is needed once."
-  if sudo chown root:root "$helper" 2>/dev/null && sudo chmod 4755 "$helper" 2>/dev/null && sandbox_ok "$helper"; then
-    echo "chrome-sandbox: $helper"
+  include if exists <local/chrono-electron>
+}"
+  if [ "$(cat "$profile_file" 2>/dev/null)" = "$profile" ]; then return 0; fi
+
+  step "Allowing the Electron sandbox (AppArmor)"
+  echo "This system restricts unprivileged user namespaces, which Electron's sandbox"
+  echo "needs. Installing an AppArmor profile for $electron"
+  echo "to $profile_file (sudo is needed once)."
+  if printf '%s\n' "$profile" | sudo tee "$profile_file" >/dev/null && sudo apparmor_parser -r "$profile_file"; then
+    echo "AppArmor profile loaded: chrono-electron"
     return 0
   fi
-  echo "This checkout's file system cannot hold a setuid file; installing the helper to $dest."
-  if sudo install -D -o root -g root -m 4755 "$helper" "$dest" && sandbox_ok "$dest"; then
-    use_dest
-    return 0
-  fi
-  echo "error: could not set up the Electron sandbox helper. Run these and try again:" >&2
-  echo "  sudo install -D -o root -g root -m 4755 $helper $dest" >&2
-  echo "  rm $helper" >&2
+  echo "error: could not install the AppArmor profile $profile_file." >&2
   exit 1
 }
 setup_linux_sandbox
