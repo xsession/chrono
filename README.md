@@ -285,7 +285,8 @@ stash, with the diff, commit or log of the selection on the right. Move with
 `j`/`k` or the arrows, switch panels with `1`-`5`, `Tab` or `h`/`l`, press
 `Enter` to scroll the diff, `?` for every key. Files: `space` stage/unstage (a
 submodule: everything inside it), `a` all, `c` commit, `C` commit with an AI
-draft, `A` amend, `d` discard, `s` stash, `e` edit. Branches: `space` checkout,
+draft, `A` amend, `d` discard, `s` stash, `e` edit, `0` a full-screen diff
+where you pick single lines to stage, unstage or discard. Branches: `space` checkout,
 `n` new, `d` delete, `M` merge, `R` rebase. Stash: `space` apply, `g` pop, `d`
 drop. Everywhere: `p` pull, `P` push, `f` fetch, `z`/`Z` undo/redo, `q` quit.
 The installed command runs Chrono's own binary in Node mode, so it needs no

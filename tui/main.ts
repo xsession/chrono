@@ -15,6 +15,7 @@ import * as features from "../server/src/features.ts";
 import * as forks from "../server/src/forks.ts";
 import * as gk from "../server/src/gkOps.ts";
 import { repositoryRoot, runGit } from "../server/src/lib/git.ts";
+import { applyLines, sideDiff, type DiffSide, type LineMode, type SideDiff } from "../server/src/lineStaging.ts";
 import { stopLlamaServer } from "../server/src/localLlm.ts";
 import { closeAllWatches, waitForChange } from "../server/src/repoWatch.ts";
 import * as repo from "../server/src/repo.ts";
@@ -64,6 +65,21 @@ const TITLES: Record<PanelId, string> = { status: "Status", files: "Files", bran
 interface FileRow { path: string; staged: boolean; unstaged: boolean; code: string; conflicted: boolean; submodule: string | null }
 interface Row { key: string; line: Line }
 
+/** One row of the full-screen line-staging view (key 0). */
+interface LineRow { kind: "hunk" | "add" | "del" | "ctx"; hunk: number; line: number; text: string; number: number | null }
+interface LineView {
+  file: string;
+  side: DiffSide;
+  diff: SideDiff | null;
+  /** Lines changed on the other side (staged when looking at unstaged, and back). */
+  other: { additions: number; deletions: number } | null;
+  rows: LineRow[];
+  cursor: number;
+  scroll: number;
+  /** Selected changed lines, as "hunk:line". */
+  selected: Set<string>;
+}
+
 type Overlay =
   | { kind: "prompt"; title: string; value: string; cursor: number; hint?: string; onSubmit: (value: string) => Promise<void> | void }
   | { kind: "confirm"; title: string; text: string; onYes: () => Promise<void> | void }
@@ -88,6 +104,7 @@ const state = {
   message: { text: "", error: false },
   busy: "",
   overlay: null as Overlay,
+  lineView: null as LineView | null,
   mainKey: "",
   quitting: false,
 };
@@ -251,7 +268,7 @@ async function buildMain(): Promise<void> {
       [["HEAD        ", { fg: C.grey }], [s?.head?.slice(0, 12) ?? "(no commits)"]],
       [["Sync        ", { fg: C.grey }], [s ? `${s.ahead} ahead, ${s.behind} behind` : ""]],
       [],
-      [["Press ? for all keys. Panels: 1 status · 2 files · 3 branches · 4 commits · 5 stash", { fg: C.grey }]],
+      [["Press ? for all keys. Panels: 1 status · 2 files · 3 branches · 4 commits · 5 stash · 0 stage single lines", { fg: C.grey }]],
       [],
       [["Forks & upstreams", { bold: true, fg: C.brightCyan }], ["  (F: fetch upstreams and fast-forward every fork)", { fg: C.grey }]],
       ...state.forks.map((entry): Line => {
@@ -299,7 +316,7 @@ function panelHeights(total: number): number[] {
 const KEYS: Record<PanelId | "global", string> = {
   global: "q quit · ? keys · ←→/tab panels · p pull · P push · f fetch · F sync forks · z undo · Z redo · r refresh",
   status: "enter: open repository info",
-  files: "space stage · a stage all · c commit · C AI draft · A amend · d discard · s stash · e edit",
+  files: "0 stage lines · space stage · a stage all · c commit · C AI draft · A amend · d discard · s stash · e edit",
   branches: "space checkout · n new · d delete · M merge into current · R rebase current onto",
   commits: "enter/l scroll diff · J/K scroll · n new branch here",
   stash: "space apply · g pop · d drop",
@@ -315,6 +332,7 @@ function draw(): void {
     write(`\x1b[H\x1b[2J${fit([[text, { fg: C.yellow, bold: true }]], cols)}`);
     return;
   }
+  if (state.lineView) { write(drawLineView(cols, rows) + drawOverlay(cols, rows)); return; }
   const leftW = Math.max(28, Math.min(70, Math.floor(cols * 0.38)));
   const rightW = cols - leftW;
   const bodyH = rows - 1;
@@ -382,7 +400,9 @@ function drawOverlay(cols: number, rows: number): string {
       [["Everywhere", { bold: true, fg: C.brightCyan }]],
       ...[["q / ctrl-c", "quit"], ["1-5, tab, ←/→, h/l", "switch panel"], ["j/k, ↑/↓", "move"], ["enter", "focus the diff (j/k/pgup/pgdn scroll, esc back)"], ["J / K, ctrl-d / ctrl-u", "scroll the diff"], ["p / P / f", "pull (ff-only) / push / fetch"], ["F", "sync forks: fetch upstreams, fast-forward default branches (with submodules)"], ["z / Z", "undo / redo (Chrono's journal)"], ["r", "refresh (also automatic)"]].map(([k, v]) => [[`  ${k.padEnd(24)}`, { fg: C.yellow }], [v]] as Line),
       [], [["Files", { bold: true, fg: C.brightCyan }]],
-      ...[["space", "stage / unstage (a submodule: everything inside it)"], ["a", "stage all / unstage all"], ["c", "commit (stages everything if nothing is staged)"], ["C", "commit with an AI-drafted message"], ["A", "amend the last commit"], ["d", "discard changes to the file"], ["s", "stash all changes"], ["e", "open the file in $EDITOR"]].map(([k, v]) => [[`  ${k.padEnd(24)}`, { fg: C.yellow }], [v]] as Line),
+      ...[["0", "big diff: pick the lines to stage, unstage or discard"], ["space", "stage / unstage (a submodule: everything inside it)"], ["a", "stage all / unstage all"], ["c", "commit (stages everything if nothing is staged)"], ["C", "commit with an AI-drafted message"], ["A", "amend the last commit"], ["d", "discard changes to the file"], ["s", "stash all changes"], ["e", "open the file in $EDITOR"]].map(([k, v]) => [[`  ${k.padEnd(24)}`, { fg: C.yellow }], [v]] as Line),
+      [], [["Line staging (0)", { bold: true, fg: C.brightCyan }]],
+      ...LINE_KEYS.map(([k, v]) => [[`  ${k.padEnd(24)}`, { fg: C.yellow }], [v]] as Line),
       [], [["Branches · Commits · Stash", { bold: true, fg: C.brightCyan }]],
       ...[["space", "checkout branch / apply stash"], ["n", "new branch (from HEAD, or the selected commit)"], ["d", "delete branch / drop stash"], ["M / R", "merge into current / rebase current onto"], ["g", "pop stash"]].map(([k, v]) => [[`  ${k.padEnd(24)}`, { fg: C.yellow }], [v]] as Line),
       [], [["Commits from here go through nested submodules: each submodule with staged changes is committed first.", { fg: C.grey }]],
@@ -400,7 +420,7 @@ function drawOverlay(cols: number, rows: number): string {
 // ----------------------------------------------------------------- actions
 
 async function refresh(): Promise<void> {
-  try { await loadAll(); await buildMain(); } catch (error) { say(errorText(error), true); }
+  try { await loadAll(); await buildMain(); if (state.lineView) await loadLineView(state.lineView); } catch (error) { say(errorText(error), true); }
   draw();
 }
 
@@ -546,6 +566,197 @@ async function onStashKey(name: string): Promise<boolean> {
   return false;
 }
 
+// ----------------------------------------------------------------- line staging (key 0)
+//
+// A full-screen diff of one file where single lines are picked and staged,
+// unstaged or discarded (the backend's line staging, as in the desktop app).
+
+const LINE_KEYS: Array<[string, string]> = [
+  ["j / k, ↓ / ↑", "next / previous changed line"],
+  ["J / K, ] / [", "next / previous hunk"],
+  ["space", "select the line (and move on): hold it to select a run"],
+  ["a / A", "select the whole hunk / every line (again: clear)"],
+  ["enter / s", "stage the selected lines (unstage them in the staged view)"],
+  ["d", "discard the selected lines from the working tree (asks first)"],
+  ["tab", "switch between unstaged and staged changes"],
+  ["pgdn / pgup", "scroll a page"],
+  ["0 / esc / q", "close"],
+];
+
+const lineKey = (row: LineRow) => `${row.hunk}:${row.line}`;
+const changed = (row: LineRow | undefined) => row?.kind === "add" || row?.kind === "del";
+
+async function loadLineView(view: LineView): Promise<void> {
+  const otherSide: DiffSide = view.side === "staged" ? "unstaged" : "staged";
+  const [diff, other] = await Promise.all([sideDiff(state.root, view.file, view.side), sideDiff(state.root, view.file, otherSide).catch(() => null)]);
+  // A selection only means something for the diff it was made on.
+  if (view.diff?.fingerprint !== diff.fingerprint) view.selected.clear();
+  view.diff = diff;
+  view.other = other ? { additions: other.additions, deletions: other.deletions } : null;
+  const rows: LineRow[] = [];
+  diff.hunks.forEach((hunk, h) => {
+    rows.push({ kind: "hunk", hunk: h, line: -1, text: `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@${hunk.header ? ` ${hunk.header.replace(/^@@.*?@@\s*/, "")}` : ""}`, number: null });
+    hunk.lines.forEach((line, i) => rows.push({ kind: line.kind, hunk: h, line: i, text: line.text, number: line.number }));
+  });
+  view.rows = rows;
+  // Keep the cursor where it was, on the nearest changed line.
+  const at = Math.min(view.cursor, Math.max(0, rows.length - 1));
+  const after = rows.findIndex((row, index) => index >= at && changed(row));
+  view.cursor = after >= 0 ? after : Math.max(0, rows.map((row) => changed(row)).lastIndexOf(true));
+}
+
+async function openLineView(): Promise<void> {
+  const file = state.files[sel("files")];
+  if (!file) { say("No changes to stage", true); draw(); return; }
+  if (file.submodule) { say(`${file.path} is a submodule: stage what is inside it with space`, true); draw(); return; }
+  if (file.conflicted) { say(`${file.path} has conflicts: resolve them first`, true); draw(); return; }
+  const view: LineView = { file: file.path, side: file.unstaged ? "unstaged" : "staged", diff: null, other: null, rows: [], cursor: 0, scroll: 0, selected: new Set() };
+  try { await loadLineView(view); } catch (error) { say(errorText(error), true); draw(); return; }
+  state.lineView = view;
+  say("");
+  draw();
+}
+
+function closeLineView(): void {
+  state.lineView = null;
+  void buildMain().then(draw);
+}
+
+function moveLine(view: LineView, delta: number): void {
+  let index = view.cursor;
+  for (let step = 0; step < Math.abs(delta); step++) {
+    let next = index + Math.sign(delta);
+    while (next >= 0 && next < view.rows.length && !changed(view.rows[next])) next += Math.sign(delta);
+    if (next < 0 || next >= view.rows.length) break;
+    index = next;
+  }
+  view.cursor = index;
+}
+
+function moveHunk(view: LineView, delta: number): void {
+  const current = view.rows[view.cursor]?.hunk ?? 0;
+  const target = Math.max(0, Math.min((view.diff?.hunks.length ?? 1) - 1, current + delta));
+  const first = view.rows.findIndex((row) => row.hunk === target && changed(row));
+  if (first >= 0) view.cursor = first;
+}
+
+function toggleRows(view: LineView, rows: LineRow[]): void {
+  const keys = rows.filter(changed).map(lineKey);
+  const all = keys.length > 0 && keys.every((key) => view.selected.has(key));
+  for (const key of keys) { if (all) view.selected.delete(key); else view.selected.add(key); }
+}
+
+async function applyLineSelection(view: LineView, mode: LineMode): Promise<void> {
+  const current = view.rows[view.cursor];
+  const keys = view.selected.size ? [...view.selected] : changed(current) ? [lineKey(current!)] : [];
+  if (!keys.length || !view.diff) { say("Select lines first (space)", true); draw(); return; }
+  const byHunk = new Map<number, number[]>();
+  for (const key of keys) {
+    const [hunk, line] = key.split(":").map(Number);
+    byHunk.set(hunk, [...(byHunk.get(hunk) ?? []), line]);
+  }
+  const selection = [...byHunk.entries()].sort((a, b) => a[0] - b[0]).map(([hunk, lines]) => ({ hunk, lines: lines.sort((a, b) => a - b) }));
+  const count = `${keys.length} line${keys.length === 1 ? "" : "s"}`;
+  const verb = mode === "stage" ? "Staged" : mode === "unstage" ? "Unstaged" : "Discarded";
+  const run = () => act(mode === "stage" ? "Staging lines" : mode === "unstage" ? "Unstaging lines" : "Discarding lines", async () => {
+    const fingerprint = view.diff!.fingerprint;
+    view.selected.clear();
+    if (mode === "discard") await gk.journaled(state.root, `Discard ${count} in ${view.file}`, "keep", () => applyLines(state.root, view.file, mode, selection, fingerprint));
+    else await applyLines(state.root, view.file, mode, selection, fingerprint);
+  }, `${verb} ${count} in ${view.file}`);
+  if (mode === "discard") confirm("Discard lines", `Discard ${count} from ${view.file} in the working tree?\nz undoes it (Chrono's journal).`, run);
+  else await run();
+}
+
+function drawLineView(cols: number, rows: number): string {
+  const view = state.lineView!;
+  const diff = view.diff;
+  const bodyH = rows - 1;
+  const inner = cols - 2;
+  const visible = bodyH - 3; // box borders and the side bar
+  // Keep the cursor in view with a little context around it.
+  const margin = Math.min(4, Math.floor(visible / 4));
+  if (view.cursor < view.scroll + margin) view.scroll = view.cursor - margin;
+  if (view.cursor >= view.scroll + visible - margin) view.scroll = view.cursor - visible + margin + 1;
+  view.scroll = Math.max(0, Math.min(view.scroll, Math.max(0, view.rows.length - visible)));
+
+  const tab = (side: DiffSide, label: string, counts: { additions: number; deletions: number } | null): Seg[] => {
+    const active = view.side === side;
+    const text = ` ${label} ${counts ? `+${counts.additions} -${counts.deletions}` : ""} `;
+    return [[text, active ? { bg: 44, bold: true, fg: C.white } : { fg: C.grey }], [" "]];
+  };
+  const unstagedCounts = view.side === "unstaged" ? diff : view.other;
+  const stagedCounts = view.side === "staged" ? diff : view.other;
+  const selectedCount = view.selected.size;
+  const bar: Line = [...tab("unstaged", "Unstaged", unstagedCounts), ...tab("staged", "Staged", stagedCounts),
+    ["  ", {}], [selectedCount ? `${selectedCount} selected` : "nothing selected: enter acts on the line under the cursor", { fg: selectedCount ? C.yellow : C.grey }]];
+  const lines: string[] = [fit(bar, inner)];
+
+  if (!diff || diff.binary) lines.push(fit([["Binary file: stage it whole with space in the files panel.", { fg: C.yellow }]], inner));
+  else if (!view.rows.length) lines.push(fit([[view.side === "unstaged" ? "No unstaged changes in this file." : "Nothing staged in this file.", { fg: C.grey }], [view.other && (view.other.additions || view.other.deletions) ? "  tab shows the other side." : "", { fg: C.cyan }]], inner));
+  const numberWidth = Math.max(4, String(Math.max(0, ...view.rows.map((row) => row.number ?? 0))).length);
+  for (const [offset, row] of view.rows.slice(view.scroll, view.scroll + visible).entries()) {
+    const index = view.scroll + offset;
+    if (row.kind === "hunk") {
+      lines.push(fit([[`${row.text}`, { fg: C.cyan, bold: true }], [`  hunk ${row.hunk + 1} of ${diff?.hunks.length ?? 0}`, { fg: C.grey }]], inner));
+      continue;
+    }
+    const isCursor = index === view.cursor;
+    const isSelected = view.selected.has(lineKey(row));
+    const bg = isCursor ? 44 : isSelected ? 100 : undefined;
+    const sign = row.kind === "add" ? "+" : row.kind === "del" ? "-" : " ";
+    const color = row.kind === "add" ? C.green : row.kind === "del" ? C.red : undefined;
+    const mark = isSelected ? "✓" : isCursor ? "›" : " ";
+    lines.push(fit([
+      [`${mark} `, { fg: isSelected ? C.brightGreen : C.white, bold: true, bg }],
+      [`${row.number === null ? "" : row.number}`.padStart(numberWidth) + " ", { fg: C.grey, bg }],
+      [`${sign} ${row.text}`, { fg: isCursor ? (row.kind === "add" ? 92 : row.kind === "del" ? 91 : C.white) : color, bold: isSelected || isCursor, bg }],
+    ], inner, bg ? { bg } : undefined));
+  }
+  const changedRows = view.rows.filter(changed).length;
+  const position = changedRows ? `line ${view.rows.slice(0, view.cursor + 1).filter(changed).length} of ${changedRows} changed` : "";
+  const title = `Stage lines · ${view.file}`;
+  const framed = box(title, lines, cols, bodyH, true, position);
+  let screen = "\x1b[H";
+  for (const row of framed) screen += `${row}\x1b[K\r\n`;
+  const keys = view.side === "unstaged"
+    ? "space select · a hunk · A all · enter stage · d discard · j/k lines · J/K hunks · tab staged · ? keys · esc close"
+    : "space select · a hunk · A all · enter unstage · j/k lines · J/K hunks · tab unstaged · ? keys · esc close";
+  const status: Line = state.busy ? [[`⏳ ${state.busy}`, { fg: C.yellow, bold: true }]]
+    : state.message.text ? [[state.message.text, { fg: state.message.error ? C.red : C.brightGreen }]]
+    : [[keys, { fg: C.cyan }]];
+  return screen + fit(status, cols);
+}
+
+async function onLineKey(name: string, key: { ctrl?: boolean }): Promise<void> {
+  const view = state.lineView!;
+  const page = Math.max(1, (out.rows || 30) - 8);
+  say("");
+  if (name === "escape" || name === "q" || name === "0") { closeLineView(); return; }
+  if (name === "?") { state.overlay = { kind: "help" }; draw(); return; }
+  if (name === "j" || name === "down") moveLine(view, 1);
+  else if (name === "k" || name === "up") moveLine(view, -1);
+  else if (name === "J" || name === "]") moveHunk(view, 1);
+  else if (name === "K" || name === "[") moveHunk(view, -1);
+  else if (name === "pagedown" || (key.ctrl && name === "d")) moveLine(view, page);
+  else if (name === "pageup" || (key.ctrl && name === "u")) moveLine(view, -page);
+  else if (name === "home" || name === "g") { const first = view.rows.findIndex(changed); if (first >= 0) view.cursor = first; }
+  else if (name === "end" || name === "G") { const last = view.rows.map((row) => changed(row)).lastIndexOf(true); if (last >= 0) view.cursor = last; }
+  else if (name === "space") { const row = view.rows[view.cursor]; if (changed(row)) { toggleRows(view, [row]); moveLine(view, 1); } }
+  else if (name === "a") { const hunk = view.rows[view.cursor]?.hunk; toggleRows(view, view.rows.filter((row) => row.hunk === hunk)); }
+  else if (name === "A") toggleRows(view, view.rows);
+  else if (name === "tab") {
+    view.side = view.side === "unstaged" ? "staged" : "unstaged";
+    view.diff = null; view.cursor = 0; view.scroll = 0; view.selected.clear();
+    try { await loadLineView(view); } catch (error) { say(errorText(error), true); }
+  } else if (name === "return" || name === "s") { await applyLineSelection(view, view.side === "unstaged" ? "stage" : "unstage"); return; }
+  else if (name === "d") {
+    if (view.side === "staged") { say("Discard works on unstaged lines: tab to them first", true); draw(); return; }
+    await applyLineSelection(view, "discard"); return;
+  } else if (name === "u" && view.side === "staged") { await applyLineSelection(view, "unstage"); return; }
+  draw();
+}
+
 // ----------------------------------------------------------------- terminal
 
 function enterScreen() {
@@ -614,6 +825,8 @@ async function onKey(str: string | undefined, key: { name?: string; ctrl?: boole
   if (overlay?.kind === "help") { state.overlay = null; draw(); return; }
   {
     const name = key.name === "space" || str === " " ? "space" : str && /^[A-Z]$/.test(str) ? str : key.name ?? str ?? "";
+    if (state.lineView) { await onLineKey(name, key); return; }
+    if (name === "0") { await openLineView(); return; }
     if (state.mainFocus) {
       if (name === "escape" || name === "h" || name === "left" || name === "q") { state.mainFocus = false; draw(); return; }
       if (name === "j" || name === "down") return move(1);

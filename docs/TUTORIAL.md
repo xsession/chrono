@@ -428,11 +428,17 @@ checkout). It uses the same backend as the app, without a window.
    everything inside it), `a` stages all, `c` commits, `C` commits with an AI
    draft, `A` amends, `d` discards (asks first), `s` stashes, `e` opens your
    editor. `Enter` focuses the diff for scrolling; Esc goes back.
-4. In Branches, `space` checks out, `n` creates, `d` deletes, `M` merges, `R`
+4. `0` opens the selected file in a full-screen diff for staging single lines:
+   `j`/`k` move between changed lines, `J`/`K` between hunks, `space` selects
+   a line (hold it to select a run), `a` selects the hunk, `A` everything.
+   `Enter` stages the selection (or the line under the cursor), `d` discards
+   it after asking, `Tab` switches to the staged side where `Enter` unstages.
+   `0` or Esc goes back.
+5. In Branches, `space` checks out, `n` creates, `d` deletes, `M` merges, `R`
    rebases. In Stash, `space` applies, `g` pops, `d` drops.
-5. Everywhere: `p` pull, `P` push, `f` fetch, `F` sync all forks, `z`/`Z`
+6. Everywhere: `p` pull, `P` push, `f` fetch, `F` sync all forks, `z`/`Z`
    undo/redo, `?` all keys, `q` quit.
-6. The Status panel shows ⑂ and a forks table for the repository and its
+7. The Status panel shows ⑂ and a forks table for the repository and its
    submodules. Commits through submodules work exactly as in section 10.
 
 A terminal smaller than 60×16 shows a message instead of a broken layout and

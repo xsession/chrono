@@ -15,7 +15,6 @@
 // credentials itself (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or an
 // `ant auth login` profile).
 
-import Anthropic from "@anthropic-ai/sdk";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { invalidError } from "./lib/errors.ts";
@@ -385,7 +384,11 @@ async function ollamaComplete(settings: StoredSettings, prompt: string, maxToken
 
 
 async function claudeComplete(settings: StoredSettings, system: string, prompt: string, timeoutMs: number): Promise<AiResult | null> {
-  let client: Anthropic;
+  // Loaded on first use: the SDK is hundreds of files, and reading them at
+  // startup delays the backend and the TUI by many seconds on slow drives,
+  // for everyone who does not use Claude.
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  let client: InstanceType<typeof Anthropic>;
   try {
     client = new Anthropic({ ...(settings.claudeKey ? { apiKey: settings.claudeKey } : {}), timeout: timeoutMs, maxRetries: 1 });
   } catch (error) {

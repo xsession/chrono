@@ -165,6 +165,52 @@ try {
   await waitFor((s) => s.includes("[2] Files"), "the layout after resizing back");
   ok(true, "resizing back draws the panels again");
 
+  // 0: the full-screen line view. Stage one replacement out of a file with
+  // three changes, unstage it again from the staged side, then discard a line.
+  fs.writeFileSync(path.join(repo, "lines.txt"), "one\ntwo\nthree\nfour\nfive\n");
+  git(repo, "add", "lines.txt"); git(repo, "commit", "-qm", "lines");
+  fs.writeFileSync(path.join(repo, "lines.txt"), "one\nTWO\nthree\nFOUR\nfive\nsix\n");
+  await press(["2"]);
+  await waitFor((s) => s.includes("lines.txt"), "lines.txt in the files panel", 8000);
+  {
+    // Go to the top of the files panel, then down to lines.txt.
+    await press(Array(10).fill("k"), 40);
+    const rowsNow = screen().split("\n");
+    const header = rowsNow.findIndex((line) => line.includes("[2] Files"));
+    const target = rowsNow.findIndex((line, index) => index > header && line.slice(0, 60).includes("lines.txt"));
+    await press(Array(Math.max(0, target - header - 1)).fill("j"));
+  }
+  await press(["0"]);
+  await waitFor((s) => s.includes("Stage lines · lines.txt") && s.includes("Unstaged +3 -2"), "the line view", 5000);
+  ok(screen().includes("› ") && screen().includes("- two"), "0 opens the full-screen line view on the first changed line");
+  await press([" ", " "]);
+  await waitFor((s) => s.includes("2 selected"), "two lines selected");
+  ok(true, "space selects lines");
+  await press(["\r"]);
+  await waitFor(() => git(repo, "show", ":lines.txt") === "one\nTWO\nthree\nfour\nfive", "only the first replacement staged", 5000);
+  ok(fs.readFileSync(path.join(repo, "lines.txt"), "utf8") === "one\nTWO\nthree\nFOUR\nfive\nsix\n", "enter stages just the selected lines; the working tree is untouched");
+  await waitFor((s) => s.includes("Staged 2 lines in lines.txt") && s.includes("Unstaged +2 -1") && s.includes("Staged +1 -1"), "the refreshed line view", 5000);
+  ok(true, "the view refreshes and shows both sides");
+  await press(["\t"]);
+  await waitFor((s) => s.includes("+ TWO") && !s.includes("+ FOUR"), "the staged side", 5000);
+  await press(["a"]);
+  await waitFor((s) => s.includes("2 selected"), "the whole hunk selected");
+  await press(["\r"]);
+  await waitFor(() => git(repo, "diff", "--cached", "--name-only") === "", "the line unstaged", 5000);
+  ok(true, "tab shows the staged lines; a selects the hunk and enter unstages it");
+  await press(["\t"]);
+  await waitFor((s) => s.includes("Unstaged +3 -2"), "back on the unstaged side", 5000);
+  await press(["G"]);
+  await press(["d"]);
+  await waitFor((s) => s.includes("Discard lines"), "the discard confirmation", 5000);
+  await press(["y"]);
+  await waitFor(() => fs.readFileSync(path.join(repo, "lines.txt"), "utf8") === "one\nTWO\nthree\nFOUR\nfive\n", "the last added line discarded", 5000);
+  ok(true, "d discards the line under the cursor after asking");
+  await press(["\x1b"]);
+  await waitFor((s) => s.includes("[2] Files"), "the panels again", 5000);
+  ok(true, "esc closes the line view");
+  git(repo, "checkout", "--", "lines.txt");
+
   // Help overlay.
   await press(["?"]);
   await waitFor((s) => s.includes("Keys") && s.includes("undo / redo"), "the help overlay");
