@@ -39,6 +39,7 @@ function ConnectionCard({ row, onChanged }: { row: Row; onChanged: () => void })
   const [insecureTls, setInsecureTls] = useState(row.server?.insecureTls ?? false);
   const [caFile, setCaFile] = useState(row.server?.caFile ?? "");
   const [timeout, setTimeoutValue] = useState(String(row.server?.timeoutSeconds ?? 20));
+  const [gitUsername, setGitUsername] = useState(row.server?.gitUsername ?? "");
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [, setTick] = useState(0);
@@ -48,7 +49,7 @@ function ConnectionCard({ row, onChanged }: { row: Row; onChanged: () => void })
   const token = getToken(row.host);
   const remembered = isTokenRemembered(row.host);
   const dirty = provider !== (getProviderOverride(row.host) || detectedProvider) || apiBase.trim() !== getApiBase(row.host)
-    || insecureTls !== (row.server?.insecureTls ?? false) || caFile.trim() !== (row.server?.caFile ?? "") || Number(timeout) !== (row.server?.timeoutSeconds ?? 20);
+    || insecureTls !== (row.server?.insecureTls ?? false) || caFile.trim() !== (row.server?.caFile ?? "") || Number(timeout) !== (row.server?.timeoutSeconds ?? 20) || gitUsername.trim() !== (row.server?.gitUsername ?? "");
 
   const save = async () => {
     try {
@@ -58,7 +59,7 @@ function ConnectionCard({ row, onChanged }: { row: Row; onChanged: () => void })
       if (apiBase.trim() && !/^https?:\/\//i.test(apiBase.trim())) throw new Error("The API base must start with http:// or https://");
       setProviderOverride(row.host, provider && provider !== detectedProvider ? provider : "");
       setApiBase(row.host, apiBase.trim() && apiBase.trim() !== row.detected?.apiBase ? apiBase.trim() : "");
-      await api.hostingConnectionSave(row.host, { insecureTls, caFile: caFile.trim(), timeoutSeconds: seconds });
+      await api.hostingConnectionSave(row.host, { insecureTls, caFile: caFile.trim(), timeoutSeconds: seconds, gitUsername: gitUsername.trim() });
       pushToast(`Saved ${row.host}`, "success");
       onChanged();
     } catch (error) { pushToast(errorText(error), "error"); }
@@ -106,6 +107,7 @@ function ConnectionCard({ row, onChanged }: { row: Row; onChanged: () => void })
         </select></label>
         <label>API base<input value={apiBase} onChange={(event) => setApiBaseValue(event.target.value)} placeholder={row.detected?.apiBase && provider === detectedProvider ? row.detected.apiBase : apiPlaceholder(provider, row.host)} /></label>
         <label>Request timeout (seconds)<input type="number" min={5} max={600} value={timeout} onChange={(event) => setTimeoutValue(event.target.value)} /></label>
+        <label title="Git push, pull and fetch over HTTPS send the remembered token as the password with this user name. Leave empty for the usual one (GitHub: any, GitLab: oauth2).">Git user name (HTTPS)<input value={gitUsername} onChange={(event) => setGitUsername(event.target.value)} placeholder={provider === "bitbucket-server" ? "your Bitbucket user name" : "automatic"} /></label>
         <label className="st-wide">CA certificate file (PEM, on the computer running Chrono)<input value={caFile} onChange={(event) => setCaFile(event.target.value)} placeholder="/etc/ssl/certs/company-ca.pem — for servers signed by your own CA" /></label>
         <label className="st-check st-wide"><input type="checkbox" checked={insecureTls} onChange={(event) => setInsecureTls(event.target.checked)} />Accept self-signed and invalid certificates (not safe on untrusted networks)</label>
       </div>
@@ -163,7 +165,7 @@ export function HostingTab({ repositoryPath }: { repositoryPath: string }) {
 
   return (
     <section className="st-section">
-      <header><div><h3>Hosting connections</h3><p>GitHub, GitLab, Gitea / Forgejo, Bitbucket Server and Bitbucket Cloud servers Chrono talks to for pull requests, CI checks and forks. Hosts of this repository's remotes are listed first. Tokens are kept for the session unless you choose to remember them; remembered tokens stay on the computer running Chrono and are never shown again.</p></div></header>
+      <header><div><h3>Hosting connections</h3><p>GitHub, GitLab, Gitea / Forgejo, Bitbucket Server and Bitbucket Cloud servers Chrono talks to for pull requests, CI checks and forks. Hosts of this repository's remotes are listed first. Tokens are kept for the session unless you choose to remember them; remembered tokens stay on the computer running Chrono, are never shown again, and also let git push, pull and fetch over HTTPS.</p></div></header>
       {rows === null ? <p className="st-note">Loading…</p> : rows.length === 0 ? <p className="st-note">No hosting servers yet. Add one below, or open a repository with a GitHub, GitLab, Gitea or Bitbucket remote.</p> : rows.map((row) => <ConnectionCard key={`${row.host}:${JSON.stringify(row.server)}:${getProviderOverride(row.host)}:${getApiBase(row.host)}:${getToken(row.host) ? 1 : 0}`} row={row} onChanged={() => setVersion((value) => value + 1)} />)}
       <form className="st-inline" onSubmit={(event) => { event.preventDefault(); addHost(); }}>
         <input aria-label="Host name" value={newHost} onChange={(event) => setNewHost(event.target.value)} placeholder="Add a server: git.example.com" />

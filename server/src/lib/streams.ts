@@ -4,6 +4,7 @@
 
 import { spawn } from "node:child_process";
 import { recordGitCommand } from "./gitLog.ts";
+import { gitCredentialEnv } from "./gitCredentials.ts";
 
 interface Stream { text: string; done: boolean; exitCode: number | null; touched: number }
 
@@ -51,7 +52,7 @@ export function runGitStreaming(cwd: string, args: string[], streamId: string, e
     const startedAt = new Date().toISOString();
     const start = performance.now();
     appendStream(streamId, `$ git ${args.join(" ")}\n`);
-    const child = spawn("git", ["-C", cwd, ...args], { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv } });
+    const child = spawn("git", ["-C", cwd, ...args], { env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...gitCredentialEnv(), ...extraEnv } });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (data: Buffer) => { const text = data.toString("utf8"); stdout += text; appendStream(streamId, text); });

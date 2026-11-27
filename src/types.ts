@@ -768,7 +768,7 @@ export const HOSTING_PROVIDER_LABELS: Record<HostingProvider, string> = { github
 /** Default API base per provider ("" where it depends on the server). */
 export const HOSTING_DEFAULT_API: Record<HostingProvider, string> = { github: "https://api.github.com", gitlab: "", gitea: "", "bitbucket-server": "", "bitbucket-cloud": "https://api.bitbucket.org/2.0" };
 /** Per-host options the server applies to provider requests (server/src/hosting.ts). */
-export type HostingConnection = { host: string; insecureTls: boolean; caFile: string; timeoutSeconds: number; hasToken: boolean };
+export type HostingConnection = { host: string; insecureTls: boolean; caFile: string; timeoutSeconds: number; gitUsername: string; hasToken: boolean };
 export type CheckRun = { id: string; name: string; status: string; conclusion: string; url: string; rerunnable: boolean };
 export type GitflowConfig = { initialized: boolean; master: string; develop: string; feature: string; release: string; hotfix: string; support: string; versionTag: string };
 export type FlowType = "feature" | "release" | "hotfix" | "support";

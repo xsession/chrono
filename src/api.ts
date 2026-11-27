@@ -496,7 +496,7 @@ export const api = {
   ghIssueBranches: (path: string) => invoke<Record<string, string>>("gh_issue_branches", { path }),
   hostingConnections: () => invoke<HostingConnection[]>("hosting_connections", {}),
   /** token: a new token to remember on the server; null forgets it. */
-  hostingConnectionSave: (host: string, update: { insecureTls?: boolean; caFile?: string; timeoutSeconds?: number; token?: string | null }) => invoke<HostingConnection>("hosting_connection_save", { host, ...update }),
+  hostingConnectionSave: (host: string, update: { insecureTls?: boolean; caFile?: string; timeoutSeconds?: number; gitUsername?: string; token?: string | null }) => invoke<HostingConnection>("hosting_connection_save", { host, ...update }),
   hostingConnectionRemove: (host: string) => invoke<null>("hosting_connection_remove", { host }),
   hostingConnectionTest: (host: string, provider: string, apiBase: string, token: string) => invoke<{ ok: boolean; user: string | null; message: string }>("hosting_connection_test", { host, provider, apiBase, token }),
 

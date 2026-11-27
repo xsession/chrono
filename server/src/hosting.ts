@@ -10,6 +10,8 @@
 // - insecureTls: accept any certificate (self-signed servers).
 // - caFile: a PEM file with the CA that signed the server's certificate.
 // - timeoutSeconds: how long one request may take (default 20 s).
+// - gitUsername: the user name git sends with the token over HTTPS (some
+//   servers, e.g. Bitbucket Server, want your real one).
 
 import fs from "node:fs/promises";
 import https from "node:https";
@@ -26,6 +28,7 @@ export interface HostingConnection {
   insecureTls: boolean;
   caFile: string;
   timeoutSeconds: number;
+  gitUsername: string;
   /** A token is remembered for this host (the token itself is not returned). */
   hasToken: boolean;
 }
@@ -34,11 +37,12 @@ export interface HostingConnectionUpdate {
   insecureTls?: boolean;
   caFile?: string;
   timeoutSeconds?: number;
+  gitUsername?: string;
   /** A new token to remember; null forgets the remembered one. */
   token?: string | null;
 }
 
-type Stored = { insecureTls?: boolean; caFile?: string; timeoutSeconds?: number; token?: string };
+type Stored = { insecureTls?: boolean; caFile?: string; timeoutSeconds?: number; token?: string; gitUsername?: string };
 
 const settingsFile = () => path.join(path.dirname(workspacesFile()), "hosting.json");
 
@@ -68,6 +72,7 @@ const view = (host: string, stored: Stored): HostingConnection => ({
   insecureTls: stored.insecureTls === true,
   caFile: stored.caFile ?? "",
   timeoutSeconds: stored.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS,
+  gitUsername: stored.gitUsername ?? "",
   hasToken: Boolean(stored.token),
 });
 
@@ -94,6 +99,11 @@ export async function saveConnection(hostInput: string, update: HostingConnectio
     const seconds = Math.round(Number(update.timeoutSeconds));
     if (!Number.isFinite(seconds) || seconds < 5 || seconds > 600) throw invalidError("the timeout must be between 5 and 600 seconds");
     stored.timeoutSeconds = seconds;
+  }
+  if (update.gitUsername !== undefined) {
+    const name = update.gitUsername.trim();
+    if (name && !/^[\w.@+-]{1,100}$/.test(name)) throw invalidError("invalid git user name");
+    if (name) stored.gitUsername = name; else delete stored.gitUsername;
   }
   if (update.token === null) delete stored.token;
   else if (typeof update.token === "string" && update.token.trim() && update.token.trim() !== STORED_TOKEN) {

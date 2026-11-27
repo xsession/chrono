@@ -712,6 +712,7 @@ const routes: Record<string, Handler> = {
     insecureTls: typeof body.insecureTls === "boolean" ? body.insecureTls : undefined,
     caFile: typeof body.caFile === "string" ? body.caFile : undefined,
     timeoutSeconds: typeof body.timeoutSeconds === "number" ? body.timeoutSeconds : undefined,
+    gitUsername: typeof body.gitUsername === "string" ? body.gitUsername : undefined,
     token: body.token === null ? null : typeof body.token === "string" ? body.token : undefined,
   }),
   hosting_connection_remove: async (body) => { await hosting.removeConnection(str(body.host, "host")); return null; },

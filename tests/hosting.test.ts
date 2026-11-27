@@ -90,7 +90,7 @@ try {
   console.log("connection store");
   await check("options and a remembered token are saved owner-only, and the token is never listed", async () => {
     const saved = await hosting.saveConnection("Git.Example.com", { insecureTls: true, timeoutSeconds: 45, token: "secret-token" });
-    assert.deepEqual(saved, { host: "git.example.com", insecureTls: true, caFile: "", timeoutSeconds: 45, hasToken: true });
+    assert.deepEqual(saved, { host: "git.example.com", insecureTls: true, caFile: "", timeoutSeconds: 45, gitUsername: "", hasToken: true });
     const file = path.join(configDir, "hosting.json");
     if (process.platform !== "win32") assert.equal(fs.statSync(file).mode & 0o777, 0o600);
     assert.ok(!JSON.stringify(await hosting.listConnections()).includes("secret-token"));
@@ -112,6 +112,30 @@ try {
     const notPem = path.join(configDir, "not.pem"); fs.writeFileSync(notPem, "hello");
     await rejects(() => hosting.saveConnection("git.example.com", { caFile: notPem }), /PEM certificate/);
     await rejects(() => hosting.saveConnection("bad host/x", {}), /invalid host/);
+  });
+  await check("git gets remembered tokens through its credential helper", async () => {
+    const { buildCredentialEnv, gitCredentialEnv } = await import("../server/src/lib/gitCredentials.ts");
+    await hosting.saveConnection("github.com", { token: "ghp_secret" });
+    await hosting.saveConnection("bitbucket.org", { token: "alice:app-pass" });
+    await hosting.saveConnection("git.corp.example:8443", { token: "corp-token", gitUsername: "alice" });
+    const env = gitCredentialEnv();
+    const fill = (url: string) => {
+      const out = execFileSync("git", ["credential", "fill"], { input: `url=${url}\n\n`, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, ...env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", HOME: configDir, GIT_ASKPASS: "", SSH_ASKPASS: "" } });
+      return Object.fromEntries(out.trim().split("\n").map((line) => line.split(/=(.*)/s).slice(0, 2)));
+    };
+    assert.deepEqual([fill("https://github.com/acme/web.git").username, fill("https://github.com/acme/web.git").password], ["x-access-token", "ghp_secret"]);
+    assert.deepEqual([fill("https://bitbucket.org/acme/web.git").username, fill("https://bitbucket.org/acme/web.git").password], ["alice", "app-pass"]);
+    assert.deepEqual([fill("https://git.corp.example:8443/team/app.git").username, fill("https://git.corp.example:8443/team/app.git").password], ["alice", "corp-token"]);
+    assert.throws(() => fill("https://gitlab.example.com/x.git"), "a host without a token gets nothing (and no prompt)");
+    assert.ok(!Object.values(env).some((value) => value.includes("GIT_CONFIG_VALUE") && value.includes("ghp_secret")), "the token is in an environment variable, not in the config value");
+    assert.ok(Object.entries(env).filter(([key]) => key.startsWith("GIT_CONFIG_VALUE_")).every(([, value]) => !value.includes("ghp_secret")));
+    // Existing GIT_CONFIG_COUNT entries are kept: ours come after them.
+    const after = buildCredentialEnv({ "github.com": { token: "t" } }, { GIT_CONFIG_COUNT: "2" });
+    assert.equal(after.GIT_CONFIG_COUNT, "3");
+    assert.equal(after.GIT_CONFIG_KEY_2, "credential.https://github.com.helper");
+    assert.deepEqual(buildCredentialEnv({ "github.com": {} }), {}, "no token, nothing added");
+    await rejects(() => hosting.saveConnection("git.corp.example:8443", { gitUsername: "bad name" }), /invalid git user name/);
+    for (const host of ["github.com", "bitbucket.org", "git.corp.example:8443"]) await hosting.removeConnection(host);
   });
   await check("removing a connection forgets it", async () => {
     await hosting.removeConnection("git.example.com");

@@ -31,6 +31,7 @@ import {
   type CommitRecord, HISTORY_ALL_REFS } from "./lib/git.ts";
 import { workspacesFile } from "./workspaces.ts";
 import { authHeaders, hostingFetch } from "./hosting.ts";
+import { gitCredentialEnv } from "./lib/gitCredentials.ts";
 import { finishStream, runGitStreaming } from "./lib/streams.ts";
 import { commitSubmodules, NestedCommitError, type NestedCommit } from "./nestedCommit.ts";
 import { aiComplete, AiUnavailableError } from "./ai.ts";
@@ -865,7 +866,8 @@ export async function runCustomCommand(inputPath: string, id: string, context: {
   const [executable, ...rest] = argv;
   if (executable !== "git" && !allowNonGit) throw new AppError("unsupported", "only git commands may run when Chrono is reachable from other machines");
   const result = await new Promise<CommandResult>((resolve) => {
-    execFile(executable, rest, { cwd: root, timeout: 10 * 60 * 1000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }, (error, stdout, stderr) => {
+    // Remembered tokens go to git only, never to other programs.
+    execFile(executable, rest, { cwd: root, timeout: 10 * 60 * 1000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...(executable === "git" ? gitCredentialEnv() : {}) } }, (error, stdout, stderr) => {
       const code = error ? (typeof (error as { code?: unknown }).code === "number" ? (error as { code: number }).code : 1) : 0;
       resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? "") || (error && code === 1 ? error.message : ""), exitCode: code });
     });
