@@ -29,12 +29,13 @@ import * as forks from "./src/forks.ts";
 import * as lineStaging from "./src/lineStaging.ts";
 import * as submodules from "./src/submodules.ts";
 import * as lfs from "./src/lfs.ts";
+import * as ci from "./src/ci.ts";
 import { landscapeScan } from "./src/landscape.ts";
 import { landscapeRecent } from "./src/landscapeRecent.ts";
 import { waitForChange } from "./src/repoWatch.ts";
 import * as trust from "./src/trust.ts";
 import * as folders from "./src/folders.ts";
-import { currentRequestSignal, withAbortSignal, withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
+import { currentRequestSignal, repositoryRoot, withAbortSignal, withDiffOptions, type DiffOptions } from "./src/lib/git.ts";
 import { readStream, validStreamId } from "./src/lib/streams.ts";
 import { rejectReason, type GuardOptions } from "./src/lib/requestGuard.ts";
 import { listPullRequests } from "./src/provider.ts";
@@ -119,7 +120,7 @@ const READ_ROUTES = new Set([
   "file_at_revision", "commit_activity", "diff_revisions", "history_change_stats", "compare_refs", "range_diff",
   "repository_health", "file_history", "line_history", "blame_file", "contributors", "worktree_summaries",
   "repository_operation_state", "undo_state", "last_commit_message", "commit_offset", "diff_commit_files",
-  "submodule_tree", "lfs_status", "lfs_check", "lfs_locks", "repository_trust", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
+  "submodule_tree", "ci_runs", "ci_latest", "ci_jobs", "ci_log", "ci_workflows", "lfs_status", "lfs_check", "lfs_locks", "repository_trust", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
   "fork_point", "predict_conflicts", "cleanup_candidates", "file_blob", "sparse_status", "notes_get",
   "explorer_list", "explorer_properties", "explorer_diff_files", "explorer_diff_previous",
   "landscape_recent", "fork_tree",
@@ -209,6 +210,10 @@ function numArray(value: unknown, field: string): number[] {
 
 function bodyPath(body: Record<string, unknown>): string {
   return str(body.path, "path");
+}
+
+function repositoryRootOf(body: Record<string, unknown>): Promise<string> {
+  return repositoryRoot(bodyPath(body));
 }
 
 // ---------------------------------------------------------------------------
@@ -686,6 +691,26 @@ const routes: Record<string, Handler> = {
     });
   },
   ci_checks: async (body) => { const host = await resolveHost(body); return features.ciChecks(host, await hosting.resolveToken(body.token, host.host), str(body.sha, "sha")); },
+  // CI monitoring for every provider (server/src/ci.ts).
+  ci_runs: async (body) => {
+    const host = await resolveHost(body);
+    return ci.ciRuns(await repositoryRootOf(body), host, await hosting.resolveToken(body.token, host.host), { branch: optStr(body.branch), workflowId: optStr(body.workflowId), page: typeof body.page === "number" ? body.page : 1, limit: typeof body.limit === "number" ? body.limit : 30 });
+  },
+  ci_latest: async (body) => { const host = await resolveHost(body); return ci.ciLatest(await repositoryRootOf(body), host, await hosting.resolveToken(body.token, host.host), str(body.branch, "branch")); },
+  ci_jobs: async (body) => { const host = await resolveHost(body); return ci.ciRunJobs(await repositoryRootOf(body), host, await hosting.resolveToken(body.token, host.host), str(body.runId, "runId")); },
+  ci_log: async (body) => { const host = await resolveHost(body); return ci.ciJobLog(host, await hosting.resolveToken(body.token, host.host), str(body.runId, "runId"), str(body.jobId, "jobId")); },
+  ci_run_action: async (body) => {
+    const host = await resolveHost(body);
+    const action = str(body.action, "action");
+    if (!["rerun", "rerun_failed", "cancel", "rerun_job", "play_job"].includes(action)) throw new AppError("invalid", `unknown CI action ${action}`);
+    return ci.ciRunAction(host, await hosting.resolveToken(body.token, host.host), action as ci.CiRunAction, str(body.runId, "runId"), optStr(body.jobId));
+  },
+  ci_workflows: async (body) => { const host = await resolveHost(body); return ci.ciWorkflows(await repositoryRootOf(body), host, await hosting.resolveToken(body.token, host.host)); },
+  ci_dispatch: async (body) => {
+    const host = await resolveHost(body);
+    const inputs = body.inputs && typeof body.inputs === "object" && !Array.isArray(body.inputs) ? Object.fromEntries(Object.entries(body.inputs as Record<string, unknown>).map(([key, value]) => [key, String(value)])) : {};
+    return ci.ciDispatch(host, await hosting.resolveToken(body.token, host.host), { workflowId: str(body.workflowId, "workflowId"), ref: str(body.ref, "ref"), inputs });
+  },
   ci_rerun: async (body) => { const host = await resolveHost(body); return features.rerunCheck(host, await hosting.resolveToken(body.token, host.host), body.check as features.CheckRun); },
   hosting_connections: async () => hosting.listConnections(),
   gh_account: async (body) => { const server = await githubServer(body); return github.account(server.apiBase, server.token); },

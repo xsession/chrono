@@ -1,3 +1,5 @@
+import type { CiBadge } from "../../ciMonitor";
+import { ciIcon } from "../CiView";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import type { BranchRecord, PullMode, PushOptions, RepositorySummary, UndoState, Workspace } from "../../types";
 import { Icon, type IconName } from "../Icon";
@@ -36,6 +38,9 @@ type Props = {
   /** Fork status of this repository (forks.ts), for the fork pill. */
   fork?: ForkStatus | null;
   onForks?: () => void;
+  /** Latest CI run of the current branch (ciMonitor.ts), for the CI pill. */
+  ci?: CiBadge | null;
+  onCi?: () => void;
   onExplorer: () => void;
   onSearch: () => void;
   onSwitchBranch: (branch: BranchRecord) => void;
@@ -177,6 +182,9 @@ export function GkToolbar(props: Props) {
             {summary?.ahead ? <span className="is-ahead"><Icon name="upload" />{summary.ahead}</span> : null}
             {!summary?.ahead && !summary?.behind ? <span><Icon name="check" />in sync</span> : null}
           </span>
+        )}
+        {path && props.ci && (
+          <button type="button" className={`gk-ci-pill is-${props.ci.run.status}`} title={`${props.ci.system}: ${props.ci.run.name}${props.ci.run.number !== null ? ` #${props.ci.run.number}` : ""} — ${props.ci.run.status}\n${props.ci.run.title}\nOpen CI`} onClick={props.onCi}>{ciIcon(props.ci.run.status)} CI</button>
         )}
         {path && forkPill && (
           <button type="button" className={`gk-fork-pill${forkPill.stale ? " is-behind" : ""}`} title={`${forkPill.title}\nOpen Forks & upstreams`} onClick={props.onForks}>⑂ {forkPill.text.replace(/^fork /, "")}</button>

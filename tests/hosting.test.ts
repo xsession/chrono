@@ -152,7 +152,7 @@ try {
     const secure = https.createServer({ key: fs.readFileSync(path.join(certDir, "key.pem")), cert: fs.readFileSync(path.join(certDir, "cert.pem")) }, (request, response) => {
       let body = "";
       request.on("data", (chunk) => { body += chunk; });
-      request.on("end", () => { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ method: request.method, body, auth: request.headers.authorization ?? null })); });
+      request.on("end", () => { response.writeHead(200, { "content-type": "application/json" }); response.end(JSON.stringify({ method: request.method, body, auth: request.headers.authorization ?? null, agent: request.headers["user-agent"] ?? null })); });
     });
     await new Promise<void>((resolve) => secure.listen(0, "127.0.0.1", resolve));
     const url = `https://localhost:${(secure.address() as { port: number }).port}/api`;
@@ -161,7 +161,8 @@ try {
       await hosting.saveConnection("localhost", { insecureTls: true });
       const response = await hosting.hostingFetch(url, { method: "POST", headers: { authorization: "Bearer t" }, body: "{\"a\":1}" });
       assert.equal(response.status, 200);
-      assert.deepEqual(await response.json(), { method: "POST", body: "{\"a\":1}", auth: "Bearer t" });
+      // GitHub answers 403 to requests without a User-Agent; node:https sends none by itself.
+      assert.deepEqual(await response.json(), { method: "POST", body: "{\"a\":1}", auth: "Bearer t", agent: "chrono-git-client" });
     });
     await check("trusting the server's CA file reaches it with verification on", async () => {
       await hosting.saveConnection("localhost", { insecureTls: false, caFile: path.join(certDir, "cert.pem") });

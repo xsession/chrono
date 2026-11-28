@@ -45,6 +45,8 @@ import { notifyIfHidden } from "./notify";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LiveOutputHost, withLiveOutput } from "./liveOutput";
 import { LfsView, lfsAutoEnabled, lfsOnOpen } from "./components/LfsView";
+import { CiView } from "./components/CiView";
+import { useCiBadge } from "./ciMonitor";
 import type { ExplorerFocus } from "./components/explorer/FileExplorer";
 import { askFields } from "./components/DialogHost";
 import { chooseFolder, FolderPickerHost } from "./components/FolderPicker";
@@ -367,13 +369,15 @@ export default function App() {
 
   // Whether the repository has any remote: without one, Pull and Push can
   // only fail with git's "no tracking information", so they are disabled.
-  const [remoteCount, setRemoteCount] = useState<number | null>(null);
+  const [remoteNames, setRemoteNames] = useState<string[] | null>(null);
+  const remoteCount = remoteNames ? remoteNames.length : null;
   useEffect(() => {
-    if (!path) { setRemoteCount(null); return; }
+    if (!path) { setRemoteNames(null); return; }
     let cancelled = false;
-    api.remotes(path).then((list) => { if (!cancelled) setRemoteCount(list.length); }).catch(() => { if (!cancelled) setRemoteCount(null); });
+    api.remotes(path).then((list) => { if (!cancelled) setRemoteNames(list.map((remote) => remote.name)); }).catch(() => { if (!cancelled) setRemoteNames(null); });
     return () => { cancelled = true; };
   }, [path, refreshKey]);
+  const ciBadge = useCiBadge(path, summary?.branch ?? null, remoteNames ?? [], refreshKey);
 
   // Close the WIP diff once its file has no changes left (committed, discarded
   // or reverted elsewhere) instead of showing an empty diff. Files inside a
@@ -928,6 +932,7 @@ export default function App() {
     { id: "intelligence", title: "Open Git Intelligence", category: "Explore", keywords: ["search", "compare", "blame", "file history", "contributors"], disabled: !path, run: () => setView("insights") },
     { id: "worktrees", title: "Manage worktrees", category: "Repository", keywords: ["parallel", "checkout"], disabled: !path, run: () => setView("worktrees") },
     { id: "submodules", title: "Manage submodules", category: "Repository", disabled: !path, run: () => setView("submodules") },
+    { id: "ci", title: "CI: workflow runs, pipelines and their logs", category: "Repository", keywords: ["actions", "github actions", "pipelines", "gitlab ci", "builds", "workflow", "checks"], disabled: !path, run: () => setView("ci") },
     { id: "lfs", title: "Git LFS: tracked patterns, files, locks", category: "Repository", keywords: ["lfs", "large files", "lock", "track", "binary"], disabled: !path, run: () => setView("lfs") },
     { id: "forks", title: "Forks & upstreams (sync forks, also in submodules)", category: "Repository", disabled: !path, run: () => setView("forks") },
     { id: "landscape", title: "Open codebase landscape map", category: "Explore", keywords: ["map", "islands", "imports", "dependencies", "architecture", "terrain"], disabled: !path, run: () => setView("landscape") },
@@ -995,6 +1000,8 @@ export default function App() {
           remoteCount={remoteCount}
           fork={forkTreeState.find((entry) => entry.path === "") ?? null}
           onForks={() => setView("forks")}
+          ci={ciBadge}
+          onCi={() => setView("ci")}
           summary={summary}
           branches={branches}
           busy={busy}
@@ -1235,6 +1242,9 @@ export default function App() {
               run={runRepositoryAction}
               onOpenRepository={(target) => void openRepoTab(target).then(() => setView("history"))}
             />
+          )}
+          {path && view === "ci" && (
+            <CiView repositoryPath={path} currentBranch={summary?.branch ?? null} remotes={remoteNames ?? []} refreshKey={refreshKey} />
           )}
           {path && view === "lfs" && (
             <LfsView repositoryPath={path} refreshKey={refreshKey} busy={busy} run={runRepositoryAction} />

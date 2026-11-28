@@ -249,6 +249,33 @@ nested several levels deep.
 |---|---|
 | ![Submodule mind map with node details](docs/screenshots/submodule-mind-map.jpg) | ![Submodule list with bulk actions](docs/screenshots/submodule-bulk-actions.jpg) |
 
+## CI monitoring
+
+The **CI / Actions** view (sidebar, or *CI* in the command palette) watches
+the CI of the repository's remote, for every hosting provider:
+
+| | GitHub Actions | GitLab CI/CD | Gitea / Forgejo Actions | Bitbucket Pipelines | Bitbucket Server |
+|---|---|---|---|---|---|
+| Runs of a branch or all branches | ✓ | ✓ | ✓ | ✓ | build statuses per commit |
+| Jobs, steps, logs | ✓ | ✓ (with stages) | ✓ (Gitea 1.24+) | ✓ | links to the builds |
+| Re-run all / failed / one job | ✓ | ✓, and start manual jobs | in the browser | run again | — |
+| Cancel | ✓ | ✓ | in the browser | stop | — |
+| Start a run by hand | workflow_dispatch with inputs | pipeline with variables | workflow_dispatch with inputs | branch or custom pipeline with variables | — |
+
+- Runs refresh every 10 s while one is going (every minute otherwise), and a
+  run that finishes is announced; logs of running jobs follow along. Logs
+  lose colour codes and timestamps, error and warning lines are marked, and
+  they can be filtered and copied.
+- *Run workflow…* reads the inputs from the workflow files in the
+  repository: `workflow_dispatch` inputs (GitHub, Gitea), `.gitlab-ci.yml`
+  variables with a description, and `bitbucket-pipelines.yml` custom
+  pipelines and their variables.
+- The toolbar shows a **CI** badge with the latest run of the current branch
+  when a token for the host is set, and tells you when it finishes.
+- Reading public GitHub runs needs no token; private repositories and every
+  action need one (Settings → Hosting connections, or *Set token…*). GitHub
+  tokens need the `workflow` scope to re-run, cancel or start runs.
+
 ## Git LFS
 
 The **Git LFS** view (sidebar, or *Git LFS* in the command palette) shows:

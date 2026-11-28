@@ -55,6 +55,12 @@ import type {
   BranchActionRequest,
   TagAction,
   TagRemoteState,
+  CiCapabilities,
+  CiJob,
+  CiRun,
+  CiRunAction,
+  CiTarget,
+  CiWorkflow,
   RemoteAction,
   StashFile,
   ExplorerListing,
@@ -481,6 +487,14 @@ export const api = {
     invoke<{ number: number; url: string }>("pr_create", { path, ...request }),
   ciChecks: (path: string, sha: string, token: string, remote = "origin", apiBase?: string, provider?: string) =>
     invoke<{ state: string; checks: CheckRun[] }>("ci_checks", { path, sha, token, remote, apiBase, provider }),
+  ciRuns: (path: string, target: CiTarget, query: { branch?: string | null; workflowId?: string | null; page?: number; limit?: number } = {}) =>
+    invoke<{ runs: CiRun[]; capabilities: CiCapabilities; hasMore: boolean }>("ci_runs", { path, ...target, ...query }),
+  ciLatest: (path: string, target: CiTarget, branch: string) => invoke<{ run: CiRun | null; system: string }>("ci_latest", { path, ...target, branch }),
+  ciJobs: (path: string, target: CiTarget, runId: string) => invoke<CiJob[]>("ci_jobs", { path, ...target, runId }),
+  ciLog: (path: string, target: CiTarget, runId: string, jobId: string) => invoke<string>("ci_log", { path, ...target, runId, jobId }),
+  ciRunAction: (path: string, target: CiTarget, action: CiRunAction, runId: string, jobId?: string) => invoke<string>("ci_run_action", { path, ...target, action, runId, jobId }),
+  ciWorkflows: (path: string, target: CiTarget) => invoke<CiWorkflow[]>("ci_workflows", { path, ...target }),
+  ciDispatch: (path: string, target: CiTarget, workflowId: string, ref: string, inputs: Record<string, string>) => invoke<string>("ci_dispatch", { path, ...target, workflowId, ref, inputs }),
   rerunCheck: (path: string, check: CheckRun, token: string, remote = "origin", apiBase?: string, provider?: string) => invoke<string>("ci_rerun", { path, check, token, remote, apiBase, provider }),
   // GitHub (server/src/github.ts). ref: which remote, with its token.
   ghAccount: (server: GithubServerRef) => invoke<GithubAccount>("gh_account", server),

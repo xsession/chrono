@@ -18,6 +18,7 @@ export type RepositoryView =
   | "worktrees"
   | "submodules"
   | "lfs"
+  | "ci"
   | "forks"
   | "landscape"
   | "stashes"
@@ -135,6 +136,7 @@ export function RepositorySidebar({
     { id: "submodules", label: "Submodules", icon: "submodule" },
     { id: "lfs", label: "Git LFS", icon: "layers" },
     { id: "forks", label: "Forks & upstreams", icon: "cloud" },
+    { id: "ci", label: "CI / Actions", icon: "activity" },
     { id: "landscape", label: "Landscape map", icon: "map" },
     { id: "branches", label: "Branches", icon: "branch", group: true },
     { id: "refs", label: "References", icon: "list" },

@@ -925,3 +925,15 @@ export type LfsActionRequest =
   | { action: "prune" }
   | { action: "lock"; files: string[] }
   | { action: "unlock"; files?: string[]; id?: string; force?: boolean };
+
+// CI monitoring (server/src/ci.ts)
+export type CiStatus = "queued" | "running" | "waiting" | "manual" | "success" | "failure" | "cancelled" | "skipped" | "neutral";
+export type CiRun = { id: string; number: number | null; name: string; title: string; branch: string | null; sha: string; event: string; status: CiStatus; createdAt: string; startedAt: string | null; finishedAt: string | null; durationSeconds: number | null; url: string; actor: string | null; workflowId: string | null; attempt: number | null };
+export type CiStep = { number: number; name: string; status: CiStatus };
+export type CiJob = { id: string; name: string; stage: string | null; status: CiStatus; startedAt: string | null; finishedAt: string | null; durationSeconds: number | null; url: string; steps: CiStep[] };
+export type CiInput = { name: string; description: string; required: boolean; default: string; type: "string" | "boolean" | "choice" | "number" | "environment"; options: string[] };
+export type CiWorkflow = { id: string; name: string; path: string | null; active: boolean; dispatchable: boolean; inputs: CiInput[] };
+export type CiCapabilities = { provider: HostingProvider; system: string; rerun: boolean; rerunFailed: boolean; cancel: boolean; jobRerun: boolean; jobPlay: boolean; logs: boolean; dispatch: boolean; statusesOnly: boolean };
+export type CiRunAction = "rerun" | "rerun_failed" | "cancel" | "rerun_job" | "play_job";
+/** Which remote, and how to reach its API (token: session token or the remembered-token marker). */
+export type CiTarget = { remote: string; token: string; apiBase?: string; provider?: string };

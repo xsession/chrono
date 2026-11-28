@@ -147,7 +147,12 @@ export async function resolveToken(token: unknown, hostOrUrl: string): Promise<s
 }
 
 /** fetch() for provider APIs, with the host's TLS options and timeout. */
-export async function hostingFetch(url: string, init: RequestInit = {}): Promise<Response> {
+export async function hostingFetch(url: string, givenInit: RequestInit = {}): Promise<Response> {
+  // GitHub refuses requests without a User-Agent (a plain-text 403). fetch()
+  // adds one, node:https (custom TLS below) does not, so set it always.
+  const headers = new Headers(givenInit.headers);
+  if (!headers.has("user-agent")) headers.set("user-agent", "chrono-git-client");
+  const init: RequestInit = { ...givenInit, headers };
   const match = await connectionFor(url);
   const stored = match?.[1] ?? {};
   const timeoutMs = (stored.timeoutSeconds ?? DEFAULT_TIMEOUT_SECONDS) * 1000;
