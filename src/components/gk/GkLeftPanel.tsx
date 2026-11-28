@@ -321,11 +321,55 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
     } catch (reason) { pushToast(String(reason).replace(/^Error: /, ""), "error"); }
   };
 
+  /** Force push one tag after showing what the remote has; the push only
+   *  replaces the remote tag if it is still the one shown (lease). */
+  const forcePushTag = async (name: string, remote: string | null) => {
+    let state;
+    try {
+      state = await api.tagRemoteState(repositoryPath, name, remote);
+    } catch (reason) {
+      pushToast(String(reason).replace(/^Error: /, ""), "error", 9000);
+      return;
+    }
+    const short = (id: string | null) => (id ? id.slice(0, 8) : "—");
+    if (!state.localId) { pushToast(`There is no local tag ${name}`, "error"); return; }
+    if (state.remoteId === state.localId) { pushToast(`${name} on ${state.remote} is already the same as yours`, "info"); return; }
+    if (!state.remoteId) {
+      await run(`Push tag ${name}`, () => api.tagAction(repositoryPath, "push", name, state.remote));
+      return;
+    }
+    const sameCommit = state.remoteCommit === state.localCommit;
+    const message = sameCommit
+      ? `${name} on ${state.remote} points at the same commit (${short(state.localCommit)}) but is a different tag object (message, signature or annotation). Replace it with yours?`
+      : `${name} on ${state.remote} points at ${short(state.remoteCommit)}; yours points at ${short(state.localCommit)}. Replace the remote tag? Anyone who already fetched it keeps the old one until they fetch tags with overwrite.`;
+    if (!(await askConfirm(`Force push tag ${name}`, message, { confirm: "Force push", danger: true }))) return;
+    await run(`Force push tag ${name}`, () => api.tagAction(repositoryPath, "force_push", name, state.remote, state.remoteId));
+  };
+
+  const tagsHeaderMenu = (event: ReactMouseEvent) => {
+    const remote = remotes[0]?.name ?? null;
+    const target = remote ?? "origin";
+    menu.open(event, [
+      { id: "create", label: "Create tag at HEAD…", icon: "plus", disabled: busy, onSelect: () => createTagAt("HEAD", "HEAD") },
+      { kind: "separator", id: "s" },
+      { id: "push-all", label: `Push all tags to ${target}`, icon: "upload", disabled: busy || !remotes.length, onSelect: () => run("Push all tags", () => api.tagAction(repositoryPath, "push_all", "", remote)) },
+      { id: "force-all", label: `Force push all tags to ${target}…`, icon: "upload", danger: true, disabled: busy || !remotes.length, onSelect: async () => {
+        if (await askConfirm("Force push all tags", `Push every local tag to ${target} and replace the tags there that differ from yours. Tags only on ${target} are kept.`, { confirm: "Force push all", danger: true })) await run("Force push all tags", () => api.tagAction(repositoryPath, "force_push_all", "", remote));
+      } },
+      { id: "fetch-force", label: `Fetch tags from ${target}, overwriting local ones…`, icon: "download", disabled: busy || !remotes.length, onSelect: async () => {
+        if (await askConfirm("Fetch tags with overwrite", `Fetch tags from ${target} and move your local tags to where ${target} has them (git fetch --tags --force). Use this after someone force-pushed a tag; local tags ${target} does not have are kept.`, { confirm: "Fetch tags" })) await run("Fetch tags (overwrite)", () => api.tagAction(repositoryPath, "fetch_force", "", remote));
+      } },
+    ], "Tags");
+  };
+
   const tagMenu = (tag: TagRecord): MenuItem[] => [
     { id: "checkout", label: `Checkout ${tag.name} (detached)`, icon: "check", disabled: busy, onSelect: () => run(`Checkout ${tag.name}`, () => api.workflow(repositoryPath, { operation: "checkout_tag", args: [tag.name] })) },
     { id: "branch", label: "Create branch here", icon: "branch", disabled: busy, onSelect: () => createBranchAt(tag.target, tag.name) },
     { kind: "separator", id: "s" },
     { id: "push", label: `Push ${tag.name} to ${remotes[0]?.name ?? "origin"}`, icon: "upload", disabled: busy || !remotes.length, onSelect: () => run(`Push tag ${tag.name}`, () => api.tagAction(repositoryPath, "push", tag.name, remotes[0]?.name ?? null)) },
+    remotes.length > 1
+      ? { id: "force-push", label: `Force push ${tag.name} to`, icon: "upload", danger: true, disabled: busy, submenu: remotes.map<MenuItem>((remote) => ({ id: `fp-${remote.name}`, label: `${remote.name}…`, onSelect: () => forcePushTag(tag.name, remote.name) })) }
+      : { id: "force-push", label: `Force push ${tag.name} to ${remotes[0]?.name ?? "origin"}…`, icon: "upload", danger: true, disabled: busy || !remotes.length, onSelect: () => forcePushTag(tag.name, remotes[0]?.name ?? null) },
     { id: "delete", label: `Delete ${tag.name} locally`, icon: "trash", danger: true, disabled: busy, onSelect: async () => { if (await askConfirm("Delete tag", `Delete local tag ${tag.name}?`, { confirm: "Delete", danger: true })) await run(`Delete tag ${tag.name}`, () => api.deleteTag(repositoryPath, tag.name)); } },
     { id: "delete-remote", label: `Delete ${tag.name} from ${remotes[0]?.name ?? "origin"}`, danger: true, disabled: busy || !remotes.length, onSelect: async () => { if (await askConfirm("Delete remote tag", `Delete tag ${tag.name} on ${remotes[0]?.name}?`, { confirm: "Delete", danger: true })) await run(`Delete remote tag ${tag.name}`, () => api.tagAction(repositoryPath, "delete_remote", tag.name, remotes[0]?.name ?? null)); } },
     { id: "copy", label: "Copy tag name", icon: "copy", onSelect: () => copy(tag.name) },
@@ -663,7 +707,7 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
               <Icon name="tag" />
               <span className="gk-ref-name">{tag.name}</span>
             </div>
-          )), { onAdd: () => createTagAt("HEAD", "HEAD"), addTitle: "Create tag at HEAD" })}
+          )), { onAdd: () => createTagAt("HEAD", "HEAD"), addTitle: "Create tag at HEAD", onContext: tagsHeaderMenu })}
         </>}
       </div>
       {menu.element}

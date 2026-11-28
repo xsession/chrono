@@ -574,7 +574,8 @@ export type BranchActionRequest = {
   remote?: string | null;
 };
 
-export type TagAction = "push" | "delete_remote" | "push_all";
+export type TagAction = "push" | "delete_remote" | "push_all" | "force_push" | "force_push_all" | "fetch_force";
+export type TagRemoteState = { remote: string; remoteId: string | null; remoteCommit: string | null; localId: string | null; localCommit: string | null };
 export type RemoteAction = "add" | "remove" | "rename" | "set_url" | "prune" | "fetch";
 
 export type StashFile = { path: string; additions: number | null; deletions: number | null; untracked: boolean };

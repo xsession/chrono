@@ -484,16 +484,72 @@ export async function branchAction(inputPath: string, request: BranchActionReque
   }
 }
 
-export type TagAction = "push" | "delete_remote" | "push_all";
+export type TagAction = "push" | "delete_remote" | "push_all" | "force_push" | "force_push_all" | "fetch_force";
 
-export async function tagAction(inputPath: string, action: TagAction, name: string, remote: string | null): Promise<CommandResult> {
+/**
+ * Tag pushes and fetches.
+ * - force_push replaces the tag on the remote. With `expect` (the object id
+ *   the remote had when the user confirmed) it uses --force-with-lease, so a
+ *   tag someone moved in the meantime is not overwritten; an empty `expect`
+ *   means the remote must not have the tag yet.
+ * - force_push_all pushes every local tag, replacing remote tags that differ.
+ * - fetch_force fetches tags and moves local tags the remote has changed
+ *   (plain fetch refuses with "would clobber existing tag").
+ */
+export async function tagAction(inputPath: string, action: TagAction, name: string, remote: string | null, options: { expect?: string | null } = {}): Promise<CommandResult> {
   const root = await repositoryRoot(inputPath);
   const target = remote ? safeName(remote, "remote") : "origin";
   if (action === "push_all") return checked(root, ["push", target, "--tags"]);
+  if (action === "force_push_all") return checked(root, ["push", "--force", target, "--tags"]);
+  if (action === "fetch_force") return checked(root, ["fetch", target, "--tags", "--force"]);
   const tag = safeName(name, "tag");
-  if (action === "push") return checked(root, ["push", target, `refs/tags/${tag}`]);
-  if (action === "delete_remote") return checked(root, ["push", target, "--delete", `refs/tags/${tag}`]);
+  const ref = `refs/tags/${tag}`;
+  if (action === "push") return checked(root, ["push", target, ref]);
+  if (action === "delete_remote") return checked(root, ["push", target, "--delete", ref]);
+  if (action === "force_push") {
+    const expect = options.expect;
+    if (expect === undefined || expect === null) return checked(root, ["push", target, `+${ref}:${ref}`]);
+    if (expect !== "" && !/^[0-9a-f]{40,64}$/.test(expect)) throw invalidError("invalid expected object id");
+    return checked(root, ["push", `--force-with-lease=${ref}:${expect}`, target, `${ref}:${ref}`]);
+  }
   throw invalidError("unknown tag action");
+}
+
+export interface TagRemoteState {
+  remote: string;
+  /** Object id of the tag ref on the remote (the tag object for annotated tags), null when absent. */
+  remoteId: string | null;
+  /** Commit the remote tag points to. */
+  remoteCommit: string | null;
+  localId: string | null;
+  localCommit: string | null;
+}
+
+/** The tag on the remote next to the local one, to show before a force push. */
+export async function tagRemoteState(inputPath: string, name: string, remote: string | null): Promise<TagRemoteState> {
+  const root = await repositoryRoot(inputPath);
+  const target = remote ? safeName(remote, "remote") : "origin";
+  const tag = safeName(name, "tag");
+  const ref = `refs/tags/${tag}`;
+  const [listed, localId, localCommit] = await Promise.all([
+    checkedStdout(root, ["ls-remote", target, ref, `${ref}^{}`]),
+    runGit(root, ["rev-parse", "-q", "--verify", ref]),
+    runGit(root, ["rev-parse", "-q", "--verify", `${ref}^{commit}`]),
+  ]);
+  let remoteId: string | null = null;
+  let peeled: string | null = null;
+  for (const line of listed.split("\n")) {
+    const [id, refName] = line.trim().split(/\s+/);
+    if (refName === ref) remoteId = id;
+    if (refName === `${ref}^{}`) peeled = id;
+  }
+  return {
+    remote: target,
+    remoteId,
+    remoteCommit: peeled ?? remoteId,
+    localId: localId.code === 0 ? localId.stdout.trim() : null,
+    localCommit: localCommit.code === 0 ? localCommit.stdout.trim() : null,
+  };
 }
 
 export type RemoteAction = "add" | "remove" | "rename" | "set_url" | "prune" | "fetch";

@@ -451,7 +451,8 @@ const routes: Record<string, Handler> = {
         remote: optStr(body.remote),
       })),
   tag_action: (body) =>
-    gk.tagAction(bodyPath(body), str(body.action, "action") as gk.TagAction, typeof body.name === "string" ? body.name : "", optStr(body.remote)),
+    gk.tagAction(bodyPath(body), str(body.action, "action") as gk.TagAction, typeof body.name === "string" ? body.name : "", optStr(body.remote), { expect: typeof body.expect === "string" ? body.expect : null }),
+  tag_remote_state: (body) => gk.tagRemoteState(bodyPath(body), str(body.name, "name"), optStr(body.remote)),
   remote_action: (body) =>
     gk.remoteAction(bodyPath(body), str(body.action, "action") as gk.RemoteAction, str(body.name, "name"), optStr(body.value)),
   commit_offset: (body) => gk.commitOffset(bodyPath(body), str(body.revision, "revision")),

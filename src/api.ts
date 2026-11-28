@@ -54,6 +54,7 @@ import type {
   UndoState,
   BranchActionRequest,
   TagAction,
+  TagRemoteState,
   RemoteAction,
   StashFile,
   ExplorerListing,
@@ -385,8 +386,9 @@ export const api = {
   discard: (path: string, files: string[] | "all") =>
     invoke<CommandResult>("discard_paths", files === "all" ? { path, all: true } : { path, files }),
   branchAction: (path: string, request: BranchActionRequest) => invoke<CommandResult>("branch_action", { path, ...request }),
-  tagAction: (path: string, action: TagAction, name: string, remote: string | null = null) =>
-    invoke<CommandResult>("tag_action", { path, action, name, remote }),
+  tagAction: (path: string, action: TagAction, name: string, remote: string | null = null, expect?: string | null) =>
+    invoke<CommandResult>("tag_action", { path, action, name, remote, expect: expect ?? null }),
+  tagRemoteState: (path: string, name: string, remote: string | null = null) => invoke<TagRemoteState>("tag_remote_state", { path, name, remote }),
   remoteAction: (path: string, action: RemoteAction, name: string, value: string | null = null) =>
     invoke<CommandResult>("remote_action", { path, action, name, value }),
   commitOffset: (path: string, revision: string) => invoke<number | null>("commit_offset", { path, revision }),
