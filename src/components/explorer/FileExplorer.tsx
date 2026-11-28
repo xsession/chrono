@@ -409,6 +409,7 @@ export function FileExplorer({ repositoryPath, refreshKey, branches, currentBran
         { id: "track", icon: "eye", label: ext ? `Track *${ext} with LFS` : "Track with LFS", disabled: background, onSelect: () => exec("LFS track", () => api.explorerAction(repositoryPath, { action: "lfs_track", files })) },
         { kind: "separator", id: "x" },
         { id: "locks", icon: "list", label: "Show locks", onSelect: async () => { try { const result = await api.workflow(repositoryPath, { operation: "lfs_locks", args: [] }); setDialog({ kind: "output", title: "LFS locks", text: result.stdout }); } catch (reason) { pushToast(String(reason), "error"); } } },
+        { id: "lfsview", icon: "layers", label: "Open Git LFS view", onSelect: () => onNavigate("lfs") },
         { id: "lfspull", icon: "download", label: "LFS pull", onSelect: () => exec("LFS pull", () => api.workflow(repositoryPath, { operation: "lfs_pull", args: [] })) },
       ] },
       { id: "submodule", label: "Submodule Update…", icon: "submodule", disabled: busy, onSelect: () => exec("Submodule update", () => (single?.type === "submodule" ? api.explorerAction(repositoryPath, { action: "submodule_update", files }) : api.workflow(repositoryPath, { operation: "submodule_update", args: [] }))) },

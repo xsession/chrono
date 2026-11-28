@@ -776,7 +776,7 @@ export type GitflowConfig = { initialized: boolean; master: string; develop: str
 export type FlowType = "feature" | "release" | "hotfix" | "support";
 export type ExplainKind = "commit" | "branch" | "working" | "pr";
 export type DiffOptions = { whitespace?: "all" | "change" | "eol" | "none"; algorithm?: "myers" | "minimal" | "patience" | "histogram" };
-export type CloneOptions = { depth?: number | null; filter?: "blob:none" | "tree:0" | null; sparse?: boolean; branch?: string | null; singleBranch?: boolean };
+export type CloneOptions = { depth?: number | null; filter?: "blob:none" | "tree:0" | null; sparse?: boolean; branch?: string | null; singleBranch?: boolean; recurseSubmodules?: boolean; lfs?: boolean };
 
 // Line-level staging
 export type DiffSide = "unstaged" | "staged";
@@ -896,3 +896,31 @@ export type SshKeyInfo = { path: string; type: string; comment: string; fingerpr
 export type GithubRemoteRef = { remote: string; apiBase?: string; provider?: string; token: string };
 /** A GitHub server (account-level calls). */
 export type GithubServerRef = { apiBase: string; host: string; token: string };
+
+// Git LFS (server/src/lfs.ts)
+export type LfsPattern = { pattern: string; source: string; lockable: boolean };
+export type LfsFile = { path: string; oid: string | null; size: number; downloaded: boolean; pointerInWorktree: boolean };
+export type LfsLock = { id: string; path: string; owner: string; lockedAt: string };
+export type LfsStatus = {
+  root: string;
+  installed: boolean;
+  version: string | null;
+  used: boolean;
+  hooks: boolean;
+  patterns: LfsPattern[];
+  files: LfsFile[];
+  unconverted: number;
+  missing: number;
+  storeBytes: number;
+};
+export type LfsActionRequest =
+  | { action: "install" }
+  | { action: "track"; pattern: string; lockable?: boolean }
+  | { action: "untrack"; pattern: string }
+  | { action: "convert"; files: string[] }
+  | { action: "fetch"; all?: boolean }
+  | { action: "pull"; files?: string[] }
+  | { action: "push"; all?: boolean }
+  | { action: "prune" }
+  | { action: "lock"; files: string[] }
+  | { action: "unlock"; files?: string[]; id?: string; force?: boolean };

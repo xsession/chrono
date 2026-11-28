@@ -7,7 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { submoduleAction, submoduleBulk, submoduleForeach, submoduleManifest, submoduleTree, superprojectChain } from "../server/src/submodules.ts";
-import { repositoryHistoryPage, repositoryStatus } from "../server/src/backend.ts";
+import { cloneRepository, repositoryHistoryPage, repositoryStatus } from "../server/src/backend.ts";
 import { pull, push, updateSubmodules } from "../server/src/gkOps.ts";
 
 const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "chrono-subs-")));
@@ -162,6 +162,18 @@ eq(fs.existsSync(path.join(second, "src/infra/lib/mid/lib/leaf/f1.txt")), true, 
 git(second, "submodule", "deinit", "-q", "-f", "--all");
 await updateSubmodules(second);
 eq(fs.existsSync(path.join(second, "src/infra/lib/mid/lib/leaf/f1.txt")) && fs.existsSync(path.join(second, "lib/c/f1.txt")), true, "update all initializes everything recursively");
+
+// Cloning brings every submodule, nested ones included, unless turned off.
+const cloned = path.join(temp, "cloned");
+await cloneRepository({ url: path.join(temp, "top.git"), destination: cloned });
+eq(fs.existsSync(path.join(cloned, "src/infra/lib/mid/lib/leaf/f1.txt")), true, "clone initializes nested submodules");
+const flat = path.join(temp, "flat");
+await cloneRepository({ url: path.join(temp, "top.git"), destination: flat, recurseSubmodules: false });
+eq(fs.existsSync(path.join(flat, "lib/a/f1.txt")), false, "clone without submodules leaves them empty");
+
+// Bulk Update on a top-level submodule initializes what is nested in it.
+bulk = await submoduleBulk(flat, "update", ["src/infra"]);
+eq([bulk[0].status, fs.existsSync(path.join(flat, "src/infra/lib/mid/lib/leaf/f1.txt"))], ["ok", true], "bulk update initializes nested submodules");
 
 fs.rmSync(temp, { recursive: true, force: true });
 console.log(`submodules: ${checks} assertions passed`);

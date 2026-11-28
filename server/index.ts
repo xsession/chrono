@@ -28,6 +28,7 @@ import * as localLlm from "./src/localLlm.ts";
 import * as forks from "./src/forks.ts";
 import * as lineStaging from "./src/lineStaging.ts";
 import * as submodules from "./src/submodules.ts";
+import * as lfs from "./src/lfs.ts";
 import { landscapeScan } from "./src/landscape.ts";
 import { landscapeRecent } from "./src/landscapeRecent.ts";
 import { waitForChange } from "./src/repoWatch.ts";
@@ -118,7 +119,7 @@ const READ_ROUTES = new Set([
   "file_at_revision", "commit_activity", "diff_revisions", "history_change_stats", "compare_refs", "range_diff",
   "repository_health", "file_history", "line_history", "blame_file", "contributors", "worktree_summaries",
   "repository_operation_state", "undo_state", "last_commit_message", "commit_offset", "diff_commit_files",
-  "submodule_tree", "repository_trust", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
+  "submodule_tree", "lfs_status", "lfs_check", "lfs_locks", "repository_trust", "file_diff_side", "stash_files", "commit_signatures", "search_advanced",
   "fork_point", "predict_conflicts", "cleanup_candidates", "file_blob", "sparse_status", "notes_get",
   "explorer_list", "explorer_properties", "explorer_diff_files", "explorer_diff_previous",
   "landscape_recent", "fork_tree",
@@ -410,6 +411,8 @@ const routes: Record<string, Handler> = {
       sparse: body.sparse === true,
       branch: optStr(body.branch),
       singleBranch: body.singleBranch === true,
+      recurseSubmodules: body.recurseSubmodules !== false,
+      lfs: body.lfs !== false,
     }),
   switch_branch: (body) => gk.journaled(bodyPath(body), `Checkout ${String(body.branch)}`, "keep", () => backend.switchBranch(bodyPath(body), str(body.branch, "branch"))),
   checkout_remote_branch: (body) => gk.journaled(bodyPath(body), `Checkout ${String(body.branch)}`, "keep", () => backend.checkoutRemoteBranch(bodyPath(body), str(body.branch, "branch"))),
@@ -454,6 +457,30 @@ const routes: Record<string, Handler> = {
   commit_offset: (body) => gk.commitOffset(bodyPath(body), str(body.revision, "revision")),
   diff_commit_files: (body) => gk.diffCommitFiles(bodyPath(body), str(body.from, "from"), str(body.to, "to")),
   submodule_tree: (body) => submodules.submoduleTree(bodyPath(body)),
+  lfs_status: (body) => lfs.lfsStatus(bodyPath(body)),
+  lfs_check: (body) => lfs.lfsCheck(bodyPath(body)),
+  lfs_auto: (body) => lfs.lfsAuto(bodyPath(body), { pull: body.pull !== false }),
+  lfs_locks: (body) => lfs.lfsLocks(bodyPath(body)),
+  lfs_action: (body) => {
+    const action = str(body.action, "action");
+    const files = Array.isArray(body.files) ? strArray(body.files, "files") : undefined;
+    const pattern = typeof body.pattern === "string" ? body.pattern : "";
+    const streamId = validStreamId(body.streamId);
+    const request: lfs.LfsAction | null =
+      action === "install" ? { action } :
+      action === "track" ? { action, pattern, lockable: body.lockable === true } :
+      action === "untrack" ? { action, pattern } :
+      action === "convert" ? { action, files: files ?? [] } :
+      action === "fetch" || action === "push" ? { action, all: body.all === true } :
+      action === "pull" ? { action, files } :
+      action === "prune" ? { action } :
+      action === "lock" ? { action, files: files ?? [] } :
+      action === "unlock" ? { action, files, id: optStr(body.id) ?? undefined, force: body.force === true } :
+      null;
+    if (!request) throw new AppError("invalid", `unknown LFS action ${action}`);
+    const write = action !== "fetch" && action !== "push" && action !== "lock" && action !== "unlock";
+    return write ? gk.journaled(bodyPath(body), `LFS ${action}`, "keep", () => lfs.lfsAction(bodyPath(body), request, streamId)) : lfs.lfsAction(bodyPath(body), request, streamId);
+  },
   submodule_action: (body) => {
     const action = str(body.action, "action");
     if (!["init", "update", "update_remote", "sync", "fetch", "deinit"].includes(action)) throw new AppError("invalid", `unknown submodule action ${action}`);

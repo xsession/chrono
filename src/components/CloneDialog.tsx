@@ -21,6 +21,7 @@ export function CloneDialog({ openDialog, busy, onClose, onClone }: Props) {
   const [sparse, setSparse] = useState(false);
   const [branch, setBranch] = useState("");
   const [singleBranch, setSingleBranch] = useState(false);
+  const [recurseSubmodules, setRecurseSubmodules] = useState(() => localStorage.getItem("chrono.clone.recurseSubmodules") !== "0");
   const [browsing, setBrowsing] = useState(false);
   const [protocol, setProtocol] = useState<"https" | "ssh">(() => (localStorage.getItem("chrono.clone.protocol") === "ssh" ? "ssh" : "https"));
   const urlRef = useRef<HTMLInputElement>(null);
@@ -45,7 +46,7 @@ export function CloneDialog({ openDialog, busy, onClose, onClone }: Props) {
     const nextDestination = destination.trim();
     if (!nextUrl || !nextDestination || busy) return;
     try {
-      await onClone(nextUrl, nextDestination, { depth: depth ? Number(depth) : null, filter: filter || null, sparse, branch: branch.trim() || null, singleBranch });
+      await onClone(nextUrl, nextDestination, { depth: depth ? Number(depth) : null, filter: filter || null, sparse, branch: branch.trim() || null, singleBranch, recurseSubmodules });
     } catch {
       // App-level status messaging already surfaces the failure; keep the dialog open for correction.
     }
@@ -95,6 +96,7 @@ export function CloneDialog({ openDialog, busy, onClose, onClone }: Props) {
               <button type="button" className="ux-button" disabled={busy} onClick={() => void browse()}>Browse…</button>
             </div>
           </label>
+          <label className="st-check"><input type="checkbox" checked={recurseSubmodules} onChange={(event) => { setRecurseSubmodules(event.target.checked); localStorage.setItem("chrono.clone.recurseSubmodules", event.target.checked ? "1" : "0"); }} />Initialize submodules, nested ones included</label>
           <button type="button" className="gk-link-button" onClick={() => setAdvanced((value) => !value)} aria-expanded={advanced}>{advanced ? "Hide" : "Show"} large-repository options</button>
           {advanced && (
             <div className="st-grid">

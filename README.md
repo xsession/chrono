@@ -163,7 +163,9 @@ The Graph view follows GitKraken's layout:
 - **Repositories owned by another user:** git refuses these ("dubious
   ownership"), which is common on shared or NTFS drives. Chrono shows a banner
   that explains why. *Trust this folder* adds it to `safe.directory` in your
-  global git config; submodules may need trusting separately.
+  global git config. Its submodules, nested ones included, are trusted with
+  it: Chrono's own git commands inside a trusted folder allow them for that
+  command only, without more entries in your git config.
 - **Tabs:** each open repository is a tab. Switching shows the tab's last state
   at once and refreshes it in the background ("Updating…" in the status bar),
   so even a repository whose `git status` takes a minute switches instantly.
@@ -207,14 +209,17 @@ nested several levels deep.
   else `origin/HEAD`) has commits the pinned commit lacks.
 - **Bulk actions on a selection** (checkboxes, Ctrl/Shift+click, *Select with
   nested*, *Select needing attention*): Fetch, Update, Update to remote, Pull,
-  Push (nested submodules first; detached ones are skipped),
+  Push (nested submodules first; detached ones are skipped); Update also
+  initializes the submodules nested in each selected one,
   Attach to branch (moves a detached HEAD onto the matching branch),
   Record pointer, and *Run command…*, a `foreach` that runs a shell command in
   each submodule with `$sm_path`, `$sha1` and `$toplevel` set. They run one
   nesting level at a time, several at once. Results list per submodule, with
   *Select the ones not done* to retry.
-- **Recursive pull, push and update.** The Pull menu has *Include submodules
-  (recursive)*: pull and fetch then go into every submodule, and after the
+- **Recursive clone, pull, push and update.** Cloning initializes every
+  submodule, nested ones included (a checkbox in the Clone dialog turns it
+  off). The Pull menu has *Include submodules (recursive)*, on by default:
+  pull and fetch then go into every submodule, and after the
   merge each one is initialized and checked out at the commit the
   superproject records (`git submodule update --init --recursive`). With it
   on, Push uses `--recurse-submodules=on-demand`, so submodule commits the
@@ -238,6 +243,35 @@ nested several levels deep.
 | | |
 |---|---|
 | ![Submodule mind map with node details](docs/screenshots/submodule-mind-map.jpg) | ![Submodule list with bulk actions](docs/screenshots/submodule-bulk-actions.jpg) |
+
+## Git LFS
+
+The **Git LFS** view (sidebar, or *Git LFS* in the command palette) shows:
+
+- **Status:** the git-lfs version, how many files are stored in LFS and their
+  total size, how many are not downloaded, and the size of the local store.
+  If the repository uses LFS but git-lfs is missing, Chrono says so when the
+  repository opens and explains how to install it.
+- **Automatic setup** (on by default; *Set up & download automatically* in
+  the view): when you open or clone a repository that uses LFS and LFS is
+  not set up in it, Chrono runs `git lfs install --local` and then
+  `git lfs pull`, so LFS files hold their content instead of pointers, also
+  when git-lfs was never configured globally. Repositories without LFS
+  patterns are left alone. With it off, *Set up LFS* does the first step.
+- **Tracked patterns** from every `.gitattributes`, with *lockable* marked.
+  Track a new pattern (optionally lockable) or untrack one; common binary
+  types are one click away.
+- **Files** matched by a pattern: size and state (downloaded, not
+  downloaded, pointer still in the folder, or *stored in git* when it was
+  committed before the pattern existed). Select files to download, lock,
+  unlock or convert them to LFS (`git add --renormalize`, then commit).
+- **Locks** from the server, with Unlock and Force unlock.
+- Fetch, Pull, Push objects and Prune for the whole repository, with live
+  output.
+
+Reading needs no git-lfs: patterns come from `.gitattributes` and pointers
+from the index. Image diffs show the real image of an LFS file once it is in
+the local store. The explorer's LFS menu links to the view.
 
 ## Forks and upstreams
 

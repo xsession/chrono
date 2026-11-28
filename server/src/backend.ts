@@ -3,6 +3,7 @@
 // Ported from `src-tauri/src/backend/cli.rs`. Returns the same camelCase shapes
 // the frontend `types.ts` already defines.
 
+import { lfsAuto } from "./lfs.ts";
 import path from "node:path";
 import { invalidError } from "./lib/errors.ts";
 import {
@@ -79,6 +80,10 @@ export interface CloneRequest {
   sparse?: boolean;
   branch?: string | null;
   singleBranch?: boolean;
+  /** Clone every submodule too, nested ones included (default on). */
+  recurseSubmodules?: boolean;
+  /** Set up Git LFS and download LFS files when the repository uses it (default on). */
+  lfs?: boolean;
   username?: string | null;
   token?: string | null;
 }
@@ -344,7 +349,12 @@ export async function cloneRepository(request: CloneRequest): Promise<Repository
   if (request.sparse) options.push("--sparse");
   if (request.branch && !request.branch.startsWith("-") && !/\s/.test(request.branch)) options.push("--branch", request.branch);
   if (request.singleBranch) options.push("--single-branch");
+  if (request.recurseSubmodules !== false) options.push("--recurse-submodules");
   await checked(null, ["clone", ...options, "--", url, request.destination]);
+  // A repository that uses LFS gets it set up and its LFS files downloaded,
+  // even when git-lfs is not configured globally (a failure only means the
+  // LFS view will offer it again; the clone itself succeeded).
+  if (request.lfs !== false) await lfsAuto(request.destination).catch(() => undefined);
   return repositorySummary(request.destination);
 }
 
@@ -437,9 +447,9 @@ function workflowArgs(request: WorkflowRequest): string[] {
     case "submodule_sync":
       return ["submodule", "sync", "--recursive"];
     case "submodule_init_path":
-      return ["submodule", "update", "--init", "--", requireArgs(request, 1)[0]];
+      return ["submodule", "update", "--init", "--recursive", "--", requireArgs(request, 1)[0]];
     case "submodule_update_path":
-      return ["submodule", "update", "--", requireArgs(request, 1)[0]];
+      return ["submodule", "update", "--init", "--recursive", "--", requireArgs(request, 1)[0]];
     case "stash_list":
       return ["stash", "list"];
     case "stash_push":

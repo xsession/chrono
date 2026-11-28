@@ -10,6 +10,7 @@
 import path from "node:path";
 import { AppError } from "./lib/errors.ts";
 import { checkedStdout, repositoryRoot, runGit } from "./lib/git.ts";
+import { gitProcessEnv } from "./lib/gitCredentials.ts";
 
 export type SubmoduleState = "ok" | "drift" | "uninitialized" | "conflict";
 
@@ -394,7 +395,8 @@ export async function submoduleBulk(inputPath: string, action: SubmoduleBulkActi
           }
           case "update":
           case "update_remote": {
-            const args = ["submodule", "update", "--init", ...(action === "update_remote" ? ["--remote"] : []), "--", relative];
+            // Nested submodules of this one are initialized and updated too.
+            const args = ["submodule", "update", "--init", "--recursive", ...(action === "update_remote" ? ["--remote"] : []), "--", relative];
             await checkedStdout(parentAbsolute, args);
             const now = await checkedOutHead(absolute);
             return done("ok", now ? `at ${now.slice(0, 8)}` : "updated");
@@ -470,7 +472,7 @@ export async function submoduleForeach(inputPath: string, command: string, targe
         cwd: absolute,
         timeout: FOREACH_TIMEOUT_MS,
         maxBuffer: 8 * 1024 * 1024,
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", name: link.path, sm_path: link.path, displaypath: link.path, sha1: head, toplevel: root },
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...gitProcessEnv(root), name: link.path, sm_path: link.path, displaypath: link.path, sha1: head, toplevel: root },
       }, (error, stdout, stderr) => {
         const code = error ? (typeof (error as NodeJS.ErrnoException & { code?: unknown }).code === "number" ? (error as unknown as { code: number }).code : 1) : 0;
         const killed = error && (error as { killed?: boolean }).killed;

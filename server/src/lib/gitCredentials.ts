@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { workspacesFile } from "../workspaces.ts";
+import { trustConfigFor } from "./gitTrust.ts";
 
 type Stored = { token?: string; gitUsername?: string };
 
@@ -64,5 +65,23 @@ export function gitCredentialEnv(): Record<string, string> {
   }
   const env = buildCredentialEnv(connections);
   cache = { file, mtimeMs, env };
+  return env;
+}
+
+/** Everything Chrono adds to a git process's environment: credential helpers
+ *  for remembered tokens and, inside a trusted repository, trust for its
+ *  submodules (gitTrust.ts). Entries are chained after any GIT_CONFIG_COUNT
+ *  already set. */
+export function gitProcessEnv(cwd: string | null | undefined, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env = { ...gitCredentialEnv() };
+  const extra = trustConfigFor(cwd);
+  if (!extra.length) return env;
+  let index = Number(env.GIT_CONFIG_COUNT ?? base.GIT_CONFIG_COUNT) || 0;
+  for (const [key, value] of extra) {
+    env[`GIT_CONFIG_KEY_${index}`] = key;
+    env[`GIT_CONFIG_VALUE_${index}`] = value;
+    index += 1;
+  }
+  env.GIT_CONFIG_COUNT = String(index);
   return env;
 }

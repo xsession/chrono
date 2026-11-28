@@ -1001,3 +1001,26 @@ button.sm-twisty:hover { background: var(--gk-bg-3); color: #fff; }
 .gh-new-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; font-size: 12px; }
 .gh-new-fields > div { display: grid; gap: 5px; align-content: start; }
 @media (max-width: 900px) { .gh-detail { grid-template-columns: 1fr; } }
+
+/* Git LFS view (LfsView.tsx); reuses the fk-* table layout of the Forks view. */
+.lfs-banner { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 6px; background: rgba(120, 170, 230, .08); border: 1px solid rgba(120, 170, 230, .25); font-size: 12px; }
+.lfs-banner.is-warning { background: rgba(240, 190, 100, .08); border-color: rgba(240, 190, 100, .3); }
+.lfs-banner > div { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.lfs-banner code { padding: 0 4px; border-radius: 3px; background: rgba(255, 255, 255, .07); }
+.lfs-section { display: grid; gap: 8px; }
+.lfs-section h3 { margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--gk-grey, #8b95a3); }
+.lfs-patterns { display: flex; flex-wrap: wrap; gap: 6px; }
+.lfs-pattern { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 8px; border-radius: 12px; background: rgba(255, 255, 255, .06); font-size: 12px; }
+.lfs-pattern small { color: #f0cf86; font-size: 10px; }
+.lfs-pattern button { border: 0; background: none; color: var(--gk-grey, #8b95a3); cursor: pointer; padding: 0 4px; }
+.lfs-pattern button:hover:not(:disabled) { color: #f0a090; }
+.lfs-track { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.lfs-track > input { min-width: 200px; }
+.lfs-suggest { display: inline-flex; flex-wrap: wrap; gap: 6px; font-size: 11.5px; }
+.lfs-files-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.lfs-files-head .fk-actions { margin-left: auto; }
+.lfs-row { grid-template-columns: 28px minmax(220px, 3fr) 80px 140px minmax(100px, 1fr); padding: 5px 10px; }
+.lfs-lock-row { grid-template-columns: minmax(220px, 3fr) minmax(100px, 1fr) 170px 150px; }
+.lfs-path { font-family: var(--gk-mono, ui-monospace, monospace); font-size: 11.5px; }
+.lfs-state.is-ok { color: #7fd3a0; }
+.lfs-state.is-warn { color: #f0cf86; }

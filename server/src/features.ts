@@ -31,7 +31,8 @@ import {
   type CommitRecord, HISTORY_ALL_REFS } from "./lib/git.ts";
 import { workspacesFile } from "./workspaces.ts";
 import { authHeaders, hostingFetch } from "./hosting.ts";
-import { gitCredentialEnv } from "./lib/gitCredentials.ts";
+import { lfsContent } from "./lfs.ts";
+import { gitProcessEnv } from "./lib/gitCredentials.ts";
 import { finishStream, runGitStreaming } from "./lib/streams.ts";
 import { commitSubmodules, NestedCommitError, type NestedCommit } from "./nestedCommit.ts";
 import { aiComplete, AiUnavailableError } from "./ai.ts";
@@ -867,7 +868,7 @@ export async function runCustomCommand(inputPath: string, id: string, context: {
   if (executable !== "git" && !allowNonGit) throw new AppError("unsupported", "only git commands may run when Chrono is reachable from other machines");
   const result = await new Promise<CommandResult>((resolve) => {
     // Remembered tokens go to git only, never to other programs.
-    execFile(executable, rest, { cwd: root, timeout: 10 * 60 * 1000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...(executable === "git" ? gitCredentialEnv() : {}) } }, (error, stdout, stderr) => {
+    execFile(executable, rest, { cwd: root, timeout: 10 * 60 * 1000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...(executable === "git" ? gitProcessEnv(root) : {}) } }, (error, stdout, stderr) => {
       const code = error ? (typeof (error as { code?: unknown }).code === "number" ? (error as { code: number }).code : 1) : 0;
       resolve({ stdout: String(stdout ?? ""), stderr: String(stderr ?? "") || (error && code === 1 ? error.message : ""), exitCode: code });
     });
@@ -894,7 +895,12 @@ export async function fileBlob(inputPath: string, revision: string, file: string
     buffer = out.code === 0 ? out.stdout : null;
   }
   if (!buffer) return { exists: false, mime, size: 0, base64: "", lfs: false };
-  const lfs = buffer.length < 300 && buffer.toString("utf8").startsWith("version https://git-lfs");
+  let lfs = buffer.length < 300 && buffer.toString("utf8").startsWith("version https://git-lfs");
+  if (lfs) {
+    // A pointer whose content is in the local LFS store: show the real file.
+    const content = await lfsContent(root, buffer.toString("utf8"));
+    if (content) { buffer = content; lfs = false; }
+  }
   if (buffer.length > 25 * 1024 * 1024) throw invalidError("image is larger than 25 MB");
   return { exists: true, mime, size: buffer.length, base64: lfs ? "" : buffer.toString("base64"), lfs };
 }

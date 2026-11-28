@@ -11,7 +11,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile } from "node:child_process";
 import { AppError } from "./errors.ts";
 import { recordGitCommand } from "./gitLog.ts";
-import { gitCredentialEnv } from "./gitCredentials.ts";
+import { gitProcessEnv } from "./gitCredentials.ts";
 
 export interface GitOutput {
   stdout: string;
@@ -173,7 +173,7 @@ function execGit(path: string | null, args: string[], extraEnv: Record<string, s
   const lane = laneFor(path);
   const read = isReadCommand(args);
   const spawned = spawnArgs(path, args);
-  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", ...gitCredentialEnv(), ...extraEnv };
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", ...gitProcessEnv(path), ...extraEnv };
   const signal = read ? requestSignalStore.getStore() : undefined;
   if (!read) lane.generation++;
 

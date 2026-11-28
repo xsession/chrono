@@ -44,6 +44,7 @@ import { AgentSessionDialog, CleanupDialog } from "./components/gk/HostingDialog
 import { notifyIfHidden } from "./notify";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { LiveOutputHost, withLiveOutput } from "./liveOutput";
+import { LfsView, lfsAutoEnabled, lfsOnOpen } from "./components/LfsView";
 import type { ExplorerFocus } from "./components/explorer/FileExplorer";
 import { askFields } from "./components/DialogHost";
 import { chooseFolder, FolderPickerHost } from "./components/FolderPicker";
@@ -132,6 +133,8 @@ export default function App() {
   const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
   const [customCommands, setCustomCommands] = useState<CustomCommand[]>([]);
   useEffect(() => { api.customCommands().then(setCustomCommands).catch(() => undefined); }, [view]);
+  const lfsSeen = useRef(new Set<string>());
+  useEffect(() => { if (path) void lfsOnOpen(path, lfsSeen.current, () => setRefreshKey((key) => key + 1)); }, [path]);
   const openSettings = useCallback((tab?: SettingsTab) => { setSettingsTab(tab); setView("settings"); }, []);
   const [leftPanelOpen, setLeftPanelOpen] = useState(() => localStorage.getItem("chrono.gk.leftPanel") !== "hidden");
   const [leftPanelWidth, resizeLeftPanel, resetLeftPanel] = useStoredWidth("chrono.gk.leftWidth", 250, 170, 640);
@@ -455,7 +458,7 @@ export default function App() {
     setBusy(true);
     setMessage("Cloning repository…");
     try {
-      const cloned = await api.clone({ url, destination, ...options });
+      const cloned = await api.clone({ url, destination, lfs: lfsAutoEnabled(), ...options });
       notifyIfHidden("Clone finished", cloned.name);
       await rememberRepository(cloned.path);
       await refresh(cloned.path);
@@ -571,7 +574,7 @@ export default function App() {
     }
   }, [path, refresh]);
 
-  const [recurseSubmodules, setRecurseSubmodules] = useState(() => localStorage.getItem("chrono.gk.recurseSubmodules") === "1");
+  const [recurseSubmodules, setRecurseSubmodules] = useState(() => localStorage.getItem("chrono.gk.recurseSubmodules") !== "0");
   const changeRecurseSubmodules = useCallback((value: boolean) => {
     setRecurseSubmodules(value);
     localStorage.setItem("chrono.gk.recurseSubmodules", value ? "1" : "0");
@@ -925,6 +928,7 @@ export default function App() {
     { id: "intelligence", title: "Open Git Intelligence", category: "Explore", keywords: ["search", "compare", "blame", "file history", "contributors"], disabled: !path, run: () => setView("insights") },
     { id: "worktrees", title: "Manage worktrees", category: "Repository", keywords: ["parallel", "checkout"], disabled: !path, run: () => setView("worktrees") },
     { id: "submodules", title: "Manage submodules", category: "Repository", disabled: !path, run: () => setView("submodules") },
+    { id: "lfs", title: "Git LFS: tracked patterns, files, locks", category: "Repository", keywords: ["lfs", "large files", "lock", "track", "binary"], disabled: !path, run: () => setView("lfs") },
     { id: "forks", title: "Forks & upstreams (sync forks, also in submodules)", category: "Repository", disabled: !path, run: () => setView("forks") },
     { id: "landscape", title: "Open codebase landscape map", category: "Explore", keywords: ["map", "islands", "imports", "dependencies", "architecture", "terrain"], disabled: !path, run: () => setView("landscape") },
     { id: "refs", title: "Open references browser", category: "Repository", keywords: ["branches", "remotes", "tags", "worktrees", "stashes", "submodules"], disabled: !path, run: () => setView("refs") },
@@ -1047,7 +1051,7 @@ export default function App() {
             <div className="ux-operation-status-icon"><Icon name="warning" /></div>
             <div className="ux-operation-copy">
               <div className="ux-operation-title-row"><strong>Git won't open {untrusted.directory ?? untrusted.path}</strong></div>
-              <p>The folder belongs to another user, so git treats it as unsafe. Trusting it adds the folder to <code>safe.directory</code> in your global git config. Only do this for folders you own or trust; submodules may need trusting separately.</p>
+              <p>The folder belongs to another user, so git treats it as unsafe. Trusting it adds the folder to <code>safe.directory</code> in your global git config. Only do this for folders you own or trust. Chrono also trusts the submodules inside it.</p>
             </div>
             <div className="ux-operation-actions" role="toolbar" aria-label="Trust controls">
               <button className="ux-primary-button" disabled={busy} onClick={() => void trustUntrusted()}>Trust this folder</button>
@@ -1231,6 +1235,9 @@ export default function App() {
               run={runRepositoryAction}
               onOpenRepository={(target) => void openRepoTab(target).then(() => setView("history"))}
             />
+          )}
+          {path && view === "lfs" && (
+            <LfsView repositoryPath={path} refreshKey={refreshKey} busy={busy} run={runRepositoryAction} />
           )}
           {path && view === "submodules" && (
             <SubmoduleMap
