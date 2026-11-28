@@ -495,6 +495,8 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
                   { id: "open", label: "Open submodule", icon: "external", disabled: node.state === "uninitialized", onSelect: () => onOpenRepository(absolute) },
                   { id: "map", label: "Show in submodule map", icon: "submodule", disabled: !onOpenSubmoduleMap, onSelect: () => onOpenSubmoduleMap?.() },
                   { id: "update", label: node.state === "uninitialized" ? "Initialize (recursive)" : "Check out the recorded commit", disabled: busy, onSelect: () => run(`Update ${node.path}`, () => api.submoduleAction(repositoryPath, "update", node.path)) },
+                  { id: "pull", label: "Pull (fast-forward)", icon: "download", disabled: busy || node.state === "uninitialized", onSelect: () => run(`Pull ${node.path}`, async () => { const [result] = await api.submoduleBulk(repositoryPath, "pull", [node.path]); if (result?.status === "failed") throw new Error(result.message); return result?.message; }) },
+                  { id: "push", label: "Push", icon: "upload", disabled: busy || node.state === "uninitialized", onSelect: () => run(`Push ${node.path}`, async () => { const [result] = await api.submoduleBulk(repositoryPath, "push", [node.path]); if (result?.status === "failed") throw new Error(result.message); return result?.message; }) },
                   { id: "copy", label: "Copy path", icon: "copy", onSelect: () => copy(node.path) },
                 ], node.path)}>
                 {node.children ? <Icon name={isOpen ? "chevronDown" : "chevronRight"} className="gk-sub-twisty" /> : <span className="gk-sub-twisty" />}
@@ -505,7 +507,29 @@ export function GkLeftPanel({ repositoryPath, forks = [], refreshKey, busy, run,
                 {node.children > 0 && !isOpen && node.attentionBelow > 0 && <span className="gk-sub-badge sm-tone-attention" title={`${node.attentionBelow} nested submodule(s) need attention`}>{node.attentionBelow}↓</span>}
               </div>
             );
-          }), { onAdd: onOpenSubmoduleMap, addTitle: "Open submodule map" })}
+          }), {
+            onAdd: onOpenSubmoduleMap,
+            addTitle: "Open submodule map",
+            onContext: (event) => {
+              const all = subNodes.map((node) => node.path);
+              const bulk = (action: "pull" | "push", label: string) => run(label, async () => {
+                const results = await api.submoduleBulk(repositoryPath, action, all);
+                const failed = results.filter((item) => item.status === "failed");
+                const ok = results.filter((item) => item.status === "ok").length;
+                if (failed.length) throw new Error(`${label}: ${ok} done, ${failed.length} failed — ${failed.map((item) => `${item.path}: ${item.message}`).join("; ")}`);
+                return `${label}: ${ok} done, ${results.length - ok} skipped`;
+              });
+              menu.open(event, [
+                { id: "update-all", label: "Initialize & update all (recursive)", icon: "submodule", disabled: busy || !all.length, onSelect: () => run("Initialize & update submodules", () => api.updateAllSubmodules(repositoryPath, false)) },
+                { id: "remote-all", label: "Update all to remote branch tips", disabled: busy || !all.length, onSelect: () => run("Update submodules to remote tips", () => api.updateAllSubmodules(repositoryPath, true)) },
+                { kind: "separator", id: "s" },
+                { id: "pull-all", label: "Pull all submodules (fast-forward)", icon: "download", disabled: busy || !all.length, onSelect: () => bulk("pull", "Pull submodules") },
+                { id: "push-all", label: "Push all submodules", icon: "upload", disabled: busy || !all.length, onSelect: () => bulk("push", "Push submodules") },
+                { kind: "separator", id: "s2" },
+                { id: "map", label: "Open submodule map", icon: "submodule", disabled: !onOpenSubmoduleMap, onSelect: () => onOpenSubmoduleMap?.() },
+              ], "Submodules");
+            },
+          })}
           {section("remote", "REMOTE", "cloud", remoteBranches.length, (
             <>{[...remotesByName.entries()].map(([remoteName, list]) => {
               const remote = remotes.find((candidate) => candidate.name === remoteName) ?? null;

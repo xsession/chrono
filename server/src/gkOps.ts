@@ -240,15 +240,58 @@ export async function redo(inputPath: string): Promise<string> {
 
 export type PullMode = "fetch" | "ff" | "ff-only" | "rebase";
 
-export async function pull(inputPath: string, mode: PullMode, streamId: string | null = null): Promise<CommandResult> {
+/** Runs git commands one after another on one live-output stream, which is
+ *  finished once, after the last step or the first failure. */
+async function streamedSteps(root: string, steps: string[][], streamId: string | null | undefined): Promise<CommandResult> {
+  if (!streamId) {
+    let stdout = "";
+    let stderr = "";
+    for (const args of steps) { const result = await checked(root, args); stdout += result.stdout; stderr += result.stderr; }
+    return { stdout, stderr, exitCode: 0 };
+  }
+  let stdout = "";
+  let stderr = "";
+  for (const args of steps) {
+    const out = await runGitStreaming(root, args, streamId);
+    stdout += out.stdout;
+    stderr += out.stderr;
+    if (out.code !== 0) {
+      finishStream(streamId, out.code);
+      throw new AppError("command", `git ${args.join(" ")}: ${out.stderr.replace(/\s+/g, " ").trim() || `exit code ${out.code}`}`);
+    }
+  }
+  finishStream(streamId, 0);
+  return { stdout, stderr, exitCode: 0 };
+}
+
+/** Pull (or fetch). With `recurseSubmodules`, submodules are fetched too and,
+ *  after the merge, every submodule is initialized and checked out at the
+ *  commit the superproject now records, all the way down. */
+export async function pull(inputPath: string, mode: PullMode, streamId: string | null = null, recurseSubmodules = false): Promise<CommandResult> {
   const progress = streamId ? ["--progress"] : [];
+  const recurse = recurseSubmodules ? ["--recurse-submodules"] : [];
+  const update = ["submodule", "update", "--init", "--recursive", ...progress];
+  let args: string[];
   switch (mode) {
-    case "fetch": return streamed(inputPath, ["fetch", "--all", "--prune", "--tags", ...progress], streamId);
-    case "ff": return streamed(inputPath, ["pull", "--no-rebase", "--ff", ...progress], streamId);
-    case "ff-only": return streamed(inputPath, ["pull", "--ff-only", ...progress], streamId);
-    case "rebase": return streamed(inputPath, ["pull", "--rebase", "--autostash", ...progress], streamId);
+    case "fetch": args = ["fetch", "--all", "--prune", "--tags", ...(recurseSubmodules ? ["--recurse-submodules=yes"] : []), ...progress]; break;
+    case "ff": args = ["pull", "--no-rebase", "--ff", ...recurse, ...progress]; break;
+    case "ff-only": args = ["pull", "--ff-only", ...recurse, ...progress]; break;
+    case "rebase": args = ["pull", "--rebase", "--autostash", ...recurse, ...progress]; break;
     default: throw invalidError("pull mode must be fetch, ff, ff-only or rebase");
   }
+  if (!recurseSubmodules || mode === "fetch") return streamed(inputPath, args, streamId);
+  return streamedSteps(inputPath, [args, update], streamId);
+}
+
+/** Initializes and updates every submodule recursively (`git submodule update
+ *  --init --recursive`), or moves each to its tracked branch tip with `remote`. */
+export async function updateSubmodules(inputPath: string, options: { remote?: boolean; streamId?: string | null } = {}): Promise<CommandResult> {
+  const root = await repositoryRoot(inputPath);
+  const progress = options.streamId ? ["--progress"] : [];
+  return streamedSteps(root, [
+    ["submodule", "sync", "--recursive"],
+    ["submodule", "update", "--init", "--recursive", ...(options.remote ? ["--remote"] : []), ...progress],
+  ], options.streamId);
 }
 
 export interface PushOptions {
@@ -257,6 +300,8 @@ export interface PushOptions {
   force?: boolean;
   setUpstream?: boolean;
   tags?: boolean;
+  /** Push commits of submodules the pushed commits point to first (on-demand). */
+  recurseSubmodules?: boolean;
   streamId?: string | null;
 }
 
@@ -285,6 +330,7 @@ export async function push(inputPath: string, options: PushOptions): Promise<Com
   if (options.force) args.push("--force-with-lease");
   if (options.setUpstream || !hasUpstream) args.push("--set-upstream");
   if (options.tags) args.push("--follow-tags");
+  if (options.recurseSubmodules) args.push("--recurse-submodules=on-demand");
   if (options.streamId) args.push("--progress");
   args.push(remote, `refs/heads/${branch}:refs/heads/${hasUpstream && !options.remote ? upstream.stdout.trim().slice(remote.length + 1) : branch}`);
   return streamed(root, args, options.streamId);

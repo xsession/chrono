@@ -207,11 +207,22 @@ nested several levels deep.
   else `origin/HEAD`) has commits the pinned commit lacks.
 - **Bulk actions on a selection** (checkboxes, Ctrl/Shift+click, *Select with
   nested*, *Select needing attention*): Fetch, Update, Update to remote, Pull,
+  Push (nested submodules first; detached ones are skipped),
   Attach to branch (moves a detached HEAD onto the matching branch),
   Record pointer, and *Run command…*, a `foreach` that runs a shell command in
   each submodule with `$sm_path`, `$sha1` and `$toplevel` set. They run one
   nesting level at a time, several at once. Results list per submodule, with
   *Select the ones not done* to retry.
+- **Recursive pull, push and update.** The Pull menu has *Include submodules
+  (recursive)*: pull and fetch then go into every submodule, and after the
+  merge each one is initialized and checked out at the commit the
+  superproject records (`git submodule update --init --recursive`). With it
+  on, Push uses `--recurse-submodules=on-demand`, so submodule commits the
+  pushed commits point to reach their remotes first; *Push with submodules*
+  in the Push menu does this once. The Pull menu and the SUBMODULES section's
+  right-click menu can also *Initialize & update* all submodules, or move
+  them to their remote branch tips; that menu pulls or pushes every
+  submodule, and each row's menu pulls or pushes one.
 - **Manifest:** export every submodule's path, URL, commit and branch as JSON
   (copy or download), to record or reproduce a tree's exact state.
 - **Commit through submodules, at any depth.** Staging a submodule from its

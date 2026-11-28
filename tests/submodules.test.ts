@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { submoduleAction, submoduleBulk, submoduleForeach, submoduleManifest, submoduleTree, superprojectChain } from "../server/src/submodules.ts";
 import { repositoryHistoryPage, repositoryStatus } from "../server/src/backend.ts";
+import { pull, push, updateSubmodules } from "../server/src/gkOps.ts";
 
 const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "chrono-subs-")));
 const env = { ...process.env, GIT_AUTHOR_NAME: "T", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "T", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: temp, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "protocol.file.allow", GIT_CONFIG_VALUE_0: "always" };
@@ -129,6 +130,38 @@ git(path.join(root, "lib/a"), "commit", "-qm", "a: add f3");
 const afterCommit = (await repositoryStatus(root)).find((change) => change.path === "lib/a")?.submodule;
 eq([afterCommit?.newCommits, afterCommit?.commits[0]?.subject, afterCommit?.changes.map((change) => change.path)], [true, "a: add f3", ["f2.txt"]], "new submodule commits are listed with their subjects");
 eq(statusByPath.has("lib/c") ? statusByPath.get("lib/c")?.submodule : undefined, undefined, "an uninitialised submodule has no details");
+
+// ---- recursive pull / push / update ---------------------------------
+// lib/a is on main with one unpushed commit ("a: add f3").
+const aBare = path.join(temp, "a.git");
+bulk = await submoduleBulk(root, "push", ["lib/a", "lib/b"]);
+eq(bulk.map((item) => item.status), ["ok", "skipped"], `bulk push pushes branches and skips detached ones (${bulk[0].message})`);
+eq(git(aBare, "rev-parse", "main"), git(path.join(root, "lib/a"), "rev-parse", "HEAD"), "submodule commit reached its remote");
+eq((await submoduleBulk(root, "push", ["lib/a"]))[0].status, "skipped", "nothing left to push");
+
+const second = path.join(temp, "second");
+execFileSync("git", ["clone", "-q", path.join(temp, "top.git"), second], { env });
+eq(fs.existsSync(path.join(second, "lib/a/f1.txt")), false, "plain clone leaves submodules empty");
+
+// A new submodule commit, recorded in the superproject and pushed in one go.
+fs.writeFileSync(path.join(root, "lib/a/f4.txt"), "four\n");
+git(path.join(root, "lib/a"), "add", "f4.txt");
+git(path.join(root, "lib/a"), "commit", "-qm", "a: add f4");
+git(root, "reset", "-q");
+git(root, "add", "lib/a");
+git(root, "commit", "-qm", "bump lib/a");
+await push(root, { recurseSubmodules: true });
+const pinned = git(path.join(root, "lib/a"), "rev-parse", "HEAD");
+eq(git(aBare, "rev-parse", "main"), pinned, "push with submodules publishes the submodule commit first");
+eq(git(path.join(temp, "top.git"), "rev-parse", "main"), git(root, "rev-parse", "HEAD"), "and then the superproject");
+
+await pull(second, "ff-only", null, true);
+eq(git(path.join(second, "lib/a"), "rev-parse", "HEAD"), pinned, "pull with submodules checks out the new pin");
+eq(fs.existsSync(path.join(second, "src/infra/lib/mid/lib/leaf/f1.txt")), true, "and initializes nested submodules");
+
+git(second, "submodule", "deinit", "-q", "-f", "--all");
+await updateSubmodules(second);
+eq(fs.existsSync(path.join(second, "src/infra/lib/mid/lib/leaf/f1.txt")) && fs.existsSync(path.join(second, "lib/c/f1.txt")), true, "update all initializes everything recursively");
 
 fs.rmSync(temp, { recursive: true, force: true });
 console.log(`submodules: ${checks} assertions passed`);

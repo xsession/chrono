@@ -289,8 +289,8 @@ export async function submoduleAction(inputPath: string, action: SubmoduleAction
 // and a manifest of every pinned commit.
 // ---------------------------------------------------------------------------
 
-export type SubmoduleBulkAction = "fetch" | "update" | "update_remote" | "pull" | "attach" | "record";
-export const SUBMODULE_BULK_ACTIONS: SubmoduleBulkAction[] = ["fetch", "update", "update_remote", "pull", "attach", "record"];
+export type SubmoduleBulkAction = "fetch" | "update" | "update_remote" | "pull" | "push" | "attach" | "record";
+export const SUBMODULE_BULK_ACTIONS: SubmoduleBulkAction[] = ["fetch", "update", "update_remote", "pull", "push", "attach", "record"];
 
 export interface SubmoduleBulkResult {
   path: string;
@@ -375,7 +375,9 @@ export async function submoduleBulk(inputPath: string, action: SubmoduleBulkActi
   const picked = await resolveTargets(root, targets);
   const results = new Map<string, SubmoduleBulkResult>();
   // One depth level at a time: initializing a parent makes its children exist.
-  const depths = [...new Set(picked.map((link) => link.depth))].sort((a, b) => a - b);
+  // Pushing goes the other way, nested ones first, so a parent never
+  // publishes a pointer to a commit its submodule's remote does not have yet.
+  const depths = [...new Set(picked.map((link) => link.depth))].sort((a, b) => (action === "push" ? b - a : a - b));
   for (const depth of depths) {
     await pool(picked.filter((link) => link.depth === depth), 6, async (link) => {
       const absolute = path.join(root, link.path);
@@ -402,6 +404,23 @@ export async function submoduleBulk(inputPath: string, action: SubmoduleBulkActi
             if (branch.code !== 0) return done("skipped", "detached HEAD — attach to a branch first");
             const output = await runGit(absolute, ["pull", "--ff-only"]);
             return output.code === 0 ? done("ok", firstLine(output.stdout) || "pulled") : done("failed", firstLine(output.stderr));
+          }
+          case "push": {
+            const branch = await runGit(absolute, ["symbolic-ref", "-q", "--short", "HEAD"]);
+            if (branch.code !== 0) return done("skipped", "detached HEAD — attach to a branch first");
+            const name = branch.stdout.trim();
+            const upstream = await runGit(absolute, ["rev-parse", "--abbrev-ref", "@{upstream}"]);
+            if (upstream.code === 0) {
+              const ahead = Number((await runGit(absolute, ["rev-list", "--count", "@{upstream}..HEAD"])).stdout.trim()) || 0;
+              if (!ahead) return done("skipped", `nothing to push on ${name}`);
+              const output = await runGit(absolute, ["push"]);
+              return output.code === 0 ? done("ok", `pushed ${ahead} commit${ahead === 1 ? "" : "s"} to ${upstream.stdout.trim()}`) : done("failed", firstLine(output.stderr));
+            }
+            const remotes = (await runGit(absolute, ["remote"])).stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+            const remote = remotes.includes("origin") ? "origin" : remotes[0];
+            if (!remote) return done("skipped", "no remote");
+            const output = await runGit(absolute, ["push", "--set-upstream", remote, `refs/heads/${name}:refs/heads/${name}`]);
+            return output.code === 0 ? done("ok", `pushed ${name} to ${remote} and set upstream`) : done("failed", firstLine(output.stderr));
           }
           case "attach": {
             const outcome = await attachToBranch(parentAbsolute, relative, absolute);

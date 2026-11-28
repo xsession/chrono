@@ -22,6 +22,11 @@ type Props = {
   onRedo: () => void;
   onPull: (mode: PullMode) => void;
   onPush: (options: PushOptions) => void;
+  /** Pull and Push also go into submodules, recursively. */
+  recurseSubmodules: boolean;
+  onRecurseSubmodulesChange: (value: boolean) => void;
+  /** Initialize and update every submodule recursively (remote: to branch tips). */
+  onUpdateSubmodules: (remote: boolean) => void;
   onBranch: () => void;
   onStash: () => void;
   onPop: () => void;
@@ -88,7 +93,14 @@ export function GkToolbar(props: Props) {
       checked: props.pullMode === mode,
       onSelect: () => { props.onPullModeChange(mode); props.onPull(mode); },
     }));
-    items.push({ kind: "separator", id: "s" }, { id: "default-note", label: "The checked option becomes the default for the Pull button", disabled: true });
+    items.push(
+      { kind: "separator", id: "s" },
+      { id: "recurse", label: "Include submodules (recursive)", icon: "submodule", checked: props.recurseSubmodules, hint: "fetch them, then check out what the superproject records", onSelect: () => props.onRecurseSubmodulesChange(!props.recurseSubmodules) },
+      { id: "sub-update", label: "Initialize & update submodules (recursive)", icon: "submodule", onSelect: () => props.onUpdateSubmodules(false) },
+      { id: "sub-remote", label: "Update submodules to remote branch tips", icon: "submodule", onSelect: () => props.onUpdateSubmodules(true) },
+      { kind: "separator", id: "s2" },
+      { id: "default-note", label: "The checked options become the default for the Pull button", disabled: true },
+    );
     menu.open(anchor(event), items);
   };
 
@@ -97,6 +109,8 @@ export function GkToolbar(props: Props) {
       { id: "push", label: "Push", icon: "upload", onSelect: () => props.onPush({}) },
       { id: "push-up", label: "Push and set upstream…", onSelect: () => props.onPush({ setUpstream: true }) },
       { id: "push-tags", label: "Push with tags", icon: "tag", onSelect: () => props.onPush({ tags: true }) },
+      { id: "push-subs", label: "Push with submodules", icon: "submodule", hint: "their referenced commits first", onSelect: () => props.onPush({ recurseSubmodules: true }) },
+      { id: "recurse", label: "Always include submodules", checked: props.recurseSubmodules, onSelect: () => props.onRecurseSubmodulesChange(!props.recurseSubmodules) },
       { kind: "separator", id: "s" },
       { id: "force", label: "Force push (with lease)", danger: true, onSelect: () => props.onPush({ force: true }) },
     ]);

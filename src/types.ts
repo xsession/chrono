@@ -532,6 +532,8 @@ export type PushOptions = {
   force?: boolean;
   setUpstream?: boolean;
   tags?: boolean;
+  /** Push the submodule commits the pushed commits point to first (on-demand). */
+  recurseSubmodules?: boolean;
   streamId?: string;
 };
 
@@ -822,7 +824,7 @@ export type FolderListing = {
   places: Array<{ name: string; path: string }>;
 };
 
-export type SubmoduleBulkAction = "fetch" | "update" | "update_remote" | "pull" | "attach" | "record";
+export type SubmoduleBulkAction = "fetch" | "update" | "update_remote" | "pull" | "push" | "attach" | "record";
 export type SubmoduleBulkResult = { path: string; status: "ok" | "skipped" | "failed"; message: string };
 export type SubmoduleForeachResult = { path: string; code: number | null; stdout: string; stderr: string; ms: number };
 export type SubmoduleManifest = {

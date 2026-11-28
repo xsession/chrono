@@ -22,6 +22,7 @@ const BULK: Array<{ action: SubmoduleBulkAction; label: string; title: string }>
   { action: "update", label: "Update", title: "Check out the commit each parent records (initializes missing ones)" },
   { action: "update_remote", label: "Update to remote", title: "git submodule update --remote: move each to its tracked branch tip" },
   { action: "pull", label: "Pull", title: "Fast-forward pull, only for submodules on a branch" },
+  { action: "push", label: "Push", title: "Push each submodule's branch to its upstream, nested ones first (detached ones are skipped)" },
   { action: "attach", label: "Attach to branch", title: "Switch detached submodules to a branch that points at the same commit (never moves code)" },
   { action: "record", label: "Record pointer", title: "Stage moved submodules' current commits in their parent repositories" },
 ];

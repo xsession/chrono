@@ -571,16 +571,30 @@ export default function App() {
     }
   }, [path, refresh]);
 
+  const [recurseSubmodules, setRecurseSubmodules] = useState(() => localStorage.getItem("chrono.gk.recurseSubmodules") === "1");
+  const changeRecurseSubmodules = useCallback((value: boolean) => {
+    setRecurseSubmodules(value);
+    localStorage.setItem("chrono.gk.recurseSubmodules", value ? "1" : "0");
+    pushToast(value ? "Pull and Push now include submodules" : "Pull and Push no longer include submodules", "info", 3000);
+  }, []);
+
   const runPull = useCallback((mode: PullMode) => {
-    const label = mode === "fetch" ? "Fetch" : mode === "rebase" ? "Pull (rebase)" : "Pull";
-    void runRepositoryAction(label, () => withLiveOutput(label, (streamId) => api.pull(path, mode, streamId)));
-  }, [path, runRepositoryAction]);
+    const base = mode === "fetch" ? "Fetch" : mode === "rebase" ? "Pull (rebase)" : "Pull";
+    const label = recurseSubmodules ? `${base} with submodules` : base;
+    void runRepositoryAction(label, () => withLiveOutput(label, (streamId) => api.pull(path, mode, streamId, recurseSubmodules)));
+  }, [path, runRepositoryAction, recurseSubmodules]);
 
   const runPush = useCallback(async (options: PushOptions) => {
     if (options.force && !(await askConfirm("Force push", `Force push ${summary?.branch ?? "HEAD"} with --force-with-lease? Remote commits not present locally will be overwritten.`, { confirm: "Force push", danger: true }))) return;
-    const label = options.force ? "Force push" : "Push";
-    await runRepositoryAction(label, () => withLiveOutput(label, (streamId) => api.push(path, { ...options, streamId })));
-  }, [path, runRepositoryAction, summary?.branch]);
+    const withSubs = options.recurseSubmodules ?? recurseSubmodules;
+    const label = `${options.force ? "Force push" : "Push"}${withSubs ? " with submodules" : ""}`;
+    await runRepositoryAction(label, () => withLiveOutput(label, (streamId) => api.push(path, { ...options, recurseSubmodules: withSubs, streamId })));
+  }, [path, runRepositoryAction, summary?.branch, recurseSubmodules]);
+
+  const updateAllSubmodules = useCallback((remote: boolean) => {
+    const label = remote ? "Update submodules to remote tips" : "Initialize & update submodules";
+    void runRepositoryAction(label, () => withLiveOutput(label, (streamId) => api.updateAllSubmodules(path, remote, streamId)));
+  }, [path, runRepositoryAction]);
 
   const quickBranch = useCallback(async () => {
     const name = await askText("Create branch", `New branch from ${summary?.branch ?? "HEAD"} (checked out immediately)`, "");
@@ -991,6 +1005,9 @@ export default function App() {
           onRedo={() => void runUndo("redo")}
           onPull={runPull}
           onPush={(options) => void runPush(options)}
+          recurseSubmodules={recurseSubmodules}
+          onRecurseSubmodulesChange={changeRecurseSubmodules}
+          onUpdateSubmodules={updateAllSubmodules}
           onBranch={() => void quickBranch()}
           onStash={() => void quickStash()}
           onPop={() => void quickPop()}

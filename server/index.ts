@@ -392,12 +392,13 @@ const routes: Record<string, Handler> = {
   pull_repository: (body) => {
     const mode = typeof body.mode === "string" ? body.mode : "ff-only";
     if (mode !== "fetch" && mode !== "ff" && mode !== "ff-only" && mode !== "rebase") throw new AppError("invalid", "pull mode must be fetch, ff, ff-only or rebase");
-    return gk.journaled(bodyPath(body), `Pull (${mode})`, "keep", () => gk.pull(bodyPath(body), mode, validStreamId(body.streamId)));
+    const recurse = body.recurseSubmodules === true;
+    return gk.journaled(bodyPath(body), `Pull (${mode}${recurse ? ", with submodules" : ""})`, "keep", () => gk.pull(bodyPath(body), mode, validStreamId(body.streamId), recurse));
   },
   push_repository: (body) =>
-    body.force === true || body.setUpstream === true || body.tags === true || optStr(body.remote) || optStr(body.branch)
-      ? gk.push(bodyPath(body), { remote: optStr(body.remote), branch: optStr(body.branch), force: body.force === true, setUpstream: body.setUpstream === true, tags: body.tags === true, streamId: validStreamId(body.streamId) })
-      : gk.push(bodyPath(body), { streamId: validStreamId(body.streamId) }),
+    gk.push(bodyPath(body), { remote: optStr(body.remote), branch: optStr(body.branch), force: body.force === true, setUpstream: body.setUpstream === true, tags: body.tags === true, recurseSubmodules: body.recurseSubmodules === true, streamId: validStreamId(body.streamId) }),
+  submodules_update_all: (body) =>
+    gk.journaled(bodyPath(body), body.remote === true ? "Update submodules to remote tips" : "Initialize and update submodules", "keep", () => gk.updateSubmodules(bodyPath(body), { remote: body.remote === true, streamId: validStreamId(body.streamId) })),
   clone_repository: (body) =>
     backend.cloneRepository({
       url: str(body.url, "url"),

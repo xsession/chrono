@@ -345,7 +345,8 @@ export const api = {
   draftCommit: (path: string, mode: CommitDraftMode = "auto", model?: string, options: CommitDraftOptions = {}) =>
     invoke<CommitDraft>("draft_commit_message", { path, mode, ...(model ? { model } : {}), ...options }),
   fetch: (path: string, auth: AuthRequest = {}) => invoke<CommandResult>("fetch_repository", { path, ...auth }),
-  pull: (path: string, mode: PullMode = "ff-only", streamId?: string) => invoke<CommandResult>("pull_repository", { path, mode, streamId }),
+  pull: (path: string, mode: PullMode = "ff-only", streamId?: string, recurseSubmodules = false) => invoke<CommandResult>("pull_repository", { path, mode, streamId, recurseSubmodules }),
+  updateAllSubmodules: (path: string, remote = false, streamId?: string) => invoke<CommandResult>("submodules_update_all", { path, remote, streamId }),
   streamRead: (id: string, offset: number) => invoke<{ text: string; offset: number; done: boolean; exitCode: number | null }>("stream_read", { id, offset }),
   push: (path: string, options: PushOptions & AuthRequest = {}) => invoke<CommandResult>("push_repository", { path, ...options }),
   clone: (request: CloneRequest & CloneOptions) => invoke<RepositorySummary>("clone_repository", request),
