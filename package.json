@@ -74,7 +74,7 @@
   "devDependencies": {
     "@capacitor/android": "^7.4.3",
     "@capacitor/cli": "^7.4.3",
-    "@types/node": "^22.20.2",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/ws": "^8.18.2",
